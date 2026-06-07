@@ -342,6 +342,11 @@ const PATHS = {
     d: "M9 4h6l-1 6 3 3v2H7v-2l3-3z"
   }), /*#__PURE__*/React.createElement("path", {
     d: "M12 15v5"
+  })),
+  pencil: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+    d: "M16 3l5 5L8 21H3v-5z"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M14 5l5 5"
   }))
 };
 function Icon({

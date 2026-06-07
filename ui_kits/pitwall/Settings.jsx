@@ -105,7 +105,7 @@
     theme: "dark",
     accent: "#2d7bff",
     reduceMotion: false,
-    defaultPreset: "Driver Focus",
+    defaultPreset: "Intelligent",
     rememberLayout: true,
     telemetryDefault: true,
     notifications: {
@@ -177,8 +177,15 @@
     const [userName, setUserName] = React.useState(profile.name || "");
     const [favDrivers, setFavDrivers] = React.useState(profile.favoriteDrivers || []);
     const [favTeams, setFavTeams] = React.useState(profile.favoriteTeams || []);
+    function normalizePresetName(name) {
+      return name === "Driver Focus" ? "Intelligent" : name;
+    }
+
     const [appPrefs, setAppPrefs] = React.useState(() => {
-      try { return { ...DEFAULT_PREFS, ...(JSON.parse(localStorage.getItem("pw-settings") || "{}")) }; }
+      try {
+        const saved = { ...DEFAULT_PREFS, ...(JSON.parse(localStorage.getItem("pw-settings") || "{}")) };
+        return { ...saved, defaultPreset: normalizePresetName(saved.defaultPreset) };
+      }
       catch { return DEFAULT_PREFS; }
     });
     const [keyInputs, setKeyInputs] = React.useState({ anthropic: "", openai: "" });
@@ -675,7 +682,7 @@
           {sec === "layouts" && (
             <Card title="Layout defaults" subtitle="Your starting Live Racing layout">
               <div className="row"><div className="row__txt"><div className="row__t">Default preset</div><div className="row__s">Applied when you enter Live Racing.</div></div>
-                <SegmentedControl value={appPrefs.defaultPreset} onChange={(value) => setPref("defaultPreset", value)} options={[{ value: "Driver Focus", label: "Driver Focus" }, { value: "Battle Mode", label: "Battle" }, { value: "Data Overload", label: "Data" }]} /></div>
+                <SegmentedControl value={appPrefs.defaultPreset} onChange={(value) => setPref("defaultPreset", value)} options={[{ value: "Intelligent", label: "Intelligent" }, { value: "Battle Mode", label: "Battle" }, { value: "Data Overload", label: "Data" }]} /></div>
               <div className="row"><div className="row__txt"><div className="row__t">Remember last layout</div><div className="row__s">Restore your panes, sidebars & sizes next session.</div></div><Switch checked={appPrefs.rememberLayout} onChange={(value) => setPref("rememberLayout", value)} /></div>
               <div className="row"><div className="row__txt"><div className="row__t">Telemetry overlay by default</div><div className="row__s">Show speed, gear, throttle, and gap on every new pane.</div></div><Switch checked={appPrefs.telemetryDefault} onChange={(value) => setPref("telemetryDefault", value)} /></div>
             </Card>

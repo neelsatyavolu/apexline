@@ -123,6 +123,8 @@ assert.match(packageMac, /signWithCastLabsVmp\(appPath\)[\s\S]*codesign/, "macOS
 assert.match(packageMac, /CFBundleIconFile", "app-icon"/, "macOS package step should use the custom PitWall app icon");
 const mainProcess = fs.readFileSync(path.join(root, "electron/main.cjs"), "utf8");
 const preload = fs.readFileSync(path.join(root, "electron/preload.cjs"), "utf8");
+const dataProviderSource = fs.readFileSync(path.join(root, "ui_kits/pitwall/DataProvider.jsx"), "utf8");
+const liveRacingSource = fs.readFileSync(path.join(root, "ui_kits/pitwall/LiveRacing.jsx"), "utf8");
 
 function extractNamedFunction(source, name) {
   const start = source.indexOf(`function ${name}`);
@@ -142,6 +144,139 @@ const parseWeather = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "p
 assert.deepEqual({ ...parseWeather([]) }, { air: "", track: "", cond: "", rain: "", wind: "", humidity: "" }, "Empty OpenF1 weather rows should not be reported as dry");
 assert.equal(parseWeather([{ rainfall: 0 }]).cond, "Dry", "Weather rows without rainfall should still report dry track conditions");
 
+const entitySandbox = vm.runInNewContext(`(() => {
+  ${["stripTags", "decodeXmlEntities", "decodeEntities"].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+  return { decodeEntities };
+})()`);
+assert.equal(
+  entitySandbox.decodeEntities("Antonelli&amp;#8217;s magic, Russell&amp;#8217;s growing problem"),
+  `Antonelli${String.fromCodePoint(8217)}s magic, Russell${String.fromCodePoint(8217)}s growing problem`,
+  "Live news titles should decode nested numeric HTML entities",
+);
+
+const newsParserSandbox = vm.runInNewContext(`(() => {
+  const NEWS_SOURCES = [
+    { key: "motorsportNews", name: "Motorsport.com", url: "https://www.motorsport.com/rss/f1/news/", type: "rss" },
+    { key: "autosportNews", name: "Autosport", url: "https://www.autosport.com/rss/f1/news/", type: "rss", articlePath: /\\/f1\\/news\\//i },
+    { key: "formula1News", name: "Formula 1", url: "https://www.formula1.com/en/latest/all.xml", type: "rss", articlePath: /\\/en\\/latest\\/article\\//i },
+    { key: "theRaceNews", name: "The Race", url: "https://www.the-race.com/rss/", type: "rss", articlePath: /\\/formula-1\\/[^/?#]+\\/?$/i },
+    { key: "planetF1News", name: "PlanetF1", url: "https://www.planetf1.com/news", type: "html", articlePath: /\\/news\\/[^/?#]+\\/?$/i },
+  ];
+  ${[
+    "stripTags",
+    "decodeXmlEntities",
+    "decodeEntities",
+    "extractXml",
+    "extractXmlRaw",
+    "extractTagAttribute",
+    "normalizeNewsImage",
+    "extractRssImage",
+    "extractRssArticleText",
+    "timeAgo",
+    "classifyNews",
+    "colourForText",
+    "absoluteNewsUrl",
+    "normalizeNewsUrl",
+    "extractHtmlDate",
+    "extractHtmlImage",
+    "extractArticleMetaImage",
+    "normalizeArticleDate",
+    "extractArticleMetaDate",
+    "normalizeNewsStory",
+    "parseRss",
+    "parseNewsHtml",
+    "parseNewsSource",
+    "newsStorySortTime",
+    "selectNewsFeedStories",
+    "buildNewsFeed",
+  ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+  return { parseNewsHtml, parseNewsSource, extractArticleMetaImage, extractArticleMetaDate, buildNewsFeed };
+})()`, { createHash: require("node:crypto").createHash, URL });
+const planetF1CardHtml = `
+  <article>
+    <a href="/news/f1-starting-grid-2026-monaco-gp" aria-label="image">
+      <picture>
+        <source srcset="https://www.planetf1.com/content/uploads/2026/06/monaco-grid.webp 800w, https://www.planetf1.com/content/uploads/2026/06/monaco-grid-large.webp 1600w">
+      </picture>
+    </a>
+    <a href="/news/f1-starting-grid-2026-monaco-gp">F1 starting grid: What is the grid order for the 2026 Monaco Grand Prix?</a>
+  </article>`;
+assert.equal(
+  newsParserSandbox.parseNewsHtml(planetF1CardHtml, { name: "PlanetF1", url: "https://www.planetf1.com/news", articlePath: /\/news\/[^/?#]+\/?$/i })[0].image,
+  "https://www.planetf1.com/content/uploads/2026/06/monaco-grid.webp",
+  "PlanetF1 news cards should use nearby srcset images when img src is absent",
+);
+assert.equal(
+  newsParserSandbox.extractArticleMetaImage(`<meta property="og:image" content="https://www.planetf1.com/content/uploads/2026/06/article-image.webp">`, "https://www.planetf1.com/news/story"),
+  "https://www.planetf1.com/content/uploads/2026/06/article-image.webp",
+  "News image fallback should read article Open Graph images",
+);
+assert.equal(
+  newsParserSandbox.extractArticleMetaDate(`<meta property="article:published_time" content="2026-06-07T04:15:00+00:00">`),
+  "2026-06-07T04:15:00.000Z",
+  "News article fallback should read precise article published timestamps",
+);
+assert.equal(
+  newsParserSandbox.extractArticleMetaDate(`<script type="application/ld+json">{"@type":"NewsArticle","datePublished":"2026-06-06T22:30:00+00:00"}</script>`),
+  "2026-06-06T22:30:00.000Z",
+  "News article fallback should read JSON-LD datePublished timestamps",
+);
+assert.match(mainProcess, /const baseNews = buildNewsFeed\(raw\)[\s\S]*options\.enrichmentPending[\s\S]*enrichNewsStoryImages\(baseNews\)/, "Initial live data snapshots should defer article metadata enrichment to the background pass");
+assert.deepEqual(
+  JSON.parse(JSON.stringify(newsParserSandbox.parseNewsSource(`
+    <rss><channel>
+      <item><title>Formula 1 official story with enough headline words</title><link>https://www.formula1.com/en/latest/article/story-title.abc123</link></item>
+      <item><title>Formula 1 glossary page should not enter feed</title><link>https://www.formula1.com/en/latest</link></item>
+    </channel></rss>`,
+    { name: "Formula 1", url: "https://www.formula1.com/en/latest/all.xml", type: "rss", articlePath: /\/en\/latest\/article\//i },
+  ).map((story) => story.source))),
+  ["Formula 1"],
+  "Formula 1 RSS parsing should keep official article URLs",
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(newsParserSandbox.parseNewsSource(`
+    <rss><channel>
+      <item><title>The Race Formula 1 story with enough headline words</title><link>https://www.the-race.com/formula-1/current-f1-story/</link></item>
+      <item><title>The Race MotoGP story should be filtered out cleanly</title><link>https://www.the-race.com/motogp/current-motogp-story/</link></item>
+    </channel></rss>`,
+    { name: "The Race", url: "https://www.the-race.com/rss/", type: "rss", articlePath: /\/formula-1\/[^/?#]+\/?$/i },
+  ).map((story) => story.url))),
+  ["https://www.the-race.com/formula-1/current-f1-story/"],
+  "The Race RSS parsing should keep Formula 1 article URLs and filter other categories",
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(newsParserSandbox.parseNewsSource(`
+    <rss><channel>
+      <item><title>Autosport Formula 1 story with enough headline words</title><link>https://www.autosport.com/f1/news/current-f1-story/1234567/</link></item>
+      <item><title>Autosport MotoGP story should be filtered out cleanly</title><link>https://www.autosport.com/motogp/news/current-motogp-story/1234568/</link></item>
+    </channel></rss>`,
+    { name: "Autosport", url: "https://www.autosport.com/rss/f1/news/", type: "rss", articlePath: /\/f1\/news\//i },
+  ).map((story) => story.url))),
+  ["https://www.autosport.com/f1/news/current-f1-story/1234567/"],
+  "Autosport RSS parsing should keep Formula 1 article URLs and filter other categories",
+);
+const datedPlanetItems = Array.from({ length: 30 }, (_, index) => `
+  <item>
+    <title>PlanetF1 dated story number ${index} with enough headline words</title>
+    <link>https://www.planetf1.com/news/dated-story-${index}</link>
+    <pubDate>Sun, 07 Jun 2026 ${String(index).padStart(2, "0")}:00:00 GMT</pubDate>
+  </item>`).join("");
+const datedPlanetCards = Array.from({ length: 18 }, (_, index) => `
+  <article>
+    <time>07 Jun 2026</time>
+    <a href="/news/dated-planet-story-${index}">PlanetF1 dated card number ${index} with enough headline words</a>
+  </article>`).join("");
+const diverseNews = newsParserSandbox.buildNewsFeed({
+  motorsportNews: `<rss><channel>${datedPlanetItems.replaceAll("planetf1.com", "motorsport.com")}</channel></rss>`,
+  autosportNews: `<rss><channel><item><title>Current Autosport Formula One analysis story with enough headline words</title><link>https://www.autosport.com/f1/news/current-autosport-analysis-story/1234567/</link></item></channel></rss>`,
+  formula1News: `<rss><channel><item><title>Current Formula One analysis story with enough headline words</title><link>https://www.formula1.com/en/latest/article/current-formula-one-analysis-story.abc123</link></item></channel></rss>`,
+  theRaceNews: `<rss><channel><item><title>Formula 1 current The Race analysis story with enough headline words</title><link>https://www.the-race.com/formula-1/current-the-race-analysis-story/</link></item></channel></rss>`,
+  planetF1News: datedPlanetCards,
+});
+assert.ok(diverseNews.some((story) => story.source === "Autosport"), "Live news feed should keep Autosport stories visible when the feed is crowded");
+assert.ok(diverseNews.some((story) => story.source === "Formula 1"), "Live news feed should keep Formula 1 stories visible when their listing omits dates");
+assert.ok(diverseNews.some((story) => story.source === "The Race"), "Live news feed should keep The Race stories visible when their listing omits dates");
+
 const timingSandbox = vm.runInNewContext(`(() => {
   ${[
     "finiteNumber",
@@ -160,6 +295,7 @@ const timingSandbox = vm.runInNewContext(`(() => {
     "latestCarDataByDriverNumber",
     "timingSegmentTone",
     "miniSectorSegments",
+    "openF1SectorTimes",
     "parseTiming",
     "latestLapsByDriverNumber",
     "replayRowDateMs",
@@ -187,6 +323,7 @@ const replayTimingRows = timingSandbox.parseTiming(
 );
 assert.equal(replayTimingRows[0].last, "1:15.000", "Replay timing should derive last lap from OpenF1 sector durations");
 assert.equal(replayTimingRows[0].best, "1:15.000", "Replay timing should derive best lap from OpenF1 sector durations");
+assert.deepEqual(JSON.parse(JSON.stringify(replayTimingRows[0].sectorTimes)), { s1: 25, s2: 30, s3: 20 }, "Replay timing should preserve numeric sector times alongside mini-sector tones");
 assert.equal(replayTimingRows[0].comp, "soft", "Replay timing should preserve tyre compound from OpenF1 stints");
 
 const f1TimingClockSandbox = vm.runInNewContext(`(() => {
@@ -201,9 +338,10 @@ const f1TimingClockSandbox = vm.runInNewContext(`(() => {
     "f1TimingValue",
     "f1TimingDurationSeconds",
     "formatF1TimingDuration",
+    "f1TimingQualifyingPart",
     "parseF1TimingSessionClock",
   ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
-  return { f1TimingSessionStartSeconds, f1TimingVideoStartArchiveSeconds, parseF1TimingSessionClock };
+  return { f1TimingSessionStartSeconds, f1TimingVideoStartArchiveSeconds, f1TimingQualifyingPart, parseF1TimingSessionClock };
 })()`);
 const sparseClockSession = {
   clockEntries: [
@@ -217,6 +355,27 @@ const sparseClockSession = {
 };
 assert.equal(f1TimingClockSandbox.f1TimingSessionStartSeconds(sparseClockSession), 853.735, "F1 timing should use the first Started status as replay session zero");
 assert.equal(f1TimingClockSandbox.parseF1TimingSessionClock(sparseClockSession, 1693.735).remaining, "00:04:00", "Sparse F1 ExtrapolatedClock entries should count down between archive packets");
+assert.equal(f1TimingClockSandbox.f1TimingQualifyingPart({
+  sessionStatusEntries: [
+    { seconds: 10, data: { Status: "Started" } },
+    { seconds: 1090, data: { Status: "Finished" } },
+    { seconds: 1290, data: { Status: "Started" } },
+  ],
+}, 1300), "Q2", "F1 timing should derive the active qualifying part from official status restarts");
+assert.equal(f1TimingClockSandbox.f1TimingQualifyingPart({
+  sessionStatusEntries: [
+    { seconds: 1290, data: { Status: "Started", StatusSeries: [
+      { Utc: "2026-06-06T14:00:00Z", SessionStatus: "Started" },
+      { Utc: "2026-06-06T14:18:00Z", SessionStatus: "Finished" },
+      { Utc: "2026-06-06T14:25:00Z", SessionStatus: "Started" },
+    ] } },
+    { seconds: 1300, data: { Status: "Started", StatusSeries: [
+      { Utc: "2026-06-06T14:00:00Z", SessionStatus: "Started" },
+      { Utc: "2026-06-06T14:18:00Z", SessionStatus: "Finished" },
+      { Utc: "2026-06-06T14:25:00Z", SessionStatus: "Started" },
+    ] } },
+  ],
+}, 1300), "Q2", "F1 timing should not recount repeated cumulative qualifying status history");
 assert.equal(Math.round(f1TimingClockSandbox.f1TimingVideoStartArchiveSeconds(sparseClockSession, { videoStartUtc: "2026-06-06T13:55:46.309Z" })), 600, "Replay timing should convert F1 TV program-date-time into archive elapsed seconds");
 const f1TimingGapSandbox = vm.runInNewContext(`(() => {
   ${[
@@ -454,6 +613,11 @@ assert.match(mainProcess, /weekendSessionSummaries:\s*await buildWeekendSessionS
 assert.match(mainProcess, /pitwall:notify:schedule/, "Electron main should expose local reminder IPC");
 assert.match(mainProcess, /pitwall:profile:get/, "Electron main should persist the user profile outside random localhost localStorage origins");
 assert.match(mainProcess, /pitwall:profile:set/, "Electron main should save dashboard setup choices to the app profile");
+assert.match(mainProcess, /livePanelSizes/, "Electron profile should persist Live Racing panel sizes outside random localhost localStorage origins");
+assert.match(dataProviderSource, /livePanelSizes/, "Renderer profile should carry persisted Live Racing panel sizes");
+assert.match(dataProviderSource, /persisted\.livePanelSizes\s*!=\s*null[\s\S]*local\.livePanelSizes/, "Renderer profile merge should not let persisted null panel sizes wipe local Live Racing sizes");
+assert.match(liveRacingSource, /profile\.livePanelSizes/, "Live Racing should restore panel sizes from the persisted Electron profile");
+assert.match(liveRacingSource, /window\.pitwall\?\.profile\?\.set/, "Live Racing should save resized panels to the persisted Electron profile");
 assert.match(mainProcess, /new Notification/, "Reminder IPC should use native notifications");
 assert.match(mainProcess, /detectBattlePairs/, "App should compute deterministic battle pairs before asking AI");
 assert.match(mainProcess, /api\.jolpi\.ca\/ergast\/f1\/current\/driverStandings\.json/, "Live data should fetch current driver standings from Jolpica");
@@ -462,8 +626,9 @@ assert.match(mainProcess, /fetchOpenF1WeekendWeather\(nextRace\)/, "Live data sh
 assert.match(mainProcess, /standingsByNumber/, "OpenF1 timing parser should map driver numbers back to known driver codes");
 assert.doesNotMatch(mainProcess, /code:\s*driver\?\.name_acronym\s*\|\|\s*String\(row\.driver_number\)/, "OpenF1 timing rows should not fall back to raw driver numbers before checking standings metadata");
 assert.match(mainProcess, /motorsport\.com\/rss\/f1\/news/, "Live data should fetch current F1 news RSS");
-assert.match(mainProcess, /formula1\.com\/en\/latest/, "Live news should include official Formula 1 coverage");
-assert.match(mainProcess, /the-race\.com\/category\/formula-1/, "Live news should include The Race Formula 1 coverage");
+assert.match(mainProcess, /autosport\.com\/rss\/f1\/news/, "Live data should fetch current Autosport F1 news RSS");
+assert.match(mainProcess, /formula1\.com\/en\/latest\/all\.xml/, "Live news should include official Formula 1 coverage via RSS");
+assert.match(mainProcess, /the-race\.com\/rss/, "Live news should include The Race coverage via RSS");
 assert.match(mainProcess, /planetf1\.com\/news/, "Live news should include PlanetF1 news coverage");
 assert.match(mainProcess, /buildNewsFeed\(raw\)/, "Live news should merge all configured news sources into one feed");
 assert.match(mainProcess, /function extractRssImage/, "Live news parser should extract article image metadata from RSS");
@@ -508,10 +673,142 @@ const source = Object.fromEntries(fs.readdirSync(kitDir)
   .filter((name) => name.endsWith(".jsx"))
   .map((name) => [name, fs.readFileSync(path.join(kitDir, name), "utf8")]));
 
+const liveRacingSmartSandbox = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(source["LiveRacing.jsx"], "qualifyingPhaseFromSession")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "qualifyingEliminationCount")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "qualifyingQ1EliminationStart")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "qualifyingQ2EliminationEnd")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "isQualifyingEliminationRow")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "intelligentOnboardCodes")}
+  return { intelligentOnboardCodes, isQualifyingEliminationRow };
+})()`);
+function smartOnboardCodes(options) {
+  return Array.from(liveRacingSmartSandbox.intelligentOnboardCodes(options));
+}
+const raceRows = [
+  { pos: 1, code: "VER", interval: "LEADER" },
+  { pos: 2, code: "LEC", interval: "+2.4" },
+  { pos: 3, code: "HAM", interval: "+1.2" },
+  { pos: 4, code: "RUS", interval: "+5.0" },
+  { pos: 5, code: "NOR", interval: "+0.7" },
+];
+const liveTelemetrySandbox = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(source["LiveRacing.jsx"], "isQualifyingSessionKind")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "formatTelemetryGap")}
+  return { formatTelemetryGap };
+})()`);
+assert.equal(
+  liveTelemetrySandbox.formatTelemetryGap({ gap: "+1.800", interval: "+0.250" }, "Race"),
+  "+0.250",
+  "Race onboard timing should show interval to the car ahead"
+);
+assert.equal(
+  liveTelemetrySandbox.formatTelemetryGap({ gap: "+1.800", interval: "+0.250" }, "Practice 2"),
+  "+0.250",
+  "Practice onboard timing should show interval to the car ahead"
+);
+assert.equal(
+  liveTelemetrySandbox.formatTelemetryGap({ gap: "+1.800", interval: "+0.250" }, "Qualifying"),
+  "+1.800",
+  "Qualifying onboard timing should show gap to leader instead of interval"
+);
+assert.deepEqual(
+  smartOnboardCodes({ timingRows: raceRows, selectedCode: "VER", fallbackCodes: raceRows.map((row) => row.code), sessionKind: "Race" }),
+  ["VER", "LEC", "HAM"],
+  "Intelligent layout should prioritize the highest-position race battle for onboard slots 2 and 3"
+);
+assert.deepEqual(
+  smartOnboardCodes({ timingRows: raceRows, preferredCode: "HAM", selectedCode: "VER", fallbackCodes: raceRows.map((row) => row.code), sessionKind: "Race" }),
+  ["HAM", "LEC", "VER"],
+  "Intelligent layout should keep the user's favorite driver in onboard slot 1"
+);
+assert.deepEqual(
+  smartOnboardCodes({
+    timingRows: raceRows.map((row) => row.code === "HAM" ? { ...row, interval: "+1.9" } : row),
+    selectedCode: "PER",
+    fallbackCodes: ["PER", ...raceRows.map((row) => row.code)],
+    sessionKind: "Race",
+    previousCodes: ["PER", "LEC", "HAM"],
+  }),
+  ["PER", "LEC", "HAM"],
+  "Intelligent layout should keep a race battle through the hysteresis gap"
+);
+assert.deepEqual(
+  smartOnboardCodes({
+    timingRows: raceRows.map((row) => row.code === "HAM" ? { ...row, interval: "+2.4" } : row.code === "NOR" ? { ...row, interval: "+3.0" } : row),
+    selectedCode: "PER",
+    fallbackCodes: ["PER", ...raceRows.map((row) => row.code)],
+    sessionKind: "Race",
+    previousCodes: ["PER", "LEC", "HAM"],
+  }),
+  ["PER", "VER", "LEC"],
+  "Intelligent layout should release a race battle after the hysteresis gap ends"
+);
+const qualifyingRows = Array.from({ length: 20 }, (_, index) => ({
+  pos: index + 1,
+  code: ["NOR", "PIA", "VER", "RUS", "LEC", "HAM", "ALO", "STR", "ALB", "SAI", "GAS", "OCO", "BEA", "HUL", "BOR", "LAW", "TSU", "COL", "BOT", "PER"][index],
+  bestLapDuration: 90 + index * 0.2,
+}));
+const qualifyingRows2026 = qualifyingRows.concat([
+  { pos: 21, code: "HAD", bestLapDuration: 94.0 },
+  { pos: 22, code: "DUN", bestLapDuration: 94.2 },
+]);
+assert.deepEqual(
+  smartOnboardCodes({ timingRows: qualifyingRows, selectedCode: "VER", fallbackCodes: qualifyingRows.map((row) => row.code), sessionKind: "Qualifying" }),
+  ["VER", "LAW", "NOR"],
+  "Intelligent layout should pair qualifying cutoff danger with the top benchmark"
+);
+assert.deepEqual(
+  smartOnboardCodes({ timingRows: qualifyingRows2026, selectedCode: "VER", fallbackCodes: qualifyingRows2026.map((row) => row.code), sessionKind: "Qualifying", sessionClock: { qualifyingPart: "Q1" } }),
+  ["VER", "TSU", "NOR"],
+  "Intelligent layout should use the 2026 Q1 P17 danger cutoff for a 22-car field"
+);
+assert.deepEqual(
+  smartOnboardCodes({ timingRows: qualifyingRows.slice(0, 15), selectedCode: "VER", fallbackCodes: qualifyingRows.map((row) => row.code), sessionKind: "Qualifying" }),
+  ["VER", "SAI", "NOR"],
+  "Intelligent layout should show the P10 bubble driver in Q2, not the eliminated P11 runner"
+);
+assert.deepEqual(
+  smartOnboardCodes({ timingRows: qualifyingRows, selectedCode: "VER", fallbackCodes: qualifyingRows.map((row) => row.code), sessionKind: "Qualifying", sessionClock: { qualifyingPart: "Q2" } }),
+  ["VER", "SAI", "NOR"],
+  "Intelligent layout should use Q2 session phase even when timing still lists all 20 drivers"
+);
+assert.deepEqual(
+  smartOnboardCodes({ timingRows: qualifyingRows2026, selectedCode: "VER", fallbackCodes: qualifyingRows2026.map((row) => row.code), sessionKind: "Qualifying", sessionClock: { qualifyingPart: "Q2" } }),
+  ["VER", "SAI", "NOR"],
+  "Intelligent layout should still use the P10 bubble in 2026 Q2 when timing lists all 22 drivers"
+);
+assert.deepEqual(
+  smartOnboardCodes({ timingRows: qualifyingRows.slice(0, 10), selectedCode: "VER", fallbackCodes: qualifyingRows.map((row) => row.code), sessionKind: "Qualifying" }),
+  ["VER", "NOR", "PIA"],
+  "Intelligent layout should show top benchmark drivers in Q3 instead of an elimination bubble"
+);
+assert.deepEqual(
+  smartOnboardCodes({ timingRows: qualifyingRows, selectedCode: "VER", fallbackCodes: qualifyingRows.map((row) => row.code), sessionKind: "Qualifying", sessionClock: { qualifyingPart: "Q3" } }),
+  ["VER", "NOR", "PIA"],
+  "Intelligent layout should use Q3 session phase even when timing still lists all 20 drivers"
+);
+assert.deepEqual(
+  smartOnboardCodes({ timingRows: qualifyingRows, selectedCode: "NOR", fallbackCodes: qualifyingRows.map((row) => row.code), sessionKind: "Qualifying" }),
+  ["NOR", "LAW", "PIA"],
+  "Intelligent layout should not duplicate the preferred driver when the preferred driver is the top benchmark"
+);
+assert.equal(liveRacingSmartSandbox.isQualifyingEliminationRow({ pos: 16 }, { qualifyingPhase: "Q1", rowCount: 20 }), true, "20-car Q1 timing should mark P16 and lower as eliminated");
+assert.equal(liveRacingSmartSandbox.isQualifyingEliminationRow({ pos: 16 }, { qualifyingPhase: "Q1", rowCount: 22 }), false, "2026 Q1 timing should keep P16 outside the eliminated highlight");
+assert.equal(liveRacingSmartSandbox.isQualifyingEliminationRow({ pos: 17 }, { qualifyingPhase: "Q1", rowCount: 22 }), true, "2026 Q1 timing should mark P17 and lower as eliminated");
+assert.equal(liveRacingSmartSandbox.isQualifyingEliminationRow({ pos: 15 }, { qualifyingPhase: "Q1", rowCount: 22 }), false, "Q1 timing should keep P15 outside the eliminated highlight");
+assert.equal(liveRacingSmartSandbox.isQualifyingEliminationRow({ pos: 11 }, { qualifyingPhase: "Q2", rowCount: 22 }), true, "2026 Q2 timing should mark P11-P16 as eliminated");
+assert.equal(liveRacingSmartSandbox.isQualifyingEliminationRow({ pos: 16 }, { qualifyingPhase: "Q2", rowCount: 22 }), true, "2026 Q2 timing should include P16 in the eliminated highlight");
+assert.equal(liveRacingSmartSandbox.isQualifyingEliminationRow({ pos: 17 }, { qualifyingPhase: "Q2", rowCount: 22 }), false, "Q2 timing should not treat stale Q1 eliminated rows as the active Q2 cutoff");
+assert.equal(liveRacingSmartSandbox.isQualifyingEliminationRow({ pos: 10 }, { qualifyingPhase: "Q3", rowCount: 22 }), false, "Q3 timing should not show elimination-row highlights");
+assert.match(source["LiveRacing.jsx"], /data-elimination/, "Live timing rows should expose an elimination state for subtle qualifying highlights");
+assert.match(source["LiveRacing.jsx"], /profile\.favoriteDrivers/, "Intelligent layout should read the user's Settings favorite driver for onboard slot 1");
+
 assert.match(source["AppShell.jsx"], /pw-top__searchbox/, "Topbar search should be a real input");
 assert.match(source["AppShell.jsx"], /document\.getElementById\(STYLE_ID\)[\s\S]*el\.textContent/, "AppShell should replace stale bundled shell styles");
 assert.match(source["AppShell.jsx"], /\.pw-top__searchbox[\s\S]*appearance: none/, "Topbar search input should not use native white input styling");
 assert.match(source["AppShell.jsx"], /\.pw-top__icon[\s\S]*appearance: none/, "Topbar icon buttons should not use native white button styling");
+assert.match(source["AppShell.jsx"], /\.pw-top \{[^}]*position: relative;[^}]*z-index: [1-9][0-9]*;/, "Topbar search popover should sit above screen content instead of letting page text bleed through");
 assert.match(source["AppShell.jsx"], /\.pw-side__brand \{[^}]*min-height: 96px;[^}]*padding: 52px var\(--space-7\) 16px;/, "Sidebar brand should sit below the macOS traffic lights and align left");
 assert.doesNotMatch(source["AppShell.jsx"], /traffic-light-gutter/, "Sidebar brand should not be offset to the right of the traffic lights");
 assert.match(source["AppShell.jsx"], /onSearchResult/, "Topbar search should navigate to search results");
@@ -590,6 +887,28 @@ assert.deepEqual(Array.from(recapRows, (row) => row.code), ["HAM", "NOR"], "Week
 assert.equal(recapRows[0].time, "1:19.100", "Weekend recap should show selected session result times");
 assert.doesNotMatch(source["LiveRacing.jsx"], /window\.prompt/, "Stream setup should use an in-app control, not a browser prompt");
 assert.match(source["LiveRacing.jsx"], /stream-modal/, "Live stream setup should expose an in-window modal");
+const streamPersistenceSandbox = vm.runInNewContext(`(() => {
+  ${["streamDescriptor", "streamRecord", "preferredMainF1TvFeed"].map((name) => extractNamedFunction(source["LiveRacing.jsx"], name)).join("\n")}
+  return { streamRecord, preferredMainF1TvFeed };
+})()`);
+assert.equal(
+  streamPersistenceSandbox.streamRecord("https://example.test/master.m3u8"),
+  "https://example.test/master.m3u8",
+  "Manual stream URLs should still persist as user settings"
+);
+assert.equal(
+  streamPersistenceSandbox.streamRecord({ manifestUrl: "https://example.test/replay.mpd", contentId: "content-1", feedId: "WORLD", sessionKind: "Race" }),
+  "",
+  "Resolved F1 TV replay descriptors should reset after leaving Live Racing instead of hiding the past-session picker"
+);
+assert.equal(
+  streamPersistenceSandbox.preferredMainF1TvFeed([
+    { feedId: "WORLD", kind: "world", label: "International feed" },
+    { feedId: "feed-2", kind: "feed", label: "F1 Live" },
+  ]).label,
+  "F1 Live",
+  "Main F1 TV pane should prefer F1 Live/F1 TV commentary over the International/Sky feed"
+);
 assert.match(source["LiveRacing.jsx"], /RequestType\.LICENSE[\s\S]*request\.uris = \[licenseServer\]/, "Clean F1 TV player should force Shaka license requests to the resolved F1 TV license endpoint");
 assert.match(source["LiveRacing.jsx"], /F1 TV license rejected/, "Clean F1 TV player should surface license-server rejection hints before Shaka masks them");
 assert.match(source["LiveRacing.jsx"], /visibleDetail[\s\S]*!\/\^https\?:\\\/\\\//, "Clean F1 TV player errors should avoid showing raw playback URLs");
@@ -664,9 +983,18 @@ assert.match(source["LiveRacing.jsx"], /Diagnostics browser/, "Live mode should 
 assert.match(source["LiveRacing.jsx"], /F1 TV session picker/, "Live mode should include a session picker for past races and sessions");
 assert.match(source["LiveRacing.jsx"], /No current live session/, "Live mode should clearly state when there is no current live session");
 assert.match(source["LiveRacing.jsx"], /Load past session/, "Live mode should expose a visible past-session action outside hidden pane settings");
+assert.match(source["LiveRacing.jsx"], /Session Library/, "Live mode should open a dedicated session library popup for past sessions");
+assert.match(source["LiveRacing.jsx"], /sessionLibrary=\{renderSessionLibrary\(\{ inline: true \}\)\}/, "Live mode should replace the empty World Feed pane with the session library");
+assert.match(source["LiveRacing.jsx"], /liveWorkspaceReady[\s\S]*\?[\s\S]*<div className="live__body"/, "Live mode should hide timing, feeds, and onboards until a selected session resolves");
+assert.match(source["LiveRacing.jsx"], /className="live__preload"[\s\S]*renderSessionLibrary\(\{ inline: true \}\)/, "Live mode should show the session library as the pre-load body");
+assert.match(source["LiveRacing.jsx"], /Race weekends/, "Session library should list race weekends in a left rail");
+assert.match(source["LiveRacing.jsx"], /session-library__row/, "Session library should render selectable session rows");
+assert.match(source["LiveRacing.jsx"], /currentF1TvWeekendIndex[\s\S]*slice\(0, currentF1TvWeekendIndex \+ 1\)/, "Session library should show past races through the current weekend, not future weekends");
+assert.doesNotMatch(source["LiveRacing.jsx"], /session-library[\s\S]{0,2600}fastest/i, "Session library should not show fastest driver or time metadata");
 assert.match(source["LiveRacing.jsx"], /loadSelectedF1TvReplay/, "Live mode should load the selected F1 TV replay into the main world-feed pane");
 assert.match(source["LiveRacing.jsx"], /hasCurrentLiveSession/, "Live mode should compute live-vs-replay state instead of always showing LIVE");
 assert.match(source["LiveRacing.jsx"], /Practice 1/, "Live mode should expose practice replay choices");
+assert.match(source["LiveRacing.jsx"], /\.live__grid\[data-layout="focus"\] \.pane--bc \.pane__video \{[\s\S]*object-position: center bottom/, "Intelligent world feed video should bottom-align above the replay progress bar");
 assert.match(source["LiveRacing.jsx"], /Qualifying/, "Live mode should expose qualifying replay choices");
 assert.match(source["LiveRacing.jsx"], /Race/, "Live mode should expose race replay choices");
 assert.match(source["LiveRacing.jsx"], /pitwall\.f1tv\.browseSession/, "Live mode should open the selected F1 TV session");
@@ -679,6 +1007,11 @@ assert.match(source["LiveRacing.jsx"], /Checking F1 TV session/, "Live mode shou
 assert.match(source["LiveRacing.jsx"], /Diagnostic F1 TV captures/, "Live mode should expose captured F1 TV stream diagnostics without making it the normal loading path");
 assert.match(source["LiveRacing.jsx"], /pitwall\.f1tv\.streams/, "Live mode should load captured F1 TV streams");
 assert.match(source["LiveRacing.jsx"], /PitWallStreamPlayer/, "Live mode should render clean PitWall stream player panes");
+assert.match(source["LiveRacing.jsx"], /data-ready=\{String\(ready\)\}/, "Stream video should expose readiness so new onboards can fade in instead of flashing black");
+assert.match(source["LiveRacing.jsx"], /onPlaybackState/, "Stream player should report playback readiness to the pane shell");
+assert.match(source["LiveRacing.jsx"], /data-stream-ready/, "Onboard panes should keep a poster layer visible until the new stream is ready");
+assert.match(source["LiveRacing.jsx"], /pane__streamveil/, "Onboard panes should render a visual warmup veil while intelligent switches load");
+assert.match(source["LiveRacing.jsx"], /\.pane__video \{[^}]*transition-property: opacity, transform, filter/, "Stream video should fade and settle into place with specific composited transitions");
 assert.doesNotMatch(source["LiveRacing.jsx"], /ProtectedF1TvPlayer|React\.createElement\("webview"|<webview/, "Live mode should not show the F1 TV website inside normal player panes");
 assert.match(source["LiveRacing.jsx"], /await player\.attach\(video\)/, "Shaka player should explicitly attach to the video before loading");
 assert.match(source["LiveRacing.jsx"], /allowCrossSiteCredentials\s*=\s*true/, "Shaka player should allow authenticated cross-site F1 TV media requests");
@@ -694,6 +1027,8 @@ assert.match(source["LiveRacing.jsx"], /replaySync/, "Live mode should maintain 
 assert.match(source["LiveRacing.jsx"], /syncReplayPlayers/, "Live mode should sync all replay players from the master clock");
 assert.match(source["LiveRacing.jsx"], /readLivePanelSizes/, "Live mode should restore draggable panel sizes");
 assert.match(source["LiveRacing.jsx"], /startPanelResize/, "Live mode should resize race-viewer panels by pointer dragging");
+assert.match(source["LiveRacing.jsx"], /JSON\.stringify\(\{ preset, selected, expandedPane, panelSizes \}\)/, "Saved Live layouts should include user-adjusted video panel sizing");
+assert.match(source["LiveRacing.jsx"], /setPanelSizes\(normalizeLivePanelSizes\(saved\.panelSizes\)\)/, "Restoring a Live layout should restore the saved video panel sizing");
 assert.match(source["LiveRacing.jsx"], /pane__driverselect/, "Onboard panes should expose an in-pane driver switcher");
 assert.match(source["LiveRacing.jsx"], /retainedPanes/, "Live mode should retain mounted player panes when switching views");
 assert.doesNotMatch(source["LiveRacing.jsx"], /key \+ "-" \+ i/, "Live mode should not key player panes by layout index");
@@ -712,6 +1047,8 @@ assert.match(source["LiveRacing.jsx"], /DEFAULT_REPLAY_TIMING_OFFSET = -8/, "Rep
 assert.match(source["LiveRacing.jsx"], /timingElapsedSeconds/, "Replay timing should apply the offset before requesting timing rows");
 assert.match(source["LiveRacing.jsx"], /sessionClock/, "Live timing should render the official F1 session clock for sync diagnostics");
 assert.match(source["LiveRacing.jsx"], /smoothSessionClockLabel/, "Live timing should locally interpolate the session countdown between timing snapshots");
+assert.match(source["LiveRacing.jsx"], /sessionClockDisplayLabel/, "Live timing should format race and qualifying clocks for the timing header");
+assert.doesNotMatch(source["LiveRacing.jsx"], /Remaining \{sessionClockLabel\}/, "Live timing clock should not render a Remaining prefix in the status bar");
 assert.match(source["LiveRacing.jsx"], /TIMING_OFFSET_STORAGE_KEY/, "Replay timing offset should persist between app launches");
 assert.match(source["LiveRacing.jsx"], /SyncMenu/, "Replay timing alignment controls should live inside the Sync menu");
 assert.match(source["LiveRacing.jsx"], /Timing [-+]10s/, "Live mode should expose quick controls to align replay timing with the broadcast leaderboard");
@@ -734,13 +1071,31 @@ assert.match(source["LiveRacing.jsx"], /liveTimingData/, "Live mode should keep 
 assert.match(source["LiveRacing.jsx"], /pitwall\.data\.liveTiming/, "Live mode should request fast OpenF1 timing snapshots while racing");
 assert.match(source["LiveRacing.jsx"], /targetLatencySeconds: syncTargetFor\("WORLD"\)/, "Live timing should request rows delayed to the World Feed target latency");
 assert.match(source["LiveRacing.jsx"], /setInterval\(loadLiveTiming, LIVE_TIMING_POLL_INTERVAL_MS\)/, "Live timing should refresh quickly for broadcast sync");
+assert.match(source["LiveRacing.jsx"], /liveTimingRequestRef/, "Live timing polling should ignore stale overlapping responses");
+assert.match(source["LiveRacing.jsx"], /liveTimingInFlightRef/, "Live timing polling should not start overlapping snapshot requests");
+assert.match(source["LiveRacing.jsx"], /setLiveTimingData\(\(current\) => data\?\.timing\?\.length \? data : current\?\.timing\?\.length \? current : data \|\| null\)/, "Live timing should not let an empty late response overwrite populated rows");
+assert.match(source["LiveRacing.jsx"], /pendingF1TvSelection/, "Choosing an F1 TV replay should pause unrelated live timing until playback resolves");
+assert.match(source["LiveRacing.jsx"], /if \(!resolvedF1TvContent\?\.contentId && !resolvedF1TvContent\?\.feeds\?\.length\) return undefined;/, "Replay timing should wait for the selected F1 TV session to resolve before polling timing");
 assert.match(source["LiveRacing.jsx"], /const CLOCK_TICK_INTERVAL_MS = 250/, "Session countdown should redraw smoothly between network timing snapshots");
 assert.match(source["LiveRacing.jsx"], /useTimingRowMotion/, "Live timing rows should use FLIP-style motion for smooth leaderboard changes");
 assert.match(source["LiveRacing.jsx"], /data-moving="true"/, "Live timing rows should expose a moving state while reordering");
+assert.match(source["LiveRacing.jsx"], /\.timing-driver \{[^}]*display: grid;[^}]*grid-template-columns: 22px minmax\(42px, auto\);[^}]*column-gap: 6px;/, "Live timing driver positions should have a modest lane instead of drifting too far left or sticking to the driver code");
 assert.match(source["LiveRacing.jsx"], /TIMING_COLUMN_STORAGE_KEY/, "Live timing should persist the user's selected timing columns");
 assert.match(source["LiveRacing.jsx"], /TimingColumnMenu/, "Live timing should expose a configurable column menu");
+assert.match(source["LiveRacing.jsx"], /<Icon name="pencil" size=\{14\} \/>/, "Live timing column editor should use a compact pencil trigger");
+assert.match(source["LiveRacing.jsx"], /\.timing-config \{[\s\S]*right: var\(--space-6\)[\s\S]*width: min\(360px, calc\(100vw - 28px\)\)/, "Live timing column menu should be a narrow right-aligned popover");
 assert.match(source["LiveRacing.jsx"], /\.timing-tower \{ min-width: 640px; \}/, "Live timing tower should be horizontally compact enough to reveal more columns");
 assert.match(source["LiveRacing.jsx"], /\.timing-tower__head, \.timing-tower__row \{[\s\S]*column-gap: var\(--space-3\)[\s\S]*padding: 0 var\(--space-2\)/, "Live timing columns should use compact spacing with minimal left inset");
+assert.match(source["LiveRacing.jsx"], /\{ id: "last", label: "Last lap", width: "78px" \}/, "Live timing last-lap column should leave room for the fastest-lap pill");
+assert.match(source["LiveRacing.jsx"], /\{ id: "speed", label: "Speed", width: "48px" \}/, "Live timing column menu should expose speed telemetry");
+assert.match(source["LiveRacing.jsx"], /\{ id: "gear", label: "Gear", width: "34px" \}/, "Live timing column menu should expose gear telemetry");
+assert.match(source["LiveRacing.jsx"], /\{ id: "throttle", label: "Thr", width: "42px" \}/, "Live timing column menu should expose throttle telemetry");
+assert.match(source["LiveRacing.jsx"], /\{ id: "brake", label: "Brk", width: "38px" \}/, "Live timing column menu should expose brake telemetry");
+assert.match(source["LiveRacing.jsx"], /\{ id: "stints", label: "Stints", width: "48px" \}/, "Live timing column menu should expose stint counts");
+assert.match(source["LiveRacing.jsx"], /\{ id: "s1Time", label: "S1 time", width: "54px" \}/, "Live timing column menu should expose sector 1 time");
+assert.match(source["LiveRacing.jsx"], /\{ id: "s2Time", label: "S2 time", width: "54px" \}/, "Live timing column menu should expose sector 2 time");
+assert.match(source["LiveRacing.jsx"], /\{ id: "s3Time", label: "S3 time", width: "54px" \}/, "Live timing column menu should expose sector 3 time");
+assert.match(source["LiveRacing.jsx"], /s1Time: <span className="timing-cell">\{formatSectorTime\(row\.sectorTimes\?\.s1\)\}<\/span>/, "Live timing rows should render sector 1 numeric time when selected");
 assert.match(source["LiveRacing.jsx"], /\.mini-sector \{[\s\S]*width: 44px[\s\S]*overflow: hidden/, "Mini-sector groups should be bounded so S2 and S3 do not visually fuse");
 assert.match(source["LiveRacing.jsx"], /\.mini-sector__seg \{ width: 3px; height: 15px;/, "Mini-sector segments should be small enough for narrow timing columns");
 assert.match(source["LiveRacing.jsx"], /DEFAULT_TIMING_COLUMNS = \["driver", "last", "best", "gap", "interval", "s1", "s2", "s3", "tyre", "age"\]/, "Live timing should show interval by default after compacting columns");
@@ -752,6 +1107,9 @@ assert.match(source["LiveRacing.jsx"], /\.pane:not\(\.pane--bc\) \.pane__drivers
 assert.match(source["LiveRacing.jsx"], /\.pane:not\(\.pane--bc\) \.pane__feedlabel[\s\S]*opacity: 0[\s\S]*\.pane:not\(\.pane--bc\):hover \.pane__feedlabel[\s\S]*opacity: 1/, "Onboard feed label should only appear while hovering an onboard pane");
 assert.match(source["LiveRacing.jsx"], /telemetryForCode/, "Onboard panes should derive telemetry from the active timing rows");
 assert.match(source["LiveRacing.jsx"], /telemetry=\{\(p\.telemetry \|\| p\.feed === "Onboard"\) && telemetryDefault\}/, "Onboard panes should show speed telemetry by default");
+assert.match(source["LiveRacing.jsx"], /telemetryData\.last[\s\S]*Last lap[\s\S]*telemetryData\.best[\s\S]*Best lap/, "Onboard telemetry should show last lap and best lap times");
+assert.match(source["LiveRacing.jsx"], /\.pane:not\(\.pane--bc\) \.pane__telemetry \{[\s\S]*margin-top: auto/, "Onboard telemetry should stay pinned to the bottom when stream warmup layers are absolute");
+assert.match(source["LiveRacing.jsx"], /\.pane:not\(\.pane--bc\) \.pane__bars \{[\s\S]*padding-bottom: 4px/, "Onboard telemetry bars should sit close to the bottom edge");
 assert.match(source["LiveRacing.jsx"], /\.tele__v[\s\S]*transition-property: color/, "Onboard telemetry numbers should visually update smoothly");
 assert.match(source["LiveRacing.jsx"], /row\.telemetry\?\.speed/, "Onboard telemetry should render real speed data from OpenF1 car data");
 assert.match(source["LiveRacing.jsx"], /row\.telemetry\?\.gear/, "Onboard telemetry should render real gear data from OpenF1 car data");
@@ -814,14 +1172,64 @@ assert.match(source["LiveRacing.jsx"], /playbackRate = 0\.8/, "Native HLS playba
 assert.match(source["LiveRacing.jsx"], /ArrowDown|ArrowUp/, "Live mode should support keyboard latency tuning");
 assert.match(source["LiveRacing.jsx"], /Sync overlay/, "Live mode should provide an in-pane stream sync debug overlay");
 assert.match(source["LiveRacing.jsx"], /battlePair/, "Live mode should use deterministic battle pair data");
+assert.match(source["LiveRacing.jsx"], /function buildActiveAiSnapshot/, "Live Racing AI chat should build a mode-aware snapshot from the active session");
+assert.match(source["LiveRacing.jsx"], /activeTimingRows\(\)/, "Live Racing AI chat should use the currently displayed live or replay timing rows");
+assert.match(source["LiveRacing.jsx"], /activeInsights\.map/, "Live Racing insights should render the active session insights instead of stale global snapshot insights");
+assert.doesNotMatch(source["LiveRacing.jsx"], /D\.insights\.map/, "Live Racing insights should not render stale dashboard snapshot insights during replays");
+const liveAiSandbox = vm.runInNewContext(`(() => {
+  ${[
+    "telemetryNumber",
+    "timingGapSeconds",
+    "buildActiveBattlePairs",
+    "buildActiveInsights",
+    "buildActiveStrategyContext",
+    "buildActiveAiSnapshot",
+  ].map((name) => extractNamedFunction(source["LiveRacing.jsx"], name)).join("\n")}
+  return { buildActiveBattlePairs, buildActiveInsights, buildActiveStrategyContext, buildActiveAiSnapshot };
+})()`);
+const activeRows = [
+  { pos: 1, code: "LEC", gap: "LEADER", interval: "—", comp: "soft", age: 8, pits: 1, stints: [{ compound: "soft", laps: 8 }], last: "1:16.200", best: "1:15.900" },
+  { pos: 2, code: "HAM", gap: "+0.420", interval: "+0.420", comp: "medium", age: 10, pits: 0, stints: [{ compound: "medium", laps: 10 }], last: "1:16.310", best: "1:16.000" },
+  { pos: 3, code: "NOR", gap: "+7.400", interval: "+6.980", comp: "hard", age: 22, pits: 0, stints: [{ compound: "hard", laps: 22 }], last: "1:17.000", best: "1:16.400" },
+];
+const activePairs = liveAiSandbox.buildActiveBattlePairs(activeRows);
+assert.deepEqual(activePairs[0].a, "LEC", "Active battle pairs should start from the current timing leader");
+assert.deepEqual(activePairs[0].b, "HAM", "Active battle pairs should pair the closest current timing rows");
+const activeInsights = liveAiSandbox.buildActiveInsights({
+  timingRows: activeRows,
+  sourceLabel: "F1 timing synced",
+  mode: "replay",
+  weather: { cond: "Dry" },
+  sessionClock: { remaining: "00:04:00" },
+});
+assert.equal(activeInsights[0].kind, "battle", "Active insights should include current battle detection");
+assert.match(activeInsights[0].body, /LEC and HAM/, "Active insights should describe the current timing battle");
+assert.match(activeInsights.map((item) => item.kind).join(","), /strategy/, "Active insights should include tyre strategy when timing rows carry tyre data");
+const activeSnapshot = liveAiSandbox.buildActiveAiSnapshot({
+  mode: "replay",
+  timingRows: activeRows,
+  baseData: { race: { name: "Monaco Grand Prix" }, drivers: [], standings: [], constructors: [], sessions: [], news: [], strategyContext: { stale: true } },
+  sourceLabel: "F1 timing synced",
+  weather: { cond: "Dry" },
+  sessionClock: { remaining: "00:04:00" },
+  replay: { elapsedSeconds: 861, timingOffsetSeconds: -8, sessionKind: "Qualifying", raceName: "Monaco Grand Prix" },
+});
+assert.equal(activeSnapshot.mode, "replay", "Live Racing AI snapshot should include replay/live mode");
+assert.equal(activeSnapshot.timing[0].code, "LEC", "Live Racing AI snapshot should use active timing rows");
+assert.equal(activeSnapshot.strategyContext.tyreStrategy.drivers[0].currentCompound, "soft", "Live Racing AI snapshot should rebuild strategy context from active timing rows");
+assert.equal(activeSnapshot.replay.elapsedSeconds, 861, "Live Racing AI snapshot should include replay clock context");
 assert.match(source["Copilot.jsx"], /pitwall\.ai\.ask/, "Copilot should call real configured AI providers");
 assert.doesNotMatch(source["Copilot.jsx"], /% likely|Model confidence|Pole\s*→\s*win|model-derived|Modelled conditions/, "Copilot should not present uncomputed model outputs as facts");
 assert.doesNotMatch(source["Copilot.jsx"], /Math\.max\(0\.15,\s*0\.45\s*-\s*index\s*\*\s*0\.1\)/, "Copilot should not use hardcoded title-probability placeholders");
 assert.match(source["Copilot.jsx"], /No AI projection computed/, "Copilot should disclose when it has not computed a projection");
 assert.match(mainProcess, /predictions:[\s\S]*winner[\s\S]*podium[\s\S]*watchlist/, "AI response schema should allow computed Current weekend race predictions");
 assert.match(mainProcess, /page\.id === "current-weekend"[\s\S]*race winner[\s\S]*podium/, "Current weekend AI prompt should explicitly request race predictions");
+assert.match(mainProcess, /page\.id === "next-weekend"[\s\S]*race winner[\s\S]*podium/, "Next weekend AI prompt should explicitly request race predictions");
+assert.match(mainProcess, /page\.id === "drivers-championship"[\s\S]*drivers.? championship/, "Drivers championship AI prompt should explicitly request championship predictions");
+assert.match(mainProcess, /page\.id === "constructors-championship"[\s\S]*constructors.? championship/, "Constructors championship AI prompt should explicitly request championship predictions");
 assert.match(mainProcess, /COPILOT_INSIGHTS_SCHEMA_VERSION[\s\S]*cached\?\.schemaVersion/, "Daily Copilot cache should be versioned when its response shape changes");
 assert.match(source["Copilot.jsx"], /PredictionBoard[\s\S]*selectedPage\.predictions/, "Copilot should render AI-computed Current weekend predictions");
+assert.match(source["Copilot.jsx"], /const showPredictionBoard = Boolean\(selectedPage\.predictions\?\.available\)/, "Copilot should render AI-computed predictions on every prebuilt insight tab");
 assert.match(source["Copilot.jsx"], /INSIGHT_TABS/, "Copilot should expose tabs for prebuilt insights and chat");
 assert.match(source["Copilot.jsx"], /ask-copilot/, "Copilot should keep freeform chat in a separate Ask Copilot tab");
 assert.match(source["Copilot.jsx"], /daily\.pages/, "Copilot should render prebuilt daily insight pages from the snapshot");
@@ -835,8 +1243,41 @@ assert.match(mainProcess, /buildStrategyContext/, "Electron main should summariz
 assert.match(mainProcess, /visualization/, "AI response schema should allow typed visualization payloads");
 assert.match(source["Copilot.jsx"], /StrategyVisualization/, "Copilot should render AI visualization payloads when present");
 assert.match(source["Copilot.jsx"], /answer\.visualization/, "Copilot should preserve typed AI visualizations in chat messages");
-assert.match(source["LiveRacing.jsx"], /StrategyVisualization/, "Live Racing chat should render AI visualization payloads when present");
+assert.doesNotMatch(source["LiveRacing.jsx"], /StrategyVisualization/, "Ask the engineer should stay text-only instead of rendering AI visualization payloads");
+assert.doesNotMatch(source["LiveRacing.jsx"], /answer\.visualization/, "Ask the engineer should not preserve AI visualization payloads in chat messages");
+assert.match(source["LiveRacing.jsx"], /renderMarkdownText/, "Ask the engineer should render AI summaries as clean Markdown text");
+assert.match(source["LiveRacing.jsx"], /markdownBlocks/, "Ask the engineer should parse lightweight Markdown blocks without visual cards");
+assert.match(source["LiveRacing.jsx"], /presentation:\s*"markdown_text_only"/, "Ask the engineer should explicitly request text-only Markdown answers from AI providers");
+const liveMarkdownSandbox = vm.runInNewContext(`(() => {
+  ${["markdownBlocks", "inlineMarkdownParts"].map((name) => extractNamedFunction(source["LiveRacing.jsx"], name)).join("\n")}
+  return { markdownBlocks, inlineMarkdownParts };
+})()`);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(liveMarkdownSandbox.markdownBlocks("## Status\n\n- LAW fastest\n- Track dry\n\n**Watch:** traffic"))),
+  [
+    { kind: "heading", level: 2, text: "Status" },
+    { kind: "list", items: ["LAW fastest", "Track dry"] },
+    { kind: "paragraph", text: "**Watch:** traffic" },
+  ],
+  "Ask the engineer Markdown renderer should support headings, lists, and paragraphs",
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(liveMarkdownSandbox.inlineMarkdownParts("**Watch** `LAW` now"))),
+  [
+    { kind: "strong", text: "Watch" },
+    { kind: "text", text: " " },
+    { kind: "code", text: "LAW" },
+    { kind: "text", text: " now" },
+  ],
+  "Ask the engineer Markdown renderer should support bold and inline code without HTML",
+);
 assert.match(source["LiveRacing.jsx"], /strategyContext/, "Live Racing AI snapshot should include structured strategy context");
+assert.match(source["LiveRacing.jsx"], /function renderInsightsPane/, "Ask the engineer input should live in a stable render subtree so timing rerenders do not drop focus");
+assert.doesNotMatch(source["LiveRacing.jsx"], /function InsightsPane/, "Ask the engineer input should not be inside a nested React component type that remounts on every Live Racing render");
+assert.match(source["LiveRacing.jsx"], /chatThinking/, "Ask the engineer should track an in-flight AI response");
+assert.match(source["LiveRacing.jsx"], /setChatThinking\(true\)[\s\S]*finally[\s\S]*setChatThinking\(false\)/, "Ask the engineer should show a thinking state only while the AI request is in flight");
+assert.match(source["LiveRacing.jsx"], /Engineer is thinking/, "Ask the engineer should render a visible thinking message while waiting for AI");
+assert.match(source["LiveRacing.jsx"], /msg--thinking/, "Ask the engineer thinking message should have a dedicated visual state");
 assert.match(source["Analytics.jsx"], /pitwall\.history\.query/, "Analytics should query historical Jolpica data");
 assert.doesNotMatch(source["AppShell.jsx"] + source["Dashboard.jsx"] + source["Weekend.jsx"] + source["News.jsx"] + source["Schedule.jsx"] + source["Copilot.jsx"], /Alex Ramos|Ferrari gamble on undercut|Canadian Grand Prix|Circuit Gilles-Villeneuve|Morning, Alex/, "User-facing screens should not hardcode placeholder person, news, or race data");
 

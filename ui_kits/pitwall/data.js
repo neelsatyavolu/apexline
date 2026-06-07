@@ -142,7 +142,7 @@
     news: [],
     insights: [],
     strategyContext: null,
-    presets: ["Driver Focus", "Pit Wall Classic", "Battle Mode", "Data Overload", "Minimal Clean"],
+    presets: ["Intelligent", "Pit Wall Classic", "Battle Mode", "Data Overload", "Minimal Clean"],
     copilot: null,
     seasonSummary: { season: String(new Date().getFullYear()), round: 0, totalRounds: 0 },
     race: {

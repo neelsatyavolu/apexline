@@ -35,7 +35,7 @@
 
     /* Main */
     .pw-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-base); background-image: var(--grad-hero); }
-    .pw-top { display: flex; align-items: center; gap: var(--space-7); height: var(--topbar-h); padding: 0 var(--space-9); border-bottom: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--bg-base) 78%, transparent); backdrop-filter: blur(var(--blur-md, 14px)); flex: none; color-scheme: dark; }
+    .pw-top { position: relative; z-index: 100; display: flex; align-items: center; gap: var(--space-7); height: var(--topbar-h); padding: 0 var(--space-9); border-bottom: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--bg-base) 78%, transparent); backdrop-filter: blur(var(--blur-md, 14px)); flex: none; color-scheme: dark; }
     .pw-top__title { font-family: var(--font-sans); font-weight: 700; font-size: var(--text-xl); color: var(--text-strong); letter-spacing: 0; }
     .pw-top__crumb { font-size: var(--text-sm); color: var(--text-tertiary); }
     .pw-top__search { position: relative; display: flex; align-items: center; gap: var(--space-5); height: var(--size-control-sm); padding: 0 var(--space-7); background: var(--bg-sunken); border: 1px solid var(--border-default); border-radius: var(--radius-pill); color: var(--text-tertiary); font-size: var(--text-sm); min-width: 260px; cursor: text; }

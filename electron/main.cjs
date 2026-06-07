@@ -73,10 +73,10 @@ app.setPath("userData", PITWALL_USER_DATA);
 
 const KEYCHAIN_SERVICE = "PitWall";
 const KEY_PROVIDERS = new Set(["anthropic", "openai", "codex", "grok", "f1tv-email", "f1tv-token"]);
-const DEFAULT_USER_PROFILE = { name: "", favoriteDrivers: [], favoriteTeams: [] };
+const DEFAULT_USER_PROFILE = { name: "", favoriteDrivers: [], favoriteTeams: [], livePanelSizes: null };
 const PROFILE_FILE = "pitwall-profile.json";
 const COPILOT_INSIGHTS_FILE = "pitwall-copilot-insights.json";
-const COPILOT_INSIGHTS_SCHEMA_VERSION = 3;
+const COPILOT_INSIGHTS_SCHEMA_VERSION = 4;
 const DEBUG_LOG_FILE = "pitwall-debug.log";
 const ANALYTICS_SESSION_CACHE_FILE = "pitwall-analytics-session-cache.json";
 const F1TV_LIBRARY_CACHE_FILE = "pitwall-f1tv-library-cache.json";
@@ -119,17 +119,24 @@ const NEWS_SOURCES = [
     type: "rss",
   },
   {
+    key: "autosportNews",
+    name: "Autosport",
+    url: "https://www.autosport.com/rss/f1/news/",
+    type: "rss",
+    articlePath: /\/f1\/news\//i,
+  },
+  {
     key: "formula1News",
     name: "Formula 1",
-    url: "https://www.formula1.com/en/latest",
-    type: "html",
+    url: "https://www.formula1.com/en/latest/all.xml",
+    type: "rss",
     articlePath: /\/en\/latest\/article\//i,
   },
   {
     key: "theRaceNews",
     name: "The Race",
-    url: "https://www.the-race.com/category/formula-1/",
-    type: "html",
+    url: "https://www.the-race.com/rss/",
+    type: "rss",
     articlePath: /\/formula-1\/[^/?#]+\/?$/i,
   },
   {
@@ -364,11 +371,39 @@ async function deleteSecret(provider) {
   return true;
 }
 
+function clampProfilePanelSize(value, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return min;
+  return Math.max(min, Math.min(max, Math.round(numeric)));
+}
+
+function clampProfilePanelPct(value, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 50;
+  return Math.max(min, Math.min(max, Math.round(numeric * 10) / 10));
+}
+
+function normalizeLivePanelSizes(saved) {
+  if (!saved || typeof saved !== "object") return null;
+  return {
+    timingWidth: clampProfilePanelSize(saved.timingWidth || 340, 260, 560),
+    insightsHeight: clampProfilePanelSize(saved.insightsHeight || 280, 180, 460),
+    focusOnboardHeight: clampProfilePanelSize(saved.focusOnboardHeight || 220, 150, 380),
+    battleSplit: clampProfilePanelPct(saved.battleSplit || 50, 28, 72),
+    quadCol: clampProfilePanelPct(saved.quadCol || 50, 28, 72),
+    quadRow: clampProfilePanelPct(saved.quadRow || 50, 28, 72),
+    dataColA: clampProfilePanelPct(saved.dataColA || 33, 20, 60),
+    dataColB: clampProfilePanelPct(saved.dataColB || 33, 18, 60),
+    dataRow: clampProfilePanelPct(saved.dataRow || 50, 28, 72),
+  };
+}
+
 function normalizeUserProfile(profile = {}) {
   return {
     name: String(profile.name || "").slice(0, 80),
     favoriteDrivers: Array.isArray(profile.favoriteDrivers) ? profile.favoriteDrivers.map(String).slice(0, 8) : [],
     favoriteTeams: Array.isArray(profile.favoriteTeams) ? profile.favoriteTeams.map(String).slice(0, 8) : [],
+    livePanelSizes: normalizeLivePanelSizes(profile.livePanelSizes),
   };
 }
 
@@ -480,7 +515,8 @@ async function authenticateF1TvCredentials(email, password) {
 }
 
 async function setUserProfile(profile) {
-  const next = normalizeUserProfile({ ...DEFAULT_USER_PROFILE, ...(profile || {}) });
+  const current = await getUserProfile();
+  const next = normalizeUserProfile({ ...DEFAULT_USER_PROFILE, ...current, ...(profile || {}) });
   const filePath = profileFilePath();
   await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
   await fs.promises.writeFile(filePath, JSON.stringify(next, null, 2), "utf8");
@@ -1077,7 +1113,11 @@ function decodeXmlEntities(value) {
     .replace(/&quot;/g, '"')
     .replace(/&#39;|&apos;/g, "'")
     .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+    .replace(/&gt;/g, ">")
+    .replace(/&#(x[0-9a-f]+|\d+);/gi, (match, code) => {
+      const value = code[0].toLowerCase() === "x" ? Number.parseInt(code.slice(1), 16) : Number.parseInt(code, 10);
+      return Number.isInteger(value) && value >= 0 && value <= 0x10ffff ? String.fromCodePoint(value) : match;
+    });
 }
 
 function decodeEntities(value) {
@@ -1205,9 +1245,51 @@ function extractHtmlDate(value) {
 }
 
 function extractHtmlImage(block, baseUrl) {
-  const match = block.match(/<img\b[^>]*\b(?:src|data-src)=["']([^"']+)["']/i);
-  if (!match) return "";
-  return normalizeNewsImage(absoluteNewsUrl(match[1], baseUrl));
+  const candidates = [];
+  for (const match of block.matchAll(/<(?:img|source)\b[^>]*\b(?:src|data-src|data-lazy-src|data-original)=["']([^"']+)["'][^>]*>/gi)) {
+    candidates.push(match[1]);
+  }
+  for (const match of block.matchAll(/<(?:img|source)\b[^>]*\b(?:srcset|data-srcset)=["']([^"']+)["'][^>]*>/gi)) {
+    const first = String(match[1] || "").split(",")[0]?.trim().split(/\s+/)[0] || "";
+    if (first) candidates.push(first);
+  }
+  return candidates.map((value) => normalizeNewsImage(absoluteNewsUrl(value, baseUrl))).find(Boolean) || "";
+}
+
+function extractArticleMetaImage(html, baseUrl) {
+  const candidates = [];
+  for (const match of html.matchAll(/<meta\b[^>]*(?:property|name)=["'](?:og:image|twitter:image|twitter:image:src)["'][^>]*\bcontent=["']([^"']+)["'][^>]*>/gi)) {
+    candidates.push(match[1]);
+  }
+  for (const match of html.matchAll(/<meta\b[^>]*\bcontent=["']([^"']+)["'][^>]*(?:property|name)=["'](?:og:image|twitter:image|twitter:image:src)["'][^>]*>/gi)) {
+    candidates.push(match[1]);
+  }
+  return candidates.map((value) => normalizeNewsImage(absoluteNewsUrl(value, baseUrl))).find(Boolean) || extractHtmlImage(html.slice(0, 12000), baseUrl);
+}
+
+function normalizeArticleDate(value) {
+  const text = decodeXmlEntities(value).trim();
+  const time = Date.parse(text);
+  if (Number.isFinite(time)) return new Date(time).toISOString();
+  return extractHtmlDate(text);
+}
+
+function extractArticleMetaDate(html) {
+  const candidates = [];
+  const metaNames = "article:published_time|og:published_time|datePublished|datepublished|pubdate|publishdate|publish-date|sailthru.date";
+  for (const match of html.matchAll(new RegExp(`<meta\\b[^>]*(?:property|name)=["'](?:${metaNames})["'][^>]*\\bcontent=["']([^"']+)["'][^>]*>`, "gi"))) {
+    candidates.push(match[1]);
+  }
+  for (const match of html.matchAll(new RegExp(`<meta\\b[^>]*\\bcontent=["']([^"']+)["'][^>]*(?:property|name)=["'](?:${metaNames})["'][^>]*>`, "gi"))) {
+    candidates.push(match[1]);
+  }
+  for (const match of html.matchAll(/<time\b[^>]*\bdatetime=["']([^"']+)["'][^>]*>/gi)) {
+    candidates.push(match[1]);
+  }
+  for (const match of html.matchAll(/"datePublished"\s*:\s*"([^"]+)"/gi)) {
+    candidates.push(match[1]);
+  }
+  return candidates.map(normalizeArticleDate).find(Boolean) || "";
 }
 
 function normalizeNewsStory(sourceName, index, story) {
@@ -1232,12 +1314,20 @@ function normalizeNewsStory(sourceName, index, story) {
   };
 }
 
-function parseRss(xml, sourceName) {
+function parseRss(xml, source) {
+  const sourceName = typeof source === "string" ? source : source.name;
   return Array.from(xml.matchAll(/<item\b[\s\S]*?<\/item>/gi)).slice(0, 18).map((match, index) => {
     const item = match[0];
     const title = extractXml(item, "title");
     const lead = extractXml(item, "description");
     const url = extractXml(item, "link");
+    if (source?.articlePath) {
+      try {
+        if (!source.articlePath.test(new URL(url).pathname)) return null;
+      } catch {
+        return null;
+      }
+    }
     const publishedAt = extractXml(item, "pubDate") || extractXml(item, "published");
     return normalizeNewsStory(sourceName, index, {
       title,
@@ -1247,7 +1337,7 @@ function parseRss(xml, sourceName) {
       publishedAt,
       image: extractRssImage(item),
     });
-  }).filter((item) => item.title && item.url);
+  }).filter((item) => item?.title && item.url);
 }
 
 function parseNewsHtml(html, source) {
@@ -1286,8 +1376,53 @@ function parseNewsHtml(html, source) {
 
 function parseNewsSource(raw, source) {
   if (!raw) return [];
-  if (source.type === "rss") return parseRss(raw, source.name);
+  if (source.type === "rss") return parseRss(raw, source);
   return parseNewsHtml(raw, source);
+}
+
+async function enrichNewsStoryImages(stories, limit = 24, fetchText = requestText) {
+  const targets = stories.filter((story) => story.url && (!story.image || !story.publishedAt || story.time === "1m")).slice(0, limit);
+  await Promise.all(targets.map(async (story) => {
+    try {
+      const html = await fetchText(story.url, 6500);
+      story.image = extractArticleMetaImage(html, story.url) || story.image;
+      const publishedAt = extractArticleMetaDate(html);
+      if (publishedAt) {
+        story.publishedAt = publishedAt;
+        story.time = timeAgo(publishedAt);
+      }
+    } catch {}
+  }));
+  return stories;
+}
+
+function newsStorySortTime(story) {
+  const time = Date.parse(story?.publishedAt || "");
+  return Number.isFinite(time) ? time : 0;
+}
+
+function selectNewsFeedStories(stories, limit = 24) {
+  const sorted = stories.slice().sort((a, b) => newsStorySortTime(b) - newsStorySortTime(a));
+  const selected = sorted.slice(0, limit);
+  const selectedSet = new Set(selected);
+  const sourceOrder = Array.from(new Set(stories.map((story) => story.source).filter(Boolean)));
+  for (const source of sourceOrder) {
+    if (selected.some((story) => story.source === source)) continue;
+    const candidate = sorted.find((story) => story.source === source);
+    if (!candidate || selectedSet.has(candidate)) continue;
+    if (selected.length < limit) {
+      selected.push(candidate);
+      selectedSet.add(candidate);
+      continue;
+    }
+    const sourceCounts = selected.reduce((counts, story) => counts.set(story.source, (counts.get(story.source) || 0) + 1), new Map());
+    const replaceIndex = selected.findLastIndex((story) => (sourceCounts.get(story.source) || 0) > 1);
+    if (replaceIndex === -1) continue;
+    selectedSet.delete(selected[replaceIndex]);
+    selected[replaceIndex] = candidate;
+    selectedSet.add(candidate);
+  }
+  return selected.sort((a, b) => newsStorySortTime(b) - newsStorySortTime(a)).slice(0, limit);
 }
 
 function buildNewsFeed(raw) {
@@ -1301,9 +1436,7 @@ function buildNewsFeed(raw) {
       stories.push(story);
     }
   }
-  return stories
-    .sort((a, b) => (Date.parse(b.publishedAt || "") || 0) - (Date.parse(a.publishedAt || "") || 0))
-    .slice(0, 24);
+  return selectNewsFeedStories(stories, 24);
 }
 
 function parseDriverStandings(json) {
@@ -1574,6 +1707,14 @@ function miniSectorSegments(lap, sector) {
   return segments.length ? segments : sectorDuration != null ? ["yellow", "yellow", "yellow", "yellow", "yellow", "yellow"] : [];
 }
 
+function openF1SectorTimes(lap) {
+  return {
+    s1: finiteNumber(lap?.duration_sector_1),
+    s2: finiteNumber(lap?.duration_sector_2),
+    s3: finiteNumber(lap?.duration_sector_3),
+  };
+}
+
 function parseTiming(openDrivers, positions, intervals, standings, stints = [], pitRows = [], openF1Laps = [], carData = []) {
   const driversByNumber = new Map((openDrivers || []).map((driver) => [Number(driver.driver_number), driver]));
   const standingsByNumber = new Map((standings || [])
@@ -1621,6 +1762,7 @@ function parseTiming(openDrivers, positions, intervals, standings, stints = [], 
         s2: miniSectorSegments(latestLap, 2),
         s3: miniSectorSegments(latestLap, 3),
       },
+      sectorTimes: openF1SectorTimes(latestLap),
       telemetry,
     };
   });
@@ -1640,6 +1782,7 @@ function parseTiming(openDrivers, positions, intervals, standings, stints = [], 
     age: "",
     pits: "",
     sectors: { s1: [], s2: [], s3: [] },
+    sectorTimes: { s1: null, s2: null, s3: null },
     telemetry: {},
   }));
 }
@@ -1907,6 +2050,42 @@ function f1TimingSessionStartSeconds(sessionData) {
   return 0;
 }
 
+function f1TimingQualifyingPart(sessionData, targetSeconds) {
+  const statusText = (item) => String(item?.SessionStatus || item?.Status || item?.Started || "");
+  const eventKey = (item, fallback) => {
+    const utc = String(item?.Utc || item?.Timestamp || item?.Date || "").trim();
+    return utc ? `${utc}:${statusText(item)}` : fallback;
+  };
+  const eventOrder = (item, seconds, index) => {
+    const utcMs = Date.parse(item?.Utc || item?.Timestamp || item?.Date || "");
+    return Number.isFinite(utcMs) ? utcMs : seconds * 1000 + index;
+  };
+  const events = [];
+  for (const entry of sessionData?.sessionStatusEntries || []) {
+    const seconds = finiteNumber(entry?.seconds) ?? 0;
+    if (seconds > targetSeconds) continue;
+    const series = entry?.data?.StatusSeries;
+    const seriesValues = Array.isArray(series) ? series : series && typeof series === "object" ? Object.values(series) : [];
+    const values = seriesValues.length ? seriesValues : [entry?.data];
+    values.forEach((item, index) => {
+      const status = statusText(item);
+      if (status) events.push({ status, key: eventKey(item, `${seconds}:${index}:${status}`), order: eventOrder(item, seconds, index) });
+    });
+  }
+  events.sort((a, b) => a.order - b.order);
+  let startedCount = 0;
+  let wasStarted = false;
+  const seen = new Set();
+  for (const event of events) {
+    if (seen.has(event.key)) continue;
+    seen.add(event.key);
+    const isStarted = event.status === "Started";
+    if (isStarted && !wasStarted) startedCount += 1;
+    wasStarted = isStarted;
+  }
+  return startedCount ? `Q${Math.min(startedCount, 3)}` : "";
+}
+
 function f1TimingValue(value) {
   if (value == null) return "";
   if (typeof value === "object") return String(value.Value ?? value.value ?? "");
@@ -1969,6 +2148,11 @@ function f1TimingSegments(sector) {
   const raw = sector?.Segments || [];
   const values = Array.isArray(raw) ? raw : Object.values(raw);
   return values.map((segment) => timingSegmentTone(segment?.Status ?? segment?.status ?? segment)).filter((tone) => tone !== "off");
+}
+
+function f1TimingSectorTime(sector) {
+  const raw = sector?.Value ?? sector?.value ?? sector?.Time ?? sector?.time ?? "";
+  return f1TimingLapSeconds(raw);
 }
 
 function f1TimingStints(value) {
@@ -2035,6 +2219,7 @@ function parseF1TimingSessionClock(sessionData, targetSeconds) {
   return {
     remaining,
     status,
+    qualifyingPart: f1TimingQualifyingPart(sessionData, targetSeconds),
     extrapolating: Boolean(clockState?.Extrapolating),
     utc: clockState?.Utc || "",
   };
@@ -2095,6 +2280,11 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options = {}) {
         s1: f1TimingSegments(line?.Sectors?.["0"]),
         s2: f1TimingSegments(line?.Sectors?.["1"]),
         s3: f1TimingSegments(line?.Sectors?.["2"]),
+      },
+      sectorTimes: {
+        s1: f1TimingSectorTime(line?.Sectors?.["0"]),
+        s2: f1TimingSectorTime(line?.Sectors?.["1"]),
+        s3: f1TimingSectorTime(line?.Sectors?.["2"]),
       },
       telemetry: telemetryByNumber.get(number) || {},
     };
@@ -2954,6 +3144,12 @@ function dailyInsightPrompt(page) {
   ];
   if (page.id === "current-weekend") {
     instructions.push("For this Current weekend page, compute AI predictions for the race winner, podium, and watchlist using only the supplied snapshot. Use snapshot.weekendSessionSummaries for FP1-FP3, sprint, qualifying, race-pace, weather, tyre, and session-result evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. If qualifying, race pace, weather, or timing data is missing, lower confidence and say so instead of filling gaps.");
+  } else if (page.id === "next-weekend") {
+    instructions.push("For this Next weekend page, compute AI predictions for the race winner, podium, and watchlist using only the supplied snapshot. Use snapshot.nextRaceWeekend, schedule, standings, constructors, timing, strategy context, and news evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. If session, race pace, weather, tyre, or timing data is missing for the next weekend, lower confidence and say so instead of filling gaps.");
+  } else if (page.id === "drivers-championship") {
+    instructions.push("For this Drivers championship page, compute AI predictions for the drivers' championship winner, leading title contenders, and watchlist using only the supplied snapshot. Use standings, wins, constructors, schedule, season summary, timing, strategy context, and news evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. If remaining-race count, form, reliability, or pace data is missing, lower confidence and say so instead of filling gaps.");
+  } else if (page.id === "constructors-championship") {
+    instructions.push("For this Constructors championship page, compute AI predictions for the constructors' championship winner, leading title contenders, and watchlist using only the supplied snapshot. Use constructors standings, driver standings, schedule, season summary, timing, strategy context, and news evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. Use constructor abbreviations or names in prediction candidate code fields. If remaining-race count, form, reliability, or pace data is missing, lower confidence and say so instead of filling gaps.");
   } else {
     instructions.push("For predictions, set available=false with empty winner, podium, and watchlist arrays.");
   }
@@ -3127,7 +3323,8 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
     if (hasWeatherRows(weekendWeatherRows)) weatherRows = weekendWeatherRows;
   }
   const weather = parseWeather(weatherRows);
-  const news = buildNewsFeed(raw);
+  const baseNews = buildNewsFeed(raw);
+  const news = options.enrichmentPending ? baseNews : await enrichNewsStoryImages(baseNews);
   const race = {
     name: nextRace.name || "Current Formula 1 session",
     circuit: nextRace.circuit || "",
@@ -5159,7 +5356,7 @@ const AI_SYSTEM_PROMPT = [
   "Set visualization.kind to comparison, timeline, or battle only when that helps the user understand the answer.",
   "Set visualization.kind to none with empty title, subtitle, rows, and notes when prose is clearer.",
   "Never invent tyre compounds or stint laps when snapshot.strategyContext.tyreStrategy.available is false; explain what is missing instead.",
-  "Always include predictions. Set predictions.available=true only for a Current weekend race forecast, otherwise set it false with empty winner, podium, and watchlist arrays.",
+  "Always include predictions. Set predictions.available=true only for daily Current weekend, Next weekend, Drivers championship, or Constructors championship projection pages, otherwise set it false with empty winner, podium, and watchlist arrays.",
   "When predictions are available, label them as projections, use confidence and probability values from 0 to 1, and ground every winner, podium, and watchlist reason in the snapshot.",
 ].join(" ");
 
@@ -5168,7 +5365,7 @@ function aiPayload(options = {}) {
     prompt: String(options.prompt || "Summarize the live F1 snapshot."),
     snapshot: options.snapshot || {},
     visualizationGuide: "Return visualization.kind='none' for text-only answers. Use 'tyre_strategy' with one row per relevant driver when tyre, stint, pit, compound, or race-plan data is best shown visually.",
-    predictionGuide: "Return predictions.available=true only for a Current weekend race forecast. Otherwise use available=false with empty winner, podium, and watchlist arrays.",
+    predictionGuide: "Return predictions.available=true only for daily Current weekend, Next weekend, Drivers championship, or Constructors championship projection pages. Otherwise use available=false with empty winner, podium, and watchlist arrays.",
     generatedAt: new Date().toISOString(),
   };
 }

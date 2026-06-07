@@ -327,15 +327,19 @@
 	    return n > 0 ? `${Math.round(Math.max(0, Math.min(1, n)) * 100)}%` : "n/a";
 	  }
 
-	  function PredictionCandidate({ D, item, index, kind }) {
+	  function PredictionCandidate({ D, item, index, kind, pageId }) {
 	    const code = item.code || "";
+	    const isConstructor = pageId === "constructors-championship";
 	    const driver = D.byCode?.[code] || {};
+	    const constructor = isConstructor
+	      ? (D.constructors || []).find((team) => [team.abbr, team.name].filter(Boolean).some((value) => String(value).toLowerCase() === String(code || item.label).toLowerCase())) || {}
+	      : {};
 	    const name = item.label || driver.name || code || "Driver";
 	    const confidence = Math.max(0, Math.min(1, finiteValue(item.confidence, 0)));
-	    const color = driver.color || standingsColor(index);
+	    const color = constructor.color || driver.color || standingsColor(index);
 	    return (
 	      <div className="race-pick" style={{ "--_c": color, "--_w": Math.max(5, confidence * 100) + "%" }}>
-	        <Avatar initials={code || name.slice(0, 3).toUpperCase()} number={driver.num} ring={color} src={driver.image} size="sm" />
+	        <Avatar initials={code || name.slice(0, 3).toUpperCase()} number={isConstructor ? "" : driver.num} ring={color} src={isConstructor ? "" : driver.image} size="sm" />
 	        <div>
 	          <div className="race-pick__name">{name}</div>
 	          <div className="race-pick__meta"><span>{kind}</span><span>confidence {predictionPercent(confidence)}</span></div>
@@ -347,8 +351,28 @@
 	    );
 	  }
 
-	  function PredictionBoard({ D, predictions }) {
+	  function predictionBoardLabels(pageId) {
+	    if (pageId === "drivers-championship" || pageId === "constructors-championship") {
+	      return {
+	        winner: "Title picks",
+	        podium: "Contenders",
+	        watchlist: "Watchlist",
+	        winnerKind: "title",
+	        podiumKind: () => "contender",
+	      };
+	    }
+	    return {
+	      winner: "Winner picks",
+	      podium: "Podium",
+	      watchlist: "Watchlist",
+	      winnerKind: "win",
+	      podiumKind: (index) => `P${index + 1}`,
+	    };
+	  }
+
+	  function PredictionBoard({ D, predictions, pageId }) {
 	    if (!predictions?.available) return null;
+	    const labels = predictionBoardLabels(pageId);
 	    const winner = Array.isArray(predictions.winner) ? predictions.winner.slice(0, 3) : [];
 	    const podium = Array.isArray(predictions.podium) ? predictions.podium.slice(0, 3) : [];
 	    const watchlist = Array.isArray(predictions.watchlist) ? predictions.watchlist.slice(0, 4) : [];
@@ -365,19 +389,19 @@
 	        {predictions.summary && <div className="race-pred__summary">{predictions.summary}</div>}
 	        {winner.length > 0 && (
 	          <div className="race-pred__section">
-	            <div className="race-pred__label">Winner picks</div>
-	            {winner.map((item, index) => <PredictionCandidate D={D} item={item} index={index} kind="win" key={`${item.code || "win"}-${index}`} />)}
+	            <div className="race-pred__label">{labels.winner}</div>
+	            {winner.map((item, index) => <PredictionCandidate D={D} item={item} index={index} kind={labels.winnerKind} pageId={pageId} key={`${item.code || "win"}-${index}`} />)}
 	          </div>
 	        )}
 	        {podium.length > 0 && (
 	          <div className="race-pred__section">
-	            <div className="race-pred__label">Podium</div>
-	            {podium.map((item, index) => <PredictionCandidate D={D} item={item} index={index} kind={`P${index + 1}`} key={`${item.code || "podium"}-${index}`} />)}
+	            <div className="race-pred__label">{labels.podium}</div>
+	            {podium.map((item, index) => <PredictionCandidate D={D} item={item} index={index} kind={labels.podiumKind(index)} pageId={pageId} key={`${item.code || "podium"}-${index}`} />)}
 	          </div>
 	        )}
 	        {watchlist.length > 0 && (
 	          <div className="race-pred__section">
-	            <div className="race-pred__label">Watchlist</div>
+	            <div className="race-pred__label">{labels.watchlist}</div>
 	            {watchlist.map((item, index) => (
 	              <div className="race-watch" key={`${item.label || "watch"}-${index}`}>
 	                <div className="race-watch__top"><span>{item.label || "Prediction"}</span><span>{predictionPercent(item.confidence)}</span></div>
@@ -509,7 +533,7 @@
 	      predictions: { available: false, title: "", summary: "", winner: [], podium: [], watchlist: [], caveat: "" },
 	    };
 	    const showAiVisualization = activeTab !== "drivers-championship" && activeTab !== "constructors-championship";
-	    const showPredictionBoard = activeTab === "current-weekend" && selectedPage.predictions?.available;
+	    const showPredictionBoard = Boolean(selectedPage.predictions?.available);
 
     React.useEffect(() => {
       if (msgsRef.current) msgsRef.current.scrollTop = msgsRef.current.scrollHeight;
@@ -653,7 +677,7 @@
 
 	            <div className="cop__main">
 	              {showPredictionBoard ? (
-	                <PredictionBoard D={D} predictions={selectedPage.predictions} />
+	                <PredictionBoard D={D} predictions={selectedPage.predictions} pageId={activeTab} />
 	              ) : (
 	                <div className="cop-preds">
 	                  {standingsCards.map((p, i) => {

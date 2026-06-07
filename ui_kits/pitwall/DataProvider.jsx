@@ -4,6 +4,7 @@
     name: "",
     favoriteDrivers: [],
     favoriteTeams: [],
+    livePanelSizes: null,
   };
   const EMPTY_DATA = {
     drivers: [],
@@ -43,7 +44,34 @@
   }
 
   function loadProfile() {
-    return { ...DEFAULT_PROFILE, ...safeJson(localStorage.getItem("pw-profile") || "{}", {}) };
+    return normalizeProfile({ ...DEFAULT_PROFILE, ...safeJson(localStorage.getItem("pw-profile") || "{}", {}) });
+  }
+
+  function clampProfilePanelSize(value, min, max) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return min;
+    return Math.max(min, Math.min(max, Math.round(numeric)));
+  }
+
+  function clampProfilePanelPct(value, min, max) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 50;
+    return Math.max(min, Math.min(max, Math.round(numeric * 10) / 10));
+  }
+
+  function normalizeLivePanelSizes(saved) {
+    if (!saved || typeof saved !== "object") return null;
+    return {
+      timingWidth: clampProfilePanelSize(saved.timingWidth || 340, 260, 560),
+      insightsHeight: clampProfilePanelSize(saved.insightsHeight || 280, 180, 460),
+      focusOnboardHeight: clampProfilePanelSize(saved.focusOnboardHeight || 220, 150, 380),
+      battleSplit: clampProfilePanelPct(saved.battleSplit || 50, 28, 72),
+      quadCol: clampProfilePanelPct(saved.quadCol || 50, 28, 72),
+      quadRow: clampProfilePanelPct(saved.quadRow || 50, 28, 72),
+      dataColA: clampProfilePanelPct(saved.dataColA || 33, 20, 60),
+      dataColB: clampProfilePanelPct(saved.dataColB || 33, 18, 60),
+      dataRow: clampProfilePanelPct(saved.dataRow || 50, 28, 72),
+    };
   }
 
   function normalizeProfile(profile = {}) {
@@ -51,11 +79,12 @@
       name: String(profile.name || ""),
       favoriteDrivers: Array.isArray(profile.favoriteDrivers) ? profile.favoriteDrivers : [],
       favoriteTeams: Array.isArray(profile.favoriteTeams) ? profile.favoriteTeams : [],
+      livePanelSizes: normalizeLivePanelSizes(profile.livePanelSizes),
     };
   }
 
   function profileHasContent(profile) {
-    return Boolean(profile?.name || profile?.favoriteDrivers?.length || profile?.favoriteTeams?.length);
+    return Boolean(profile?.name || profile?.favoriteDrivers?.length || profile?.favoriteTeams?.length || profile?.livePanelSizes);
   }
 
   function persistProfile(profile) {
@@ -164,7 +193,11 @@
         try {
           const persisted = normalizeProfile(await window.pitwall.profile.get());
           const local = loadProfile();
-          const next = profileHasContent(persisted) ? { ...local, ...persisted } : local;
+          const next = profileHasContent(persisted) ? {
+            ...local,
+            ...persisted,
+            livePanelSizes: persisted.livePanelSizes != null ? persisted.livePanelSizes : local.livePanelSizes,
+          } : local;
           if (mounted) setProfile(next);
           if (profileHasContent(next)) persistProfile(next);
         } catch {}

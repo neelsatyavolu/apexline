@@ -43,19 +43,24 @@
 
     /* Body: timing | grid | insights */
     .live__body { position: relative; flex: 1; display: grid; grid-template-columns: var(--timing-sidebar-w, 340px) minmax(0, 1fr); min-height: 0; }
+    .live__preload { position: relative; flex: 1; min-height: 0; padding: 6px; background: var(--bg-app); }
+    .live__preload .session-library--inline .session-library__panel { border: 1px solid var(--border-default); border-radius: var(--radius-md); }
     .live__body[data-layout="focus"] { grid-template-columns: minmax(0, 1fr) var(--timing-sidebar-w, 340px); }
     .live__body[data-layout="focus"] .live__timing { grid-column: 2; border-right: 0; border-left: 1px solid var(--border-subtle); }
     .live__body[data-layout="focus"] .live__center { grid-column: 1; grid-row: 1; }
-    .live__timing { display: flex; flex-direction: column; background: var(--bg-base); border-right: 1px solid var(--border-subtle); min-height: 0; min-width: 0; }
-    .live__timinghd { display: flex; align-items: center; gap: var(--space-5); padding: var(--space-6) var(--space-7); border-bottom: 1px solid var(--border-subtle); }
+    .live__timing { position: relative; display: flex; flex-direction: column; background: var(--bg-base); border-right: 1px solid var(--border-subtle); min-height: 0; min-width: 0; }
+    .live__timinghd { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--space-5); padding: var(--space-6) var(--space-7); border-bottom: 1px solid var(--border-subtle); }
+    .live__timingtitle { display: flex; align-items: center; gap: var(--space-5); min-width: 0; }
     .live__timinghd h3 { font-size: var(--text-sm); font-weight: 600; text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--text-tertiary); margin: 0; }
+    .live__timingclock { justify-self: center; color: var(--accent); font-family: var(--font-mono); font-size: 18px; font-weight: 900; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .live__timingactions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-5); min-width: 0; }
     .live__timingscroll { flex: 1; overflow: auto; min-height: 0; }
     .live__statusbar { display: flex; align-items: center; gap: var(--space-5); padding: var(--space-5) var(--space-7); border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
     .live__weather { display: flex; gap: var(--space-7); padding: var(--space-6) var(--space-7); border-top: 1px solid var(--border-subtle); }
     .live__wx { display: flex; align-items: center; gap: var(--space-4); font-size: var(--text-sm); color: var(--text-secondary); }
     .live__wx b { font-family: var(--font-mono); color: var(--text-primary); font-weight: 600; }
-    .timing-config { position: absolute; left: var(--space-6); right: var(--space-6); top: 54px; z-index: 60; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); padding: var(--space-5); border-radius: var(--radius-md); border: 1px solid var(--border-default); background: var(--surface-overlay); box-shadow: var(--shadow-lg); }
-    .timing-config__item { appearance: none; -webkit-appearance: none; display: flex; align-items: center; gap: var(--space-3); min-height: 28px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text-secondary); font-family: var(--font-sans); font-size: var(--text-xs); cursor: pointer; }
+    .timing-config { position: absolute; right: var(--space-6); top: 54px; z-index: 60; width: min(360px, calc(100vw - 28px)); max-height: min(520px, calc(100vh - 120px)); overflow: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); padding: var(--space-5); border-radius: var(--radius-md); border: 1px solid var(--border-default); background: var(--surface-overlay); box-shadow: var(--shadow-lg); }
+    .timing-config__item { appearance: none; -webkit-appearance: none; display: flex; align-items: center; justify-content: flex-start; gap: var(--space-3); min-height: 28px; padding: 0 var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text-secondary); font-family: var(--font-sans); font-size: var(--text-xs); cursor: pointer; min-width: 0; }
     .timing-config__item[data-active="true"] { color: var(--text-primary); border-color: var(--accent-border); background: var(--accent-quiet); }
     .timing-tower { min-width: 640px; }
     .timing-tower__head, .timing-tower__row { display: grid; align-items: center; column-gap: var(--space-3); padding: 0 var(--space-2); }
@@ -64,9 +69,12 @@
     .timing-tower__row { min-height: 40px; border-bottom: 1px solid var(--border-subtle); background: rgba(255,255,255,0.015); color: var(--text-primary); cursor: pointer; transform: translateZ(0); transition-property: background-color, border-color, box-shadow; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
     .timing-tower__row:hover { background: var(--surface-hover); }
     .timing-tower__row[data-selected="true"] { background: var(--accent-quiet); box-shadow: inset 3px 0 0 var(--accent); }
+    .timing-tower__row[data-elimination="true"] { background: linear-gradient(90deg, rgba(255,59,59,0.14), rgba(255,59,59,0.035)); box-shadow: inset 3px 0 0 rgba(255,95,95,0.62); }
+    .timing-tower__row[data-elimination="true"]:hover { background: linear-gradient(90deg, rgba(255,59,59,0.18), rgba(255,59,59,0.055)); }
+    .timing-tower__row[data-elimination="true"] .timing-driver__pos { color: #ff9a9a; }
     .timing-tower__row[data-moving="true"] { position: relative; z-index: 3; will-change: transform; box-shadow: 0 10px 24px rgba(0,0,0,0.28), inset 3px 0 0 var(--accent); }
-    .timing-driver { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
-    .timing-driver__pos { width: 14px; color: var(--text-tertiary); font-family: var(--font-mono); font-weight: 800; text-align: right; }
+    .timing-driver { display: grid; grid-template-columns: 22px minmax(42px, auto); align-items: center; column-gap: 6px; min-width: 0; }
+    .timing-driver__pos { width: auto; color: var(--text-tertiary); font-family: var(--font-mono); font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; }
     .timing-driver__code { display: inline-grid; place-items: center; min-width: 42px; height: 24px; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--driver-color, var(--accent)); color: #061017; font-family: var(--font-display); font-size: var(--text-sm); font-weight: 900; letter-spacing: 0.02em; transition-property: background-color, color; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
     .timing-cell { font-family: var(--font-mono); font-size: 13px; font-weight: 800; white-space: nowrap; font-variant-numeric: tabular-nums; transition-property: color, background-color; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
     .timing-cell--pill { display: inline-flex; justify-content: center; min-width: 58px; padding: 4px 7px; border-radius: var(--radius-pill); background: rgba(78,186,87,0.92); color: #061017; }
@@ -83,6 +91,7 @@
     .live__grid { position: relative; flex: 1; display: grid; gap: 6px; padding: 6px; min-height: 0; background: var(--bg-app); }
     .live__grid[data-layout="focus"] { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: minmax(150px, var(--focus-onboard-h, 220px)) minmax(260px, 1fr); grid-template-areas: "ob1 ob2 ob3" "world world world"; }
     .live__grid[data-layout="focus"] .pane__video { object-fit: contain; }
+    .live__grid[data-layout="focus"] .pane--bc .pane__video { object-position: center bottom; }
     .live__grid[data-layout="battle"] { grid-template-columns: minmax(0, var(--battle-a, 50%)) minmax(0, var(--battle-b, 50%)); grid-template-rows: 1fr; }
     .live__grid[data-layout="quad"] { grid-template-columns: minmax(0, var(--quad-col, 50%)) minmax(0, 1fr); grid-template-rows: minmax(0, var(--quad-row, 50%)) minmax(0, 1fr); }
     .live__grid[data-layout="data"] { grid-template-columns: minmax(0, var(--data-col-a, 33%)) minmax(0, var(--data-col-b, 33%)) minmax(0, 1fr); grid-template-rows: minmax(0, var(--data-row, 50%)) minmax(0, 1fr); }
@@ -96,7 +105,9 @@
     .pane[data-focus="true"] { border-color: var(--accent-border); box-shadow: var(--glow-accent); }
     .pane__feed { position: absolute; inset: 0; background-image: var(--grad-carbon); opacity: 0.5; }
     .pane__scan { position: absolute; inset: 0; background: radial-gradient(120% 80% at 50% 0%, rgba(45,123,255,0.06), transparent 60%); }
-    .pane__video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; z-index: 1; }
+    .pane__video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: transparent; z-index: 1; opacity: 0; transform: scale(1.012); filter: saturate(0.86); transition-property: opacity, transform, filter; transition-duration: 260ms; transition-timing-function: cubic-bezier(0.2, 0, 0, 1); will-change: opacity, transform; }
+    .pane__video[data-ready="true"] { opacity: 1; transform: scale(1); filter: none; }
+    .pane__video[data-ready="false"] { pointer-events: none; }
     .pane--bc .pane__video { bottom: 124px; height: auto; }
     .pane__playerstatus { position: absolute; left: var(--space-6); bottom: var(--space-6); z-index: 6; max-width: min(560px, calc(100% - 32px)); padding: var(--space-4) var(--space-5); border-radius: var(--radius-sm); border: 1px solid var(--border-default); background: rgba(8,11,17,0.92); color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.35; backdrop-filter: blur(8px); pointer-events: none; }
     .pane--bc .pane__playerstatus { bottom: 124px; max-width: min(760px, calc(100% - 32px)); }
@@ -118,7 +129,7 @@
     .pane__streamready { display: flex; flex-direction: column; align-items: center; gap: var(--space-5); color: var(--text-tertiary); text-align: center; }
     .pane__streamready b { font-family: var(--font-display); font-size: var(--text-lg); color: var(--text-primary); letter-spacing: 0.04em; }
     .pane__driverimg { max-height: 82%; max-width: 72%; object-fit: contain; filter: drop-shadow(0 20px 40px rgba(0,0,0,0.42)); opacity: 0.82; }
-    .pane__top { position: relative; display: flex; align-items: center; gap: var(--space-5); padding: var(--space-5) var(--space-6); z-index: 2; }
+    .pane__top { position: relative; display: flex; align-items: center; gap: var(--space-5); padding: var(--space-5) var(--space-6); z-index: 4; }
     .pane__tag { display: flex; align-items: center; gap: var(--space-4); background: var(--scrim); backdrop-filter: blur(6px); border: 1px solid var(--border-default); border-radius: var(--radius-pill); padding: 3px 10px 3px 4px; }
     .pane__feedlabel { font-size: var(--text-2xs); color: var(--text-tertiary); background: var(--scrim); padding: 2px 8px; border-radius: var(--radius-pill); margin-left: auto; backdrop-filter: blur(6px); }
     .pane__driverselect { position: relative; z-index: 3; max-width: min(150px, 42%); height: 26px; border-radius: var(--radius-pill); border: 1px solid var(--border-default); background: rgba(8,11,17,0.82); color: var(--text-primary); padding: 0 24px 0 9px; font-family: var(--font-display); font-size: 12px; font-weight: 700; outline: 0; cursor: pointer; }
@@ -127,13 +138,23 @@
     .pane:not(.pane--bc):hover .pane__driverselect, .pane:not(.pane--bc):focus-within .pane__driverselect { opacity: 1; pointer-events: auto; }
     .pane:not(.pane--bc):hover .pane__feedlabel, .pane:not(.pane--bc):focus-within .pane__feedlabel { opacity: 1; pointer-events: auto; }
     .pane__driverselect:hover { border-color: var(--accent-border); background: var(--surface-hover); }
-    .pane__mid { flex: 1; display: grid; place-items: center; position: relative; z-index: 1; }
+    .pane__mid { flex: 1; display: grid; place-items: center; position: relative; z-index: 1; transition-property: opacity, transform, filter; transition-duration: 220ms; transition-timing-function: cubic-bezier(0.2, 0, 0, 1); }
+    .pane[data-streaming="true"] .pane__mid { position: absolute; inset: 0; padding: var(--space-8); z-index: 2; overflow: hidden; background: radial-gradient(84% 72% at 50% 38%, rgba(45,123,255,0.16), rgba(10,14,21,0.68) 54%, rgba(3,5,8,0.94)); pointer-events: none; }
+    .pane[data-stream-ready="true"][data-streaming="true"] .pane__mid { opacity: 0; transform: scale(0.985); filter: blur(4px); }
+    .pane__streamveil { position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255,255,255,0.035), transparent 32%, rgba(45,123,255,0.10) 62%, transparent); opacity: 0.9; }
+    .pane__streamveil::after { content: ""; position: absolute; top: -12%; bottom: -12%; left: -38%; width: 34%; transform: skewX(-18deg); background: linear-gradient(90deg, transparent, rgba(255,255,255,0.20), transparent); animation: pw-stream-warm 1150ms cubic-bezier(0.2, 0, 0, 1) infinite; }
+    .pane__switching { position: absolute; left: var(--space-6); bottom: var(--space-6); display: flex; align-items: baseline; gap: var(--space-4); padding: 5px 9px; border-radius: var(--radius-pill); border: 1px solid rgba(255,255,255,0.10); background: rgba(8,11,17,0.72); color: var(--text-secondary); font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: var(--tracking-caps); backdrop-filter: blur(10px); }
+    .pane__switching b { font-family: var(--font-display); color: var(--text-primary); letter-spacing: 0.04em; }
+    @keyframes pw-stream-warm { from { transform: translateX(0) skewX(-18deg); opacity: 0; } 20% { opacity: 0.58; } to { transform: translateX(390%) skewX(-18deg); opacity: 0; } }
     .pane__car { font-family: var(--font-display); font-weight: 800; font-size: 62px; color: rgba(255,255,255,0.05); letter-spacing: -0.02em; }
-    .pane__telemetry { position: relative; z-index: 2; display: flex; align-items: center; gap: var(--space-6); padding: var(--space-5) var(--space-6); background: linear-gradient(0deg, rgba(6,8,12,0.92), transparent); }
+    .pane:not(.pane--bc) .pane__telemetry { margin-top: auto; }
+    .pane__telemetry { position: relative; z-index: 2; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-5) var(--space-6); padding: var(--space-5) var(--space-6); background: linear-gradient(0deg, rgba(6,8,12,0.92), transparent); }
     .tele { display: flex; flex-direction: column; gap: 2px; }
+    .tele--lap { min-width: 58px; }
     .tele__v { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-md); color: var(--text-primary); font-variant-numeric: tabular-nums; transition-property: color; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
     .tele__l { font-size: 9px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; }
     .pane__bars { position: relative; z-index: 2; display: flex; gap: 3px; padding: 0 var(--space-6) var(--space-5); }
+    .pane:not(.pane--bc) .pane__bars { padding-bottom: 4px; }
     .pane__bar { height: 4px; flex: 1; border-radius: 2px; background: var(--ink-700); overflow: hidden; }
     .pane__bar i { display: block; height: 100%; border-radius: 2px; transition-property: width, background-color; transition-duration: 160ms; transition-timing-function: linear; }
     .pane__controls { position: absolute; top: var(--space-5); right: var(--space-6); z-index: 3; display: flex; gap: 4px; opacity: 0; transition: opacity var(--dur-fast) var(--ease-standard); }
@@ -161,6 +182,10 @@
     .pane__tag--bc { background: var(--live); border-color: transparent; padding: 4px 11px; color: #fff; }
     .pane__bclive { width: 7px; height: 7px; border-radius: 50%; background: #fff; animation: pw-pulse-live 1.4s var(--ease-in-out) infinite; }
     .pane__feedlabel--bc { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); }
+    .pane--bc .pane__tag--bc, .pane--bc .pane__bcbug, .pane--bc .pane__feedlabel--bc { opacity: 0; pointer-events: none; transition: opacity var(--dur-fast) var(--ease-standard); }
+    .pane--bc:hover .pane__tag--bc, .pane--bc:focus-within .pane__tag--bc,
+    .pane--bc:hover .pane__bcbug, .pane--bc:focus-within .pane__bcbug,
+    .pane--bc:hover .pane__feedlabel--bc, .pane--bc:focus-within .pane__feedlabel--bc { opacity: 1; pointer-events: auto; }
     .pane__bcwm { font-family: var(--font-display); font-weight: 800; font-size: 56px; color: rgba(255,255,255,0.05); letter-spacing: 0.08em; }
     .pane__bcbug { margin-left: auto; z-index: 2; display: inline-flex; align-items: center; gap: var(--space-4); padding: 4px 9px; border-radius: var(--radius-sm); background: var(--scrim); backdrop-filter: blur(6px); border: 1px solid var(--border-default); }
     .pane__bcbug-flag { width: 10px; height: 10px; border-radius: 3px; background: var(--flag-green); box-shadow: 0 0 8px color-mix(in srgb, var(--flag-green) 60%, transparent); flex: none; }
@@ -195,21 +220,22 @@
     .ins__chat { display: flex; flex-direction: column; min-height: 0; }
 	    .ins__msgs { flex: 1; overflow-y: auto; padding: var(--space-6); display: flex; flex-direction: column; gap: var(--space-5); min-height: 0; }
 	    .msg { font-size: var(--text-sm); line-height: 1.42; max-width: 92%; padding: var(--space-5) var(--space-6); border-radius: var(--radius-md); }
-	    .msg--visual { max-width: 100%; width: min(100%, 640px); }
 	    .msg--ai { background: var(--surface-card); border: 1px solid var(--border-subtle); color: var(--text-secondary); align-self: flex-start; }
 	    .msg--me { background: var(--accent); color: #fff; align-self: flex-end; }
-	    .ai-vis { margin-top: var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
-	    .ai-vis__head { display: flex; align-items: baseline; gap: var(--space-5); padding-bottom: var(--space-4); border-bottom: 1px solid var(--border-subtle); }
-	    .ai-vis__title { color: var(--text-primary); font-weight: 800; font-size: var(--text-sm); }
-	    .ai-vis__sub { color: var(--text-tertiary); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	    .ai-vis__row { display: grid; grid-template-columns: 58px minmax(110px, 1fr); gap: var(--space-4); align-items: center; padding: var(--space-4); border-radius: var(--radius-sm); background: var(--bg-sunken); border: 1px solid var(--border-subtle); }
-	    .ai-vis__code { font-family: var(--font-display); font-weight: 800; color: var(--text-primary); }
-	    .ai-vis__meta { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
-	    .ai-vis__pill { display: inline-flex; align-items: center; height: 19px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--surface-raised); color: var(--text-secondary); border: 1px solid var(--border-subtle); font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; }
-	    .ai-vis__bars { grid-column: 1 / -1; display: flex; gap: 3px; min-width: 0; height: 20px; }
-	    .ai-vis__seg { min-width: 17px; border-radius: 4px; display: grid; place-items: center; color: rgba(0,0,0,0.72); font-family: var(--font-mono); font-size: 9px; font-weight: 800; }
-	    .ai-vis__rec { grid-column: 1 / -1; color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.35; }
-	    .ai-vis__notes { margin: 0; padding-left: 16px; color: var(--text-tertiary); font-size: var(--text-xs); line-height: 1.35; }
+	    .msg--thinking { display: inline-flex; align-items: center; gap: var(--space-4); color: var(--text-tertiary); }
+	    .thinking-dots { display: inline-flex; align-items: center; gap: 3px; }
+	    .thinking-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: 0.35; animation: engineerThinking 1s ease-in-out infinite; }
+	    .thinking-dots i:nth-child(2) { animation-delay: 0.15s; }
+	    .thinking-dots i:nth-child(3) { animation-delay: 0.3s; }
+	    @keyframes engineerThinking { 0%, 80%, 100% { opacity: 0.35; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-2px); } }
+	    .msg-md { display: flex; flex-direction: column; gap: var(--space-4); color: inherit; }
+	    .msg-md p, .msg-md h4, .msg-md ul { margin: 0; }
+	    .msg-md h4 { color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-md); line-height: 1.25; font-weight: 800; }
+	    .msg-md p { color: inherit; text-wrap: pretty; }
+	    .msg-md ul { padding-left: 18px; display: flex; flex-direction: column; gap: var(--space-3); }
+	    .msg-md li { padding-left: 2px; }
+	    .msg-md strong { color: var(--text-primary); font-weight: 800; }
+	    .msg-md code { padding: 1px 5px; border-radius: var(--radius-xs); background: var(--bg-sunken); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.92em; }
 	    .ins__compose { display: flex; align-items: center; gap: var(--space-5); padding: var(--space-6); border-top: 1px solid var(--border-subtle); }
     .ins__input { flex: 1; height: var(--size-control-sm); padding: 0 var(--space-7); background: var(--bg-sunken); border: 1px solid var(--border-default); border-radius: var(--radius-pill); color: var(--text-primary); font-family: var(--font-sans); font-size: var(--text-sm); outline: none; }
     .ins__input::placeholder { color: var(--text-disabled); }
@@ -244,6 +270,46 @@
     .toast__s { font-size: var(--text-sm); color: var(--text-secondary); }
     .stream-modal { position: absolute; inset: 0; z-index: 100; display: grid; place-items: center; background: rgba(3,5,8,0.62); backdrop-filter: blur(8px); }
     .stream-modal__panel { width: min(780px, calc(100vw - 48px)); max-height: min(820px, calc(100vh - 48px)); display: flex; flex-direction: column; border-radius: var(--radius-lg); background: var(--surface-overlay); border: 1px solid var(--border-default); box-shadow: var(--shadow-lg); overflow: hidden; }
+    .session-library { position: absolute; inset: 0; z-index: 105; display: grid; place-items: center; padding: 26px; background: rgba(2,5,10,0.70); backdrop-filter: blur(10px); }
+    .session-library__panel { width: min(1180px, calc(100vw - 52px)); height: min(760px, calc(100vh - 52px)); display: grid; grid-template-rows: 96px minmax(0, 1fr); border-radius: 18px; border: 1px solid var(--border-strong); background: linear-gradient(180deg, rgba(8,13,20,0.98), rgba(3,8,13,0.98)); box-shadow: 0 28px 90px rgba(0,0,0,0.58); overflow: hidden; }
+    .session-library--inline { position: relative; inset: auto; z-index: 2; width: 100%; height: 100%; padding: 0; background: transparent; backdrop-filter: none; }
+    .session-library--inline .session-library__panel { width: 100%; height: 100%; border-radius: 0; border: 0; box-shadow: none; }
+    .session-library--inline .session-library__close { display: none; }
+    .session-library__head { display: flex; align-items: center; gap: var(--space-7); padding: var(--space-7) var(--space-8); border-bottom: 1px solid var(--border-subtle); }
+    .session-library__glyph { display: inline-grid; place-items: center; width: 46px; height: 46px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent) 18%, var(--bg-sunken)); color: var(--accent); flex: none; }
+    .session-library__title { margin: 0; font-family: var(--font-display); font-size: 24px; line-height: 1; font-weight: 900; color: var(--text-strong); }
+    .session-library__sub { margin-top: 8px; color: var(--text-tertiary); font-size: var(--text-md); }
+    .session-library__close { margin-left: auto; }
+    .session-library__body { display: grid; grid-template-columns: 320px minmax(0, 1fr); min-height: 0; }
+    .session-library__rail { display: flex; flex-direction: column; gap: var(--space-5); padding: var(--space-8) var(--space-6); border-right: 1px solid var(--border-subtle); background: rgba(3,5,9,0.54); overflow-y: auto; }
+    .session-library__eyebrow { color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 800; text-transform: uppercase; letter-spacing: var(--tracking-caps); }
+    .session-library__race { appearance: none; -webkit-appearance: none; display: grid; gap: var(--space-3); padding: var(--space-6); border-radius: var(--radius-sm); border: 1px solid transparent; background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; }
+    .session-library__race:hover { background: var(--surface-hover); color: var(--text-primary); }
+    .session-library__race[data-active="true"] { background: color-mix(in srgb, var(--accent) 16%, var(--bg-sunken)); border-color: var(--accent-border); color: var(--text-primary); box-shadow: inset 3px 0 0 var(--accent); }
+    .session-library__race-top { display: flex; align-items: center; gap: var(--space-5); color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-sm); }
+    .session-library__race-name { color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-lg); font-weight: 900; line-height: 1.12; }
+    .session-library__race-meta { display: flex; align-items: center; gap: var(--space-4); min-width: 0; color: var(--text-tertiary); font-size: var(--text-sm); }
+    .session-library__content { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .session-library__summary { display: flex; align-items: center; gap: var(--space-5); padding: var(--space-8); border-bottom: 1px solid var(--border-subtle); }
+    .session-library__summary h3 { margin: 0; color: var(--text-strong); font-family: var(--font-display); font-size: 26px; line-height: 1; font-weight: 900; }
+    .session-library__summary p { margin: var(--space-4) 0 0; color: var(--text-tertiary); font-size: var(--text-md); }
+    .session-library__count { margin-left: auto; color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-sm); white-space: nowrap; }
+    .session-library__rows { display: flex; flex-direction: column; gap: var(--space-5); padding: var(--space-7); overflow-y: auto; }
+    .session-library__row { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; align-items: center; gap: var(--space-7); min-height: 78px; padding: var(--space-6); border-radius: var(--radius-md); border: 1px solid var(--border-default); background: var(--surface-card); color: var(--text-primary); }
+    .session-library__row[data-active="true"] { border-color: var(--accent-border); background: color-mix(in srgb, var(--accent) 14%, var(--surface-card)); }
+    .session-library__code { display: inline-grid; place-items: center; width: 48px; height: 48px; border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--accent); font-family: var(--font-display); font-weight: 900; font-size: var(--text-sm); }
+    .session-library__kind { font-family: var(--font-display); font-weight: 900; font-size: var(--text-lg); color: var(--text-primary); }
+    .session-library__when { display: flex; align-items: center; gap: var(--space-4); margin-top: 7px; color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-sm); }
+    .session-library__empty { margin: var(--space-8); color: var(--text-tertiary); font-size: var(--text-sm); }
+    @media (max-width: 860px) {
+      .session-library { padding: 12px; }
+      .session-library__panel { width: calc(100vw - 24px); height: calc(100vh - 24px); grid-template-rows: auto minmax(0, 1fr); }
+      .session-library__head { padding: var(--space-6); }
+      .session-library__body { grid-template-columns: 1fr; }
+      .session-library__rail { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--border-subtle); }
+      .session-library__row { grid-template-columns: 48px minmax(0, 1fr); }
+      .session-library__row > button { grid-column: 1 / -1; justify-self: stretch; }
+    }
     .stream-modal__hd { display: flex; align-items: center; gap: var(--space-5); padding: var(--space-7) var(--space-8); border-bottom: 1px solid var(--border-subtle); }
     .stream-modal__title { font-family: var(--font-display); font-weight: 700; color: var(--text-primary); font-size: var(--text-lg); }
     .stream-modal__body { display: flex; flex-direction: column; gap: var(--space-6); padding: var(--space-8); overflow-y: auto; }
@@ -280,8 +346,11 @@
     `;
   }
 
+  function normalizePresetName(name) {
+    return name === "Driver Focus" ? "Intelligent" : name;
+  }
   const LAYOUTS = {
-    "Driver Focus": "focus", "Pit Wall Classic": "quad", "Battle Mode": "battle",
+    "Intelligent": "focus", "Pit Wall Classic": "quad", "Battle Mode": "battle",
     "Data Overload": "data", "Minimal Clean": "focus",
   };
   const SYNC_STORAGE_KEY = "pw-sync-settings";
@@ -289,10 +358,273 @@
   const DEFAULT_REPLAY_TIMING_OFFSET = -8;
   const SYNC_EPSILON = 0.075;
 
+  function qualifyingPhaseFromSession(options) {
+    options = typeof options === "string" ? { qualifyingPhase: options } : options || {};
+    const clock = options.sessionClock || {};
+    const sessionKind = String(options.sessionKind || "");
+    const phaseTexts = [
+      options.qualifyingPhase,
+      clock.qualifyingPart,
+      clock.phase,
+      clock.part,
+      clock.label,
+      sessionKind,
+    ];
+    for (const value of phaseTexts) {
+      const text = String(value || "").toUpperCase();
+      const match = text.match(/\b(?:SQ|Q)([1-3])\b/) || text.match(/\bQUALIFYING\s*([1-3])\b/);
+      if (match) return `Q${match[1]}`;
+    }
+    if (!/qualifying|shootout/i.test(sessionKind)) return "";
+    const rowCount = Number(options.rowCount);
+    if (Number.isFinite(rowCount) && rowCount > 0) {
+      if (rowCount > 16) return "Q1";
+      if (rowCount > 10) return "Q2";
+      return "Q3";
+    }
+    return "Q1";
+  }
+
+  function qualifyingEliminationCount(rowCount) {
+    const fieldSize = Number(rowCount);
+    if (!Number.isFinite(fieldSize) || fieldSize <= 10) return 5;
+    return Math.max(5, Math.floor((fieldSize - 10) / 2));
+  }
+
+  function qualifyingQ1EliminationStart(rowCount) {
+    const fieldSize = Number(rowCount);
+    const safeFieldSize = Number.isFinite(fieldSize) && fieldSize > 0 ? fieldSize : 20;
+    return safeFieldSize - qualifyingEliminationCount(safeFieldSize) + 1;
+  }
+
+  function qualifyingQ2EliminationEnd(rowCount) {
+    return 10 + qualifyingEliminationCount(rowCount);
+  }
+
+  function isQualifyingEliminationRow(row, phaseContext) {
+    const context = typeof phaseContext === "string" ? { qualifyingPhase: phaseContext } : phaseContext || {};
+    const phase = qualifyingPhaseFromSession(context);
+    const rowCount = Number(context.rowCount);
+    const pos = Number(row?.pos);
+    if (!Number.isFinite(pos)) return false;
+    if (phase === "Q1") return pos >= qualifyingQ1EliminationStart(rowCount);
+    if (phase === "Q2") return pos >= 11 && pos <= qualifyingQ2EliminationEnd(rowCount);
+    return false;
+  }
+
+  function intelligentOnboardCodes(options) {
+    options = options || {};
+    const timingRows = Array.isArray(options.timingRows) ? options.timingRows : [];
+    const fallbackCodes = Array.isArray(options.fallbackCodes) ? options.fallbackCodes : [];
+    const previousCodes = Array.isArray(options.previousCodes) ? options.previousCodes : [];
+    const sessionKind = String(options.sessionKind || "");
+    const count = Math.max(1, Number(options.count || 3));
+    const cleanCode = (value) => String(value || "").trim().toUpperCase();
+    const unique = (codes) => {
+      const picked = [];
+      codes.map(cleanCode).filter(Boolean).forEach((code) => {
+        if (!picked.includes(code)) picked.push(code);
+      });
+      return picked;
+    };
+    const intervalSeconds = (value) => {
+      const text = String(value || "").trim();
+      if (!text || text === "—" || /leader/i.test(text)) return null;
+      const number = Number(text.replace(/^\+/, "").replace(/s$/i, ""));
+      return Number.isFinite(number) ? number : null;
+    };
+    const ordered = timingRows
+      .map((row) => ({ ...row, pos: Number(row.pos), code: cleanCode(row.code) }))
+      .filter((row) => row.code && Number.isFinite(row.pos))
+      .sort((a, b) => a.pos - b.pos);
+    const base = unique([options.preferredCode, options.selectedCode, ...fallbackCodes, ...ordered.map((row) => row.code)]);
+    const primary = base[0] || "";
+    const fill = (smartCodes) => unique([primary, ...smartCodes, ...base]).slice(0, count);
+    const session = sessionKind.toLowerCase();
+
+    if (/qualifying|shootout/.test(session)) {
+      const frontCodes = ordered.map((row) => row.code).filter((code) => code !== primary);
+      const phase = qualifyingPhaseFromSession({ ...options, sessionKind, rowCount: ordered.length });
+      if (phase === "Q1") {
+        const dangerStart = qualifyingQ1EliminationStart(ordered.length);
+        const danger = ordered.find((row) => row.pos === dangerStart) || ordered.find((row) => row.pos === dangerStart - 1) || ordered.at(-1);
+        return fill([danger?.code, frontCodes[0]]);
+      }
+      if (phase === "Q2") {
+        const bubble = ordered.find((row) => row.pos === 10) || ordered.find((row) => row.pos === 11) || ordered.at(-1);
+        return fill([bubble?.code, frontCodes[0]]);
+      }
+      return fill(frontCodes.slice(0, 2));
+    }
+
+    if (/race|sprint|grand prix/.test(session)) {
+      const battleAt = (index, maxGap) => {
+        const ahead = ordered[index - 1];
+        const behind = ordered[index];
+        const gap = intervalSeconds(behind?.interval);
+        if (!ahead?.code || !behind?.code || gap == null || gap <= 0 || gap > maxGap) return null;
+        return { codes: [ahead.code, behind.code], priority: Math.min(ahead.pos, behind.pos), gap };
+      };
+      const activePrevious = (() => {
+        const pair = unique(previousCodes.slice(1, 3));
+        if (pair.length < 2) return null;
+        for (let index = 1; index < ordered.length; index += 1) {
+          const candidate = battleAt(index, 2.2);
+          if (candidate && pair.every((code) => candidate.codes.includes(code))) return candidate;
+        }
+        return null;
+      })();
+      const candidates = [];
+      for (let index = 1; index < ordered.length; index += 1) {
+        const candidate = battleAt(index, 1.5);
+        if (candidate) candidates.push(candidate);
+      }
+      candidates.sort((a, b) => a.priority - b.priority || a.gap - b.gap);
+      const best = candidates[0];
+      const selectedBattle = best && (!activePrevious || best.priority < activePrevious.priority) ? best : activePrevious || best;
+      if (selectedBattle) return fill(selectedBattle.codes);
+    }
+
+    return base.slice(0, count);
+  }
+
   function telemetryNumber(value) {
     if (value === null || value === undefined || value === "") return null;
     const number = Number(value);
     return Number.isFinite(number) ? number : null;
+  }
+  function timingGapSeconds(value) {
+    const text = String(value || "").trim();
+    if (!text || text === "—" || /leader/i.test(text)) return null;
+    const clean = text.replace(/^\+/, "").replace(/^</, "").trim();
+    const parts = clean.split(":").map((part) => Number(part));
+    if (parts.some((part) => !Number.isFinite(part))) return null;
+    if (parts.length === 2) return (parts[0] * 60) + parts[1];
+    return parts[0];
+  }
+  function buildActiveBattlePairs(rows = []) {
+    const ordered = rows
+      .filter((row) => row?.code)
+      .slice()
+      .sort((a, b) => Number(a.pos || 99) - Number(b.pos || 99));
+    const pairs = [];
+    for (let index = 1; index < ordered.length; index += 1) {
+      const leader = ordered[index - 1];
+      const chaser = ordered[index];
+      const gapLabel = chaser.interval && chaser.interval !== "—" ? chaser.interval : chaser.gap || "";
+      const seconds = timingGapSeconds(gapLabel);
+      if (seconds == null || seconds > 2.5) continue;
+      pairs.push({
+        kind: "battle",
+        title: `${leader.code} vs ${chaser.code}`,
+        body: `${leader.code} and ${chaser.code} are separated by ${gapLabel}; load the pair to watch the pressure window.`,
+        conf: Math.max(0.52, Math.min(0.94, 1 - (seconds / 3))),
+        a: leader.code,
+        b: chaser.code,
+        gap: gapLabel,
+      });
+    }
+    return pairs.slice(0, 4);
+  }
+  function buildActiveInsights(options) {
+    options = options || {};
+    const { timingRows = [], sourceLabel = "", mode = "live", weather = {}, sessionClock = {}, battlePairs = null } = options;
+    const pairs = battlePairs || buildActiveBattlePairs(timingRows);
+    const insights = pairs.slice(0, 2);
+    const tyreRows = timingRows
+      .filter((row) => row?.code && (row.comp || row.age || row.pits || row.stints?.length))
+      .slice()
+      .sort((a, b) => Number(b.age || 0) - Number(a.age || 0));
+    if (tyreRows.length) {
+      const row = tyreRows[0];
+      const age = row.age ? `${row.age} lap${Number(row.age) === 1 ? "" : "s"}` : "known";
+      const compound = row.comp ? String(row.comp).toUpperCase() : "tracked tyre";
+      insights.push({
+        kind: "strategy",
+        title: `${row.code} tyre watch`,
+        body: `${row.code} is on ${compound} with ${age} of tyre age and ${row.pits || 0} recorded stop${Number(row.pits || 0) === 1 ? "" : "s"}.`,
+        conf: 0.72,
+      });
+    }
+    const contextBits = [sourceLabel, weather?.cond, sessionClock?.remaining ? `Clock ${sessionClock.remaining}` : ""].filter(Boolean);
+    insights.push({
+      kind: "track",
+      title: mode === "replay" ? "Replay context synced" : "Live context synced",
+      body: contextBits.length ? contextBits.join(" · ") : "Timing context is warming up for this session.",
+      conf: timingRows.length ? 0.82 : 0.5,
+    });
+    return insights.slice(0, 4);
+  }
+  function buildActiveStrategyContext(options) {
+    options = options || {};
+    const { baseData = {}, timingRows = [], battlePairs = [], sourceLabel = "", mode = "live", weather = {} } = options;
+    const baseContext = baseData.strategyContext || {};
+    const tyreDrivers = timingRows.filter((row) => row?.code).map((row) => ({
+      pos: telemetryNumber(row.pos),
+      code: row.code,
+      gap: row.gap || "",
+      interval: row.interval || "",
+      currentCompound: row.comp || "",
+      tyreAge: telemetryNumber(row.age),
+      pitStops: telemetryNumber(row.pits) || 0,
+      stints: Array.isArray(row.stints) ? row.stints.slice(0, 5) : [],
+      lastLapDuration: telemetryNumber(row.lastLapDuration),
+      bestLapDuration: telemetryNumber(row.bestLapDuration),
+    }));
+    const compoundsUsed = Array.from(new Set(tyreDrivers.flatMap((row) => [
+      row.currentCompound,
+      ...(row.stints || []).map((stint) => stint.compound),
+    ]).filter(Boolean)));
+    return {
+      ...baseContext,
+      source: sourceLabel || baseContext.source || "PitWall active session timing",
+      mode,
+      generatedAt: new Date().toISOString(),
+      race: { ...(baseContext.race || {}), ...(baseData.race || {}), weather },
+      tyreStrategy: {
+        available: tyreDrivers.some((row) => row.currentCompound || row.tyreAge != null || row.stints.length || row.pitStops),
+        compoundsUsed,
+        drivers: tyreDrivers,
+      },
+      timing: timingRows.slice(0, 22).map((row) => ({
+        pos: row.pos,
+        code: row.code,
+        gap: row.gap,
+        interval: row.interval,
+        compound: row.comp,
+        tyreAge: row.age,
+        pitStops: row.pits,
+      })),
+      standings: (baseData.standings || []).slice(0, 22),
+      constructors: (baseData.constructors || []).slice(0, 11),
+      battles: battlePairs,
+      newsDigest: (baseData.news || []).slice(0, 6).map((item) => ({
+        source: item.source,
+        title: item.title,
+        category: item.category,
+      })),
+    };
+  }
+  function buildActiveAiSnapshot(options) {
+    options = options || {};
+    const { mode = "live", timingRows = [], baseData = {}, sourceLabel = "", weather = {}, sessionClock = null, replay = null } = options;
+    const battlePairs = buildActiveBattlePairs(timingRows);
+    return {
+      mode,
+      race: baseData.race || {},
+      drivers: (baseData.drivers || []).slice(0, 22),
+      timing: timingRows.slice(0, 22),
+      standings: (baseData.standings || []).slice(0, 22),
+      constructors: (baseData.constructors || []).slice(0, 11),
+      sessions: baseData.sessions || [],
+      battlePairs,
+      strategyContext: buildActiveStrategyContext({ baseData, timingRows, battlePairs, sourceLabel, mode, weather }),
+      weather,
+      sessionClock,
+      replay: mode === "replay" ? replay : null,
+      news: (baseData.news || []).slice(0, 8),
+      source: sourceLabel,
+    };
   }
   function telemetryPct(value) {
     const number = telemetryNumber(value);
@@ -311,20 +643,32 @@
     const pct = telemetryPct(value);
     return pct == null ? "—" : `${pct}%`;
   }
-  function formatTelemetryGap(row) {
-    const interval = String(row?.interval || "").trim();
-    if (interval && interval !== "—") return interval;
+  function formatSectorTime(value) {
+    const number = telemetryNumber(value);
+    if (number == null) return "—";
+    return number >= 60 ? `${Math.floor(number / 60)}:${(number % 60).toFixed(3).padStart(6, "0")}` : number.toFixed(3);
+  }
+  function isQualifyingSessionKind(sessionKind) {
+    return /qualifying|shootout/i.test(String(sessionKind || ""));
+  }
+  function formatTelemetryGap(row, sessionKind = "") {
+    const preferGap = isQualifyingSessionKind(sessionKind);
     const gap = String(row?.gap || "").trim();
+    const interval = String(row?.interval || "").trim();
+    if (preferGap && gap && gap !== "—") return gap;
+    if (interval && interval !== "—") return interval;
     return gap || "—";
   }
-  function telemetryForCode(rows, code) {
+  function telemetryForCode(rows, code, sessionKind = "") {
     const row = (rows || []).find((item) => item.code === code) || {};
     return {
       speed: row.telemetry?.speed,
       gear: row.telemetry?.gear,
       throttle: row.telemetry?.throttle,
       brake: row.telemetry?.brake,
-      gap: formatTelemetryGap(row),
+      gap: formatTelemetryGap(row, sessionKind),
+      last: row.last || "—",
+      best: row.best || "—",
     };
   }
   function bar(v, color) {
@@ -343,18 +687,32 @@
     const descriptor = streamDescriptor(source);
     if (!descriptor) return "";
     if (typeof source === "string") return source;
-    return {
-      contentId: descriptor.contentId || "",
-      feedId: descriptor.feedId || descriptor.id || "",
-      sessionKind: descriptor.sessionKind || "",
-      label: descriptor.label || "",
-      driverCode: descriptor.driverCode || "",
-      kind: descriptor.kind || "",
-    };
+    return "";
+  }
+  function preferredMainF1TvFeed(feeds = []) {
+    const candidates = (Array.isArray(feeds) ? feeds : []).filter((feed) => feed && !feed.driverCode && feed.kind !== "onboard");
+    const scored = candidates.map((feed, index) => {
+      const text = [feed.label, feed.feedId, feed.kind].filter(Boolean).join(" ").toLowerCase();
+      let score = 0;
+      if (/\bf1\s*(?:tv|live)\b|f1tv|live channel/.test(text)) score += 30;
+      if (feed.kind === "world" || feed.feedId === "WORLD") score += 10;
+      if (/international|sky|croft|crofty/.test(text)) score -= 25;
+      return { feed, index, score };
+    });
+    scored.sort((a, b) => b.score - a.score || a.index - b.index);
+    return scored[0]?.feed || feeds[0] || null;
   }
   function readStreamSources() {
-    try { return JSON.parse(localStorage.getItem("pw-stream-sources") || "{}"); }
-    catch { return {}; }
+    try {
+      const parsed = JSON.parse(localStorage.getItem("pw-stream-sources") || "{}");
+      const playable = {};
+      Object.entries(parsed && typeof parsed === "object" ? parsed : {}).forEach(([key, value]) => {
+        if (streamDescriptor(value)) playable[key] = value;
+      });
+      return playable;
+    } catch {
+      return {};
+    }
   }
   function saveStreamSources(sources) {
     const persisted = {};
@@ -379,16 +737,27 @@
   const TIMING_COLUMN_STORAGE_KEY = "pw-live-timing-columns";
   const TIMING_COLUMNS = [
     { id: "driver", label: "Driver", width: "78px" },
-    { id: "last", label: "Last lap", width: "74px" },
+    { id: "name", label: "Name", width: "86px" },
+    { id: "team", label: "Team", width: "72px" },
+    { id: "last", label: "Last lap", width: "78px" },
     { id: "best", label: "Best lap", width: "74px" },
     { id: "gap", label: "Gap", width: "58px" },
     { id: "interval", label: "Interval", width: "58px" },
     { id: "s1", label: "S1 μS", width: "48px" },
     { id: "s2", label: "S2 μS", width: "48px" },
     { id: "s3", label: "S3 μS", width: "48px" },
+    { id: "s1Time", label: "S1 time", width: "54px" },
+    { id: "s2Time", label: "S2 time", width: "54px" },
+    { id: "s3Time", label: "S3 time", width: "54px" },
     { id: "tyre", label: "Tyre", width: "36px" },
+    { id: "compound", label: "Comp", width: "44px" },
     { id: "age", label: "Age", width: "30px" },
     { id: "pits", label: "Pits", width: "32px" },
+    { id: "stints", label: "Stints", width: "48px" },
+    { id: "speed", label: "Speed", width: "48px" },
+    { id: "gear", label: "Gear", width: "34px" },
+    { id: "throttle", label: "Thr", width: "42px" },
+    { id: "brake", label: "Brk", width: "38px" },
   ];
   const DEFAULT_TIMING_COLUMNS = ["driver", "last", "best", "gap", "interval", "s1", "s2", "s3", "tyre", "age"];
   function clampPanelSize(value, min, max) {
@@ -401,20 +770,23 @@
     if (!Number.isFinite(numeric)) return 50;
     return Math.max(min, Math.min(max, Math.round(numeric * 10) / 10));
   }
+  function normalizeLivePanelSizes(saved = {}) {
+    return {
+      timingWidth: clampPanelSize(saved.timingWidth || 340, 260, 560),
+      insightsHeight: clampPanelSize(saved.insightsHeight || 280, 180, 460),
+      focusOnboardHeight: clampPanelSize(saved.focusOnboardHeight || 220, 150, 380),
+      battleSplit: clampPanelPct(saved.battleSplit || 50, 28, 72),
+      quadCol: clampPanelPct(saved.quadCol || 50, 28, 72),
+      quadRow: clampPanelPct(saved.quadRow || 50, 28, 72),
+      dataColA: clampPanelPct(saved.dataColA || 33, 20, 60),
+      dataColB: clampPanelPct(saved.dataColB || 33, 18, 60),
+      dataRow: clampPanelPct(saved.dataRow || 50, 28, 72),
+    };
+  }
   function readLivePanelSizes() {
     try {
       const saved = JSON.parse(localStorage.getItem(PANEL_SIZE_STORAGE_KEY) || "{}");
-      return {
-        timingWidth: clampPanelSize(saved.timingWidth || 340, 260, 560),
-        insightsHeight: clampPanelSize(saved.insightsHeight || 280, 180, 460),
-        focusOnboardHeight: clampPanelSize(saved.focusOnboardHeight || 220, 150, 380),
-        battleSplit: clampPanelPct(saved.battleSplit || 50, 28, 72),
-        quadCol: clampPanelPct(saved.quadCol || 50, 28, 72),
-        quadRow: clampPanelPct(saved.quadRow || 50, 28, 72),
-        dataColA: clampPanelPct(saved.dataColA || 33, 20, 60),
-        dataColB: clampPanelPct(saved.dataColB || 33, 18, 60),
-        dataRow: clampPanelPct(saved.dataRow || 50, 28, 72),
-      };
+      return normalizeLivePanelSizes(saved);
     } catch {
       return { timingWidth: 340, insightsHeight: 280, focusOnboardHeight: 220, battleSplit: 50, quadCol: 50, quadRow: 50, dataColA: 33, dataColB: 33, dataRow: 50 };
     }
@@ -501,7 +873,7 @@
     return (
       <div className="timing-config">
         {TIMING_COLUMNS.map((column) => (
-          <button key={column.id} className="timing-config__item" data-active={columns.includes(column.id)} onClick={() => onToggle(column.id)}>
+          <button key={column.id} className="timing-config__item" data-active={columns.includes(column.id)} aria-pressed={columns.includes(column.id)} onClick={() => onToggle(column.id)}>
             <Icon name={columns.includes(column.id) ? "check" : "plus"} size={12} /> {column.label}
           </button>
         ))}
@@ -519,10 +891,12 @@
       </div>
     );
   }
-  function TimingTowerRow({ row, driver, columns, selected, moving, registerRow, onClick }) {
+  function TimingTowerRow({ row, driver, columns, selected, moving, elimination, registerRow, onClick }) {
     const setRowRef = React.useCallback((node) => registerRow?.(row.code, node), [registerRow, row.code]);
     const cells = {
       driver: <span className="timing-driver"><span className="timing-driver__pos">{row.pos}</span><span className="timing-driver__code" style={{ "--driver-color": driver.color || "var(--accent)" }}>{row.code}</span></span>,
+      name: <span className="timing-cell">{driver.name || row.code || "—"}</span>,
+      team: <span className="timing-cell" style={{ color: driver.color || "var(--text-secondary)" }}>{driver.abbr || driver.team || "—"}</span>,
       last: <span className={"timing-cell" + (row.last && row.last === row.best ? " timing-cell--pill" : "")}>{row.last || "—"}</span>,
       best: <span className="timing-cell">{row.best || "—"}</span>,
       gap: <span className="timing-cell timing-cell--gap">{row.gap || "—"}</span>,
@@ -530,11 +904,20 @@
       s1: <MiniSectorBar segments={row.sectors?.s1} />,
       s2: <MiniSectorBar segments={row.sectors?.s2} />,
       s3: <MiniSectorBar segments={row.sectors?.s3} />,
+      s1Time: <span className="timing-cell">{formatSectorTime(row.sectorTimes?.s1)}</span>,
+      s2Time: <span className="timing-cell">{formatSectorTime(row.sectorTimes?.s2)}</span>,
+      s3Time: <span className="timing-cell">{formatSectorTime(row.sectorTimes?.s3)}</span>,
       tyre: <span className="tyre-dot" style={{ "--tyre-ring": tyreRing(row.comp) }}>{tyreLetter(row.comp)}</span>,
+      compound: <span className="timing-cell">{row.comp || "—"}</span>,
       age: <span className="timing-cell">{row.age || "—"}</span>,
       pits: <span className="timing-cell">{row.pits || "0"}</span>,
+      stints: <span className="timing-cell">{Array.isArray(row.stints) && row.stints.length ? row.stints.length : "—"}</span>,
+      speed: <span className="timing-cell">{formatSpeed(row.telemetry?.speed)}</span>,
+      gear: <span className="timing-cell">{formatGear(row.telemetry?.gear)}</span>,
+      throttle: <span className="timing-cell">{formatPct(row.telemetry?.throttle)}</span>,
+      brake: <span className="timing-cell">{formatPct(row.telemetry?.brake)}</span>,
     };
-    return <button ref={setRowRef} type="button" className="timing-tower__row" data-selected={selected} data-moving={moving ? "true" : "false"} style={timingGridStyle(columns)} onClick={onClick}>{columns.map((id) => <span key={id}>{cells[id]}</span>)}</button>;
+    return <button ref={setRowRef} type="button" className="timing-tower__row" data-selected={selected} data-elimination={elimination ? "true" : "false"} data-moving={moving ? "true" : "false"} style={timingGridStyle(columns)} onClick={onClick}>{columns.map((id) => <span key={id}>{cells[id]}</span>)}</button>;
   }
 	  function aiRequestOptions(payload) {
 	    const selected = localStorage.getItem("pw-ai-model") || "";
@@ -543,59 +926,91 @@
 	    const model = modelParts.join(":");
 	    return provider && model ? { ...payload, provider, model } : payload;
 	  }
-	  const tyreColors = {
-	    soft: "var(--tyre-soft)",
-	    medium: "var(--tyre-medium)",
-	    hard: "var(--tyre-hard)",
-	    intermediate: "var(--tyre-inter)",
-	    wet: "var(--tyre-wet)",
-	    unknown: "var(--ink-300)",
-	  };
-	  function compoundColor(compound) {
-	    return tyreColors[String(compound || "").toLowerCase()] || tyreColors.unknown;
+	  function markdownBlocks(text) {
+	    const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+	    const blocks = [];
+	    let index = 0;
+	    while (index < lines.length) {
+	      const line = lines[index].trim();
+	      if (!line) {
+	        index += 1;
+	        continue;
+	      }
+	      const heading = line.match(/^(#{1,4})\s+(.+)$/);
+	      if (heading) {
+	        blocks.push({ kind: "heading", level: heading[1].length, text: heading[2].trim() });
+	        index += 1;
+	        continue;
+	      }
+	      if (/^[-*]\s+/.test(line)) {
+	        const items = [];
+	        while (index < lines.length && /^[-*]\s+/.test(lines[index].trim())) {
+	          items.push(lines[index].trim().replace(/^[-*]\s+/, "").trim());
+	          index += 1;
+	        }
+	        blocks.push({ kind: "list", items });
+	        continue;
+	      }
+	      const paragraph = [line];
+	      index += 1;
+	      while (index < lines.length) {
+	        const next = lines[index].trim();
+	        if (!next || /^(#{1,4})\s+/.test(next) || /^[-*]\s+/.test(next)) break;
+	        paragraph.push(next);
+	        index += 1;
+	      }
+	      blocks.push({ kind: "paragraph", text: paragraph.join(" ") });
+	    }
+	    return blocks;
 	  }
-	  function StrategyVisualization({ visualization }) {
-	    if (!visualization || visualization.kind === "none") return null;
-	    const rows = Array.isArray(visualization.rows) ? visualization.rows : [];
-	    if (!rows.length && !visualization.title) return null;
+	  function inlineMarkdownParts(text) {
+	    const source = String(text || "");
+	    const parts = [];
+	    const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+	    let index = 0;
+	    let match;
+	    while ((match = pattern.exec(source))) {
+	      if (match.index > index) parts.push({ kind: "text", text: source.slice(index, match.index) });
+	      const token = match[0];
+	      parts.push(token.startsWith("**")
+	        ? { kind: "strong", text: token.slice(2, -2) }
+	        : { kind: "code", text: token.slice(1, -1) });
+	      index = match.index + token.length;
+	    }
+	    if (index < source.length) parts.push({ kind: "text", text: source.slice(index) });
+	    return parts;
+	  }
+	  function renderInlineMarkdown(text, keyPrefix) {
+	    return inlineMarkdownParts(text).map((part, index) => {
+	      const key = `${keyPrefix}-${index}`;
+	      if (part.kind === "strong") return <strong key={key}>{part.text}</strong>;
+	      if (part.kind === "code") return <code key={key}>{part.text}</code>;
+	      return <React.Fragment key={key}>{part.text}</React.Fragment>;
+	    });
+	  }
+	  function renderMarkdownText(text) {
 	    return (
-	      <div className="ai-vis" data-kind={visualization.kind}>
-	        <div className="ai-vis__head">
-	          <span className="ai-vis__title">{visualization.title || "Strategy view"}</span>
-	          {visualization.subtitle && <span className="ai-vis__sub">{visualization.subtitle}</span>}
-	        </div>
-	        {rows.map((row, index) => {
-	          const stints = Array.isArray(row.stints) ? row.stints : [];
-	          return (
-	            <div className="ai-vis__row" key={`${row.code || "row"}-${index}`}>
-	              <div className="ai-vis__code">{row.code || row.label || "--"}</div>
-	              <div className="ai-vis__meta">
-	                {row.currentCompound && <span className="ai-vis__pill" style={{ borderColor: compoundColor(row.currentCompound) }}>{row.currentCompound}</span>}
-	                {row.tyreAge && <span className="ai-vis__pill">{row.tyreAge}L</span>}
-	                {row.pitStops && <span className="ai-vis__pill">{row.pitStops} stop{String(row.pitStops) === "1" ? "" : "s"}</span>}
-	                {row.confidence != null && <span className="ai-vis__pill">{Math.round(Number(row.confidence || 0) * 100)}%</span>}
-	              </div>
-	              <div className="ai-vis__bars">
-	                {stints.length ? stints.map((stint, i) => (
-	                  <span className="ai-vis__seg" key={i} style={{ width: Math.max(18, Number(stint.laps || 1) * 4), background: compoundColor(stint.compound) }}>{stint.laps || ""}</span>
-	                )) : <span className="ai-vis__pill">No stint trace</span>}
-	              </div>
-	              {row.recommendation && <div className="ai-vis__rec">{row.recommendation}</div>}
-	            </div>
-	          );
+	      <div className="msg-md">
+	        {markdownBlocks(text).map((block, index) => {
+	          if (block.kind === "heading") return <h4 key={index}>{renderInlineMarkdown(block.text, `h-${index}`)}</h4>;
+	          if (block.kind === "list") return <ul key={index}>{block.items.map((item, itemIndex) => <li key={itemIndex}>{renderInlineMarkdown(item, `li-${index}-${itemIndex}`)}</li>)}</ul>;
+	          return <p key={index}>{renderInlineMarkdown(block.text, `p-${index}`)}</p>;
 	        })}
-	        {Array.isArray(visualization.notes) && visualization.notes.length > 0 && (
-	          <ul className="ai-vis__notes">{visualization.notes.slice(0, 3).map((note, index) => <li key={index}>{note}</li>)}</ul>
-	        )}
 	      </div>
 	    );
 	  }
 	  function AiMessage({ message }) {
-	    const hasVisual = Boolean(message.visualization);
+	    if (message.thinking) {
+	      return (
+	        <div className="msg msg--ai msg--thinking" role="status" aria-live="polite">
+	          <span>{message.text || "Engineer is thinking"}</span>
+	          <span className="thinking-dots" aria-hidden="true"><i /><i /><i /></span>
+	        </div>
+	      );
+	    }
 	    return (
-	      <div className={"msg " + (message.who === "me" ? "msg--me" : "msg--ai") + (hasVisual ? " msg--visual" : "")}>
-	        {message.text}
-	        {hasVisual && <StrategyVisualization visualization={message.visualization} />}
+	      <div className={"msg " + (message.who === "me" ? "msg--me" : "msg--ai")}>
+	        {message.who === "ai" ? renderMarkdownText(message.text) : message.text}
 	      </div>
 	    );
 	  }
@@ -627,6 +1042,28 @@
   }
   function fmtSync(value, suffix = "s") {
     return Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}${suffix}` : "--";
+  }
+  function raceLibraryId(race) {
+    return String(race?.rnd || race?.meetingKey || race?.name || "");
+  }
+  function sessionShortCode(kind) {
+    const text = String(kind || "").toLowerCase();
+    if (text.includes("practice 1")) return "FP1";
+    if (text.includes("practice 2")) return "FP2";
+    if (text.includes("practice 3")) return "FP3";
+    if (text.includes("sprint qualifying")) return "SQ";
+    if (text.includes("shootout")) return "SQ";
+    if (text.includes("sprint")) return "SPR";
+    if (text.includes("qualifying")) return "QUAL";
+    if (text.includes("race")) return "RACE";
+    return String(kind || "SES").slice(0, 4).toUpperCase();
+  }
+  function sessionScheduleText(session) {
+    return [session?.day, session?.time].filter(Boolean).join(" ") || "Time TBA";
+  }
+  function racePlace(race) {
+    const loc = String(race?.loc || "").split(",")[0].trim();
+    return loc || race?.circuit || "";
   }
   function debugUrlParts(targetUrl) {
     try {
@@ -723,10 +1160,11 @@
     return detail?.message || fallback;
   }
 
-  function PitWallStreamPlayer({ source, muted, onAudioFocus, onReady, sync, replaySync }) {
+  function PitWallStreamPlayer({ source, muted, onAudioFocus, onReady, onPlaybackState, sync, replaySync }) {
     const videoRef = React.useRef(null);
     const descriptor = streamDescriptor(source);
     const [status, setStatus] = React.useState("");
+    const [ready, setReady] = React.useState(false);
     const manifestUrl = descriptor?.manifestUrl || "";
     const headerSignature = JSON.stringify(descriptor?.headers || {});
     React.useEffect(() => {
@@ -736,19 +1174,27 @@
       let player = null;
       let timer = null;
       let cancelled = false;
+      let reportedReady = false;
       const targetLatency = clampSyncLatency(sync?.targetLatency || defaultSyncTarget("WORLD"));
       const headers = descriptor.headers || {};
       const licenseServer = descriptor.licenseUrl || descriptor.drm?.licenseUrl || "";
       const licenseDebug = debugUrlParts(licenseServer);
+      setReady(false);
+      onPlaybackState?.(false);
       const markReady = () => {
         if (cancelled) return;
-        logPitWallDebug("player.ready", {
-          feedId: descriptor.feedId || descriptor.id || "",
-          manifestType: descriptor.manifestType || "",
-          readyState: video.readyState,
-          duration: Number.isFinite(video.duration) ? video.duration : null,
-          currentTime: video.currentTime || 0,
-        });
+        if (!reportedReady) {
+          reportedReady = true;
+          logPitWallDebug("player.ready", {
+            feedId: descriptor.feedId || descriptor.id || "",
+            manifestType: descriptor.manifestType || "",
+            readyState: video.readyState,
+            duration: Number.isFinite(video.duration) ? video.duration : null,
+            currentTime: video.currentTime || 0,
+          });
+          setReady(true);
+          onPlaybackState?.(true);
+        }
         setStatus("");
         onReady?.(video);
       };
@@ -777,7 +1223,8 @@
       };
       async function load() {
         video.muted = muted;
-        video.addEventListener("loadedmetadata", markReady);
+        video.addEventListener("loadeddata", markReady);
+        video.addEventListener("canplay", markReady);
         video.addEventListener("playing", markReady);
         video.addEventListener("error", handleVideoError);
         logPitWallDebug("player.load-start", {
@@ -858,7 +1305,7 @@
         }
         if (!cancelled) {
           setStatus("Buffering F1 TV stream...");
-          if (video.readyState >= 1) markReady();
+          if (video.readyState >= 2) markReady();
           if (replaySync?.playing !== false) video.play().catch(() => {});
           timer = setInterval(reportSync, 750);
         }
@@ -876,8 +1323,11 @@
       return () => {
         cancelled = true;
         if (timer) clearInterval(timer);
+        setReady(false);
+        onPlaybackState?.(false);
         onReady?.(null);
-        video.removeEventListener("loadedmetadata", markReady);
+        video.removeEventListener("loadeddata", markReady);
+        video.removeEventListener("canplay", markReady);
         video.removeEventListener("playing", markReady);
         video.removeEventListener("error", handleVideoError);
         if (hls) hls.destroy();
@@ -895,7 +1345,7 @@
     }, [muted]);
     return (
       <>
-        <video ref={videoRef} className="pane__video" playsInline autoPlay muted={muted}
+        <video ref={videoRef} className="pane__video" data-ready={String(ready)} playsInline autoPlay muted={muted}
           onClick={onAudioFocus}
           onVolumeChange={(e) => { if (!e.currentTarget.muted && muted) onAudioFocus?.(); }} />
         {status && <div className="pane__playerstatus">{status}</div>}
@@ -1067,6 +1517,17 @@
     return formatSessionClockSeconds(baseSeconds - Math.max(0, delta));
   }
 
+  function sessionClockDisplayLabel(clock, context = {}) {
+    const clockLabel = smoothSessionClockLabel(clock, context);
+    if (!clockLabel) return "";
+    const sessionKind = String(context.sessionKind || "").toLowerCase();
+    if (!/qualifying|shootout/.test(sessionKind)) return clockLabel;
+    const partText = String(clock?.qualifyingPart || "").toUpperCase();
+    const partMatch = partText.match(/\bQ([1-3])\b/);
+    const part = partMatch ? partMatch[0] : "Q1";
+    return `${part} ${clockLabel}`;
+  }
+
   function replayProgressPct(replaySync) {
     const duration = Number(replaySync?.duration || 0);
     const time = Number(replaySync?.masterTime || 0);
@@ -1075,9 +1536,9 @@
   }
 
   function BroadcastPane({ focus, streamUrl, audioActive, onAudioFocus, onConfigureStream, expanded, onExpand, visible = true, style, zone,
-    hasCurrentLiveSession, replayControls, onLoadPastSession, onConnectF1Tv,
+    hasCurrentLiveSession, replayControls, sessionLibrary, onLoadPastSession, onConnectF1Tv,
     replaySync, onReplayToggle, onReplaySeek, onSyncAll, onPlayerReady, streamStatus, resolving,
-    syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset, timingRows }) {
+    syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset, timingRows, sessionKind }) {
     const descriptor = streamDescriptor(streamUrl);
     const top = (timingRows?.length ? timingRows : D.timing).slice(0, 5);
     return (
@@ -1110,7 +1571,7 @@
         <div className="pane__top">
           <span className="pane__tag pane__tag--bc" data-live={String(Boolean(hasCurrentLiveSession))}>
             <span className="pane__bclive" data-live={String(Boolean(hasCurrentLiveSession))} />
-            <span style={{ fontWeight: 700, fontSize: 12, fontFamily: "var(--font-display)", letterSpacing: "0.04em" }}>WORLD FEED</span>
+            <span style={{ fontWeight: 700, fontSize: 12, fontFamily: "var(--font-display)", letterSpacing: "0.04em" }}>F1 LIVE</span>
           </span>
           <span className="pane__bcbug">
             <span className="pane__bcbug-flag" />
@@ -1119,11 +1580,11 @@
           <span className="pane__feedlabel pane__feedlabel--bc"><Icon name="radio" size={12} /> F1 TV</span>
         </div>
         <div className="pane__mid">
-          {streamUrl ? null : (
+          {streamUrl ? null : sessionLibrary || (
             <div className="replay-empty">
-              <span className="replay-empty__eyebrow"><Icon name="timer" size={13} /> {hasCurrentLiveSession ? "World feed not loaded" : "No current live session"}</span>
+              <span className="replay-empty__eyebrow"><Icon name="timer" size={13} /> {hasCurrentLiveSession ? "F1 TV feed not loaded" : "No current live session"}</span>
               <div className="replay-empty__title">{hasCurrentLiveSession ? "Choose the live F1 TV feed" : "Load a past session"}</div>
-              <div className="replay-empty__body">{hasCurrentLiveSession ? "Load the current session and PitWall will resolve the clean F1 TV player directly into this pane." : "Pick any race, qualifying, or practice replay and PitWall will load it into the main World Feed pane. MultiViewer login is separate from PitWall, so connect F1 TV here once if prompted."}</div>
+              <div className="replay-empty__body">{hasCurrentLiveSession ? "Load the current session and PitWall will resolve the clean F1 TV player directly into this pane." : "Pick any race, qualifying, or practice replay and PitWall will load it into the main F1 TV pane. MultiViewer login is separate from PitWall, so connect F1 TV here once if prompted."}</div>
               {streamStatus && <div className="stream-modal__hint">{streamStatus}</div>}
               {replayControls}
               <div className="replay-picker__actions">
@@ -1143,7 +1604,7 @@
                 <span className="tick__bar" style={{ background: d.color || "var(--accent)" }} />
                 <span className="tick__main">
                   <span className="tick__row"><span className="tick__pos">P{t.pos}</span><span className="tick__code">{t.code}</span></span>
-                  <span className="tick__gap">{t.pos === 1 ? "LEADER" : t.interval}</span>
+                  <span className="tick__gap">{formatTelemetryGap(t, sessionKind)}</span>
                 </span>
               </span>
             );
@@ -1156,18 +1617,24 @@
   function OnboardPane({ feed, code, focus, telemetry, streamUrl, audioActive, onAudioFocus, onConfigureStream, expanded, onExpand,
     visible = true, style, zone, driverOptions = [], onDriverChange,
     replaySync, onPlayerReady, syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset,
-    timingRows = [] }) {
+    timingRows = [], sessionKind = "" }) {
     const [telemetryOn, setTelemetryOn] = React.useState(Boolean(telemetry));
+    const [streamReady, setStreamReady] = React.useState(false);
     const descriptor = streamDescriptor(streamUrl);
+    const manifestUrl = descriptor?.manifestUrl || "";
     React.useEffect(() => setTelemetryOn(Boolean(telemetry)), [telemetry, code]);
+    React.useEffect(() => setStreamReady(false), [code, manifestUrl]);
     const d = D.byCode[code] || {};
-    const telemetryData = telemetryForCode(timingRows, code);
+    const telemetryData = telemetryForCode(timingRows, code, sessionKind);
+    const streaming = Boolean(descriptor);
     return (
-      <div className="pane" data-focus={focus} data-expanded={expanded} data-visible={String(visible)} data-zone={zone} style={style}>
+      <div className="pane" data-focus={focus} data-expanded={expanded} data-visible={String(visible)} data-zone={zone}
+        data-streaming={String(streaming)} data-stream-ready={String(!streaming || streamReady)} style={style}>
         <div className="pane__feed" />
         <div className="pane__scan" />
         {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} onAudioFocus={onAudioFocus} replaySync={replaySync}
-          onReady={(video) => onPlayerReady?.(syncKey, video)} sync={{ targetLatency: syncTarget, onMetrics: (metrics) => onSyncMetrics?.(syncKey, metrics) }} />}
+          onReady={(video) => onPlayerReady?.(syncKey, video)} onPlaybackState={setStreamReady}
+          sync={{ targetLatency: syncTarget, onMetrics: (metrics) => onSyncMetrics?.(syncKey, metrics) }} />}
         <div className="pane__controls">
           <span className="pane__ctl" data-active={telemetryOn} onClick={() => setTelemetryOn(!telemetryOn)}><Icon name="gauge" size={14} /></span>
           <span className="pane__ctl" data-active={audioActive} onClick={onAudioFocus}><Icon name="volume" size={14} /></span>
@@ -1187,8 +1654,10 @@
           </select>
           <span className="pane__feedlabel">{feed}</span>
         </div>
-        <div className="pane__mid">
-          {streamUrl ? null : d.image ? <img className="pane__driverimg" src={d.image} alt="" /> : <span className="pane__streamready"><Icon name="play" size={24} /><b>{code || "DRIVER"}</b><span>Onboard stream slot ready</span></span>}
+        <div className="pane__mid" data-streaming={String(streaming)} data-ready={String(!streaming || streamReady)}>
+          {streaming && <span className="pane__streamveil" />}
+          {d.image ? <img className="pane__driverimg" src={d.image} alt="" /> : <span className="pane__streamready"><Icon name="play" size={24} /><b>{code || "DRIVER"}</b><span>Onboard stream slot ready</span></span>}
+          {streaming && <span className="pane__switching"><b>{code || "DRIVER"}</b><span>Warming onboard</span></span>}
         </div>
         {telemetryOn && (
           <>
@@ -1196,6 +1665,8 @@
               <span className="tele"><span className="tele__v">{formatSpeed(telemetryData.speed)}</span><span className="tele__l">km/h</span></span>
               <span className="tele"><span className="tele__v">{formatGear(telemetryData.gear)}</span><span className="tele__l">gear</span></span>
               <span className="tele"><span className="tele__v">{formatPct(telemetryData.throttle)}</span><span className="tele__l">throttle</span></span>
+              <span className="tele tele--lap"><span className="tele__v">{telemetryData.last}</span><span className="tele__l">Last lap</span></span>
+              <span className="tele tele--lap"><span className="tele__v">{telemetryData.best}</span><span className="tele__l">Best lap</span></span>
               <span className="tele" style={{ marginLeft: "auto" }}><span className="tele__v">{telemetryData.gap}</span><span className="tele__l">gap</span></span>
             </div>
             <div className="pane__bars">
@@ -1221,9 +1692,12 @@
     const debugF1TvSession = debugParams.get("f1Session") || "";
     const debugF1TvMeetingKey = debugParams.get("f1MeetingKey") || "";
     const debugF1TvDetailUrl = debugParams.get("f1DetailUrl") || "";
-    const { data: D, connection, dataSource } = window.PW.usePitWall();
+    const { data: D, profile, connection, dataSource } = window.PW.usePitWall();
     const [livePrefs] = React.useState(readLivePrefs);
-    const [preset, setPreset] = React.useState(() => LAYOUTS[livePrefs.defaultPreset] ? livePrefs.defaultPreset : "Driver Focus");
+    const [preset, setPreset] = React.useState(() => {
+      const defaultPreset = normalizePresetName(livePrefs.defaultPreset);
+      return LAYOUTS[defaultPreset] ? defaultPreset : "Intelligent";
+    });
     const [selected, setSelected] = React.useState("");
     const [autopairs, setAutopairs] = React.useState(true);
     const [showToast, setShowToast] = React.useState(true);
@@ -1252,21 +1726,29 @@
     const [onboardOverrides, setOnboardOverrides] = React.useState({});
     const [retainedPanes, setRetainedPanes] = React.useState([]);
     const [aiPopupOpen, setAiPopupOpen] = React.useState(false);
+    const [sessionLibraryOpen, setSessionLibraryOpen] = React.useState(false);
     const bodyRef = React.useRef(null);
     const centerRef = React.useRef(null);
     const gridRef = React.useRef(null);
     const playerRefs = React.useRef({});
+    const panelSizesTouchedRef = React.useRef(false);
+    const profilePanelSizesKeyRef = React.useRef("");
     const replayClockRef = React.useRef(0);
+    const liveTimingRequestRef = React.useRef(0);
+    const liveTimingInFlightRef = React.useRef(false);
+    const intelligentCodesRef = React.useRef([]);
     const debugAutoF1TvLoaded = React.useRef(false);
     const [replaySync, setReplaySync] = React.useState({ mode: "live", playing: true, masterTime: 0, duration: 0, masterKey: "WORLD" });
     const [replayTimingData, setReplayTimingData] = React.useState(null);
     const [liveTimingData, setLiveTimingData] = React.useState(null);
+    const [pendingF1TvSelection, setPendingF1TvSelection] = React.useState(false);
     const [clockTick, setClockTick] = React.useState(Date.now());
     const [dismissedInsights, setDismissedInsights] = React.useState([]);
     const [chatDraft, setChatDraft] = React.useState("");
     const [chatMessages, setChatMessages] = React.useState([
       { who: "ai", text: "Live timing is loaded when OpenF1 has a current session. Connect an AI provider in Settings for strategy reasoning over this snapshot." },
     ]);
+    const [chatThinking, setChatThinking] = React.useState(false);
     const [streamSources, setStreamSources] = React.useState(readStreamSources);
     const layout = LAYOUTS[preset];
     const telemetryDefault = livePrefs.telemetryDefault !== false;
@@ -1290,8 +1772,22 @@
       localStorage.setItem(TIMING_OFFSET_STORAGE_KEY, String(clampReplayTimingOffset(replayTimingOffset)));
     }, [replayTimingOffset]);
     React.useEffect(() => {
-      localStorage.setItem(PANEL_SIZE_STORAGE_KEY, JSON.stringify(panelSizes));
-    }, [panelSizes]);
+      const normalized = normalizeLivePanelSizes(panelSizes);
+      const serialized = JSON.stringify(normalized);
+      localStorage.setItem(PANEL_SIZE_STORAGE_KEY, serialized);
+      if (!panelSizesTouchedRef.current || !window.pitwall?.profile?.set || serialized === profilePanelSizesKeyRef.current) return;
+      profilePanelSizesKeyRef.current = serialized;
+      window.pitwall.profile.set({ ...profile, livePanelSizes: normalized }).catch(() => {});
+    }, [panelSizes, profile]);
+    React.useEffect(() => {
+      if (panelSizesTouchedRef.current) return;
+      if (!profile.livePanelSizes) return;
+      const normalized = normalizeLivePanelSizes(profile.livePanelSizes);
+      const serialized = JSON.stringify(normalized);
+      if (serialized === profilePanelSizesKeyRef.current) return;
+      profilePanelSizesKeyRef.current = serialized;
+      setPanelSizes((sizes) => JSON.stringify(normalizeLivePanelSizes(sizes)) === serialized ? sizes : normalized);
+    }, [profile.livePanelSizes]);
     React.useEffect(() => {
       localStorage.setItem(TIMING_COLUMN_STORAGE_KEY, JSON.stringify(timingColumns));
     }, [timingColumns]);
@@ -1414,6 +1910,7 @@
 
     function startPanelResize(kind, event) {
       event.preventDefault();
+      panelSizesTouchedRef.current = true;
       const bodyRect = bodyRef.current?.getBoundingClientRect();
       const centerRect = centerRef.current?.getBoundingClientRect();
       const gridRect = gridRef.current?.getBoundingClientRect();
@@ -1495,12 +1992,24 @@
       };
     }
 
+    function markF1TvSelectionPending() {
+      setPendingF1TvSelection(true);
+      setResolvedF1TvContent(null);
+      setReplayTimingData(null);
+      setLiveTimingData(null);
+      setStreamSources((sources) => {
+        const next = { ...sources };
+        delete next.WORLD;
+        return next;
+      });
+    }
+
     async function loadF1TvLibrary(season = f1TvSeason, options = {}) {
       const forceRefresh = Boolean(options.forceRefresh);
       if (!window.pitwall?.f1tv?.library) {
         const fallback = localF1TvLibrary();
         setF1TvLibrary(fallback);
-        if (!f1TvRaceId && fallback.races[0]) setF1TvRaceId(String(fallback.races[0].rnd || fallback.races[0].name));
+        if (!f1TvRaceId && fallback.races[0]) setF1TvRaceId(raceLibraryId(fallback.races[0]));
         return;
       }
       setStreamStatus(forceRefresh ? "Refreshing F1 TV session library..." : "Loading F1 TV session library...");
@@ -1517,13 +2026,13 @@
             || (debugF1TvRace && rnd === String(debugF1TvRace).replace(/^r/i, ""));
         });
         const currentRace = requestedRace || nextLibrary.races.find((race) => race.status === "live") || nextLibrary.races.find((race) => race.status === "upcoming") || nextLibrary.races.at(-1) || nextLibrary.races[0];
-        if (currentRace) setF1TvRaceId(String(currentRace.rnd || currentRace.name));
+        if (currentRace) setF1TvRaceId(raceLibraryId(currentRace));
         const cacheLabel = library?.cached ? (library.stale ? " from stale cache" : " from cache") : "";
         setStreamStatus(`${nextLibrary.races.length} F1 TV weekend${nextLibrary.races.length === 1 ? "" : "s"} loaded${cacheLabel} for ${nextLibrary.season}`);
       } catch (error) {
         const fallback = localF1TvLibrary();
         setF1TvLibrary(fallback);
-        if (!f1TvRaceId && fallback.races[0]) setF1TvRaceId(String(fallback.races[0].rnd || fallback.races[0].name));
+        if (!f1TvRaceId && fallback.races[0]) setF1TvRaceId(raceLibraryId(fallback.races[0]));
         setStreamStatus(error.message || "Using loaded calendar for F1 TV sessions");
       }
     }
@@ -1531,7 +2040,7 @@
     function selectedF1TvRaceItem() {
       const library = f1TvLibrary || localF1TvLibrary();
       const races = library.races || [];
-      return races.find((item) => String(item.rnd || item.name) === f1TvRaceId) || races[0] || null;
+      return races.find((item) => raceLibraryId(item) === f1TvRaceId) || races[0] || null;
     }
 
     React.useEffect(() => {
@@ -1577,33 +2086,35 @@
       return false;
     }
 
-    function decorateResolvedFeed(feed, resolved) {
+    function decorateResolvedFeed(feed, resolved, sessionKind = f1TvSessionKind) {
       return {
         ...feed,
         contentId: resolved.contentId || feed.contentId || "",
-        sessionKind: f1TvSessionKind,
+        sessionKind,
         playbackMode: resolved.playbackMode || "replay",
       };
     }
 
-    async function resolveSelectedF1TvContent(targetKey = "WORLD") {
+    async function resolveSelectedF1TvContent(targetKey = "WORLD", selection = {}) {
       if (!window.pitwall?.f1tv?.resolveContent) {
         setStreamStatus("Clean F1 TV resolver is not available in this build.");
         return null;
       }
-      const race = selectedF1TvRaceItem();
+      const race = selection.race || selectedF1TvRaceItem();
+      const sessionKind = selection.sessionKind || f1TvSessionKind;
       const detailUrl = f1TvDetailUrl.trim();
       if (!detailUrl && !race) {
         setStreamStatus("No F1 TV session is selected yet.");
         return null;
       }
+      setPendingF1TvSelection(true);
       setF1TvResolving(true);
       try {
         logPitWallDebug("f1tv.resolve-start", {
           targetKey,
           season: f1TvSeason,
           raceName: race?.name || debugF1TvRace || "",
-          sessionKind: f1TvSessionKind,
+          sessionKind,
           meetingKey: race?.meetingKey || debugF1TvMeetingKey || "",
           detailInput: Boolean(detailUrl),
         });
@@ -1615,11 +2126,11 @@
           detailUrl,
           season: f1TvSeason,
           raceName: race?.name || debugF1TvRace || "",
-          sessionKind: f1TvSessionKind,
+          sessionKind,
           meetingKey: race?.meetingKey || debugF1TvMeetingKey || "",
         });
-        const feeds = (resolved.feeds || []).map((feed) => decorateResolvedFeed(feed, resolved));
-        const world = feeds.find((feed) => feed.kind === "world" || feed.feedId === "WORLD") || feeds[0];
+        const feeds = (resolved.feeds || []).map((feed) => decorateResolvedFeed(feed, resolved, sessionKind));
+        const world = preferredMainF1TvFeed(feeds);
         if (!world) {
           logPitWallDebug("f1tv.resolve-no-world", {
             contentId: resolved.contentId || "",
@@ -1638,6 +2149,7 @@
         }
         const nextResolved = { ...resolved, feeds };
         setResolvedF1TvContent(nextResolved);
+        setPendingF1TvSelection(false);
         setStreamSources((sources) => ({ ...sources, [targetKey || "WORLD"]: world }));
         setReplaySync({ mode: resolved.playbackMode || "replay", playing: true, masterTime: 0, duration: 0, masterKey: "WORLD" });
         const worldLicense = debugUrlParts(world.licenseUrl || world.drm?.licenseUrl || "");
@@ -1656,7 +2168,7 @@
         logPitWallDebug("f1tv.resolve-error", {
           message: error?.message || String(error || ""),
           targetKey,
-          sessionKind: f1TvSessionKind,
+          sessionKind,
         });
         setStreamSources((sources) => {
           const next = { ...sources };
@@ -1667,6 +2179,7 @@
         return null;
       } finally {
         setF1TvResolving(false);
+        setPendingF1TvSelection(false);
       }
     }
 
@@ -1684,12 +2197,35 @@
       }
     }
 
-    async function loadSelectedF1TvReplay() {
-      const resolved = await resolveSelectedF1TvContent("WORLD");
+    async function loadSelectedF1TvReplay(selection = {}) {
+      markF1TvSelectionPending();
+      const resolved = await resolveSelectedF1TvContent("WORLD", selection);
       if (!resolved) return;
       setAudioFeed("WORLD");
-      setPreset("Driver Focus");
+      setPreset("Intelligent");
       setExpandedPane(null);
+      setSessionLibraryOpen(false);
+    }
+
+    function openSessionLibrary() {
+      setSessionLibraryOpen(true);
+      loadF1TvLibrary(f1TvSeason);
+    }
+
+    function chooseLibraryRace(race) {
+      markF1TvSelectionPending();
+      setF1TvRaceId(raceLibraryId(race));
+      const firstSession = race?.sessions?.find((session) => session.status === "live")
+        || race?.sessions?.find((session) => session.status === "done")
+        || race?.sessions?.[0];
+      if (firstSession?.kind) setF1TvSessionKind(firstSession.kind);
+    }
+
+    function loadLibrarySession(race, session) {
+      markF1TvSelectionPending();
+      setF1TvRaceId(raceLibraryId(race));
+      setF1TvSessionKind(session.kind);
+      loadSelectedF1TvReplay({ race, sessionKind: session.kind });
     }
 
     async function openF1TvBrowser() {
@@ -1728,7 +2264,7 @@
     }
 
     function saveLayout() {
-      localStorage.setItem("pw-live-layout", JSON.stringify({ preset, selected, expandedPane }));
+      localStorage.setItem("pw-live-layout", JSON.stringify({ preset, selected, expandedPane, panelSizes }));
       setLayoutSaved(true);
       setTimeout(() => setLayoutSaved(false), 1600);
     }
@@ -1736,41 +2272,62 @@
     function restoreLayout() {
       try {
         const saved = JSON.parse(localStorage.getItem("pw-live-layout") || "{}");
-        if (saved.preset && LAYOUTS[saved.preset]) setPreset(saved.preset);
+        const savedPreset = normalizePresetName(saved.preset);
+        if (savedPreset && LAYOUTS[savedPreset]) setPreset(savedPreset);
         if (saved.selected && D.byCode[saved.selected]) setSelected(saved.selected);
+        if (saved.panelSizes) setPanelSizes(normalizeLivePanelSizes(saved.panelSizes));
         setExpandedPane(saved.expandedPane || null);
       } catch {}
     }
 
-	    function liveAiSnapshot() {
-	      return {
-	        race: D.race,
-	        drivers: D.drivers.slice(0, 22),
-	        timing: D.timing.slice(0, 22),
-	        standings: D.standings.slice(0, 22),
-	        constructors: D.constructors.slice(0, 11),
-	        sessions: D.sessions || [],
-	        battlePairs: D.battlePairs || [],
-	        strategyContext: D.strategyContext || null,
-	        news: D.news.slice(0, 8),
-	        source: dataSource,
-	      };
+    function activeTimingRows() {
+      const replayRows = Array.isArray(replayTimingData?.timing) ? replayTimingData.timing : [];
+      const liveRows = Array.isArray(liveTimingData?.timing) ? liveTimingData.timing : [];
+      return replaySync.mode === "replay"
+        ? (replayRows.length ? replayRows : D.timing)
+        : (liveRows.length ? liveRows : D.timing);
+    }
+
+    function activeAiSnapshot() {
+      const master = playerRefs.current[replaySync.masterKey || "WORLD"];
+      const replayElapsedSeconds = Math.max(0, Number.isFinite(master?.currentTime) ? master.currentTime : replayClockRef.current || 0);
+      return buildActiveAiSnapshot({
+        mode: replaySync.mode,
+        timingRows: activeTimingRows(),
+        baseData: D,
+        sourceLabel: timingSourceLabel,
+        weather: wx,
+        sessionClock,
+        replay: {
+          elapsedSeconds: replayElapsedSeconds,
+          timingOffsetSeconds: replayTimingOffset,
+          sessionKind: f1TvSessionKind,
+          raceName: selectedF1TvRace?.name || D.race?.name || "",
+        },
+      });
     }
 
     async function sendChat() {
       const text = chatDraft.trim();
-      if (!text) return;
+      if (!text || chatThinking) return;
       setChatMessages((msgs) => [...msgs, { who: "me", text }]);
       setChatDraft("");
       if (!connection.aiConfigured || !window.pitwall?.ai?.ask) {
         setChatMessages((msgs) => [...msgs, { who: "ai", text: "Connect an AI provider in Settings to generate strategy projections from live data." }]);
         return;
       }
+      setChatThinking(true);
 	      try {
-	        const answer = await window.pitwall.ai.ask(aiRequestOptions({ prompt: text, snapshot: liveAiSnapshot() }));
-	        setChatMessages((msgs) => [...msgs, { who: "ai", text: answer.summary || "The configured AI provider returned no summary.", visualization: answer.visualization || null }]);
+	        const answer = await window.pitwall.ai.ask(aiRequestOptions({
+	          prompt: `${text}\n\nRespond as concise, readable Markdown text only. Do not include charts, graphics, cards, or visualization payloads.`,
+	          snapshot: activeAiSnapshot(),
+	          presentation: "markdown_text_only",
+	        }));
+	        setChatMessages((msgs) => [...msgs, { who: "ai", text: answer.summary || "The configured AI provider returned no summary." }]);
 	      } catch (error) {
 	        setChatMessages((msgs) => [...msgs, { who: "ai", text: error.message || "The configured AI provider did not return a response." }]);
+	      } finally {
+	        setChatThinking(false);
 	      }
     }
 
@@ -1782,54 +2339,87 @@
       return picked;
     }
     function onboardCodeForSlot(slot, fallback) {
+      if (slot === "focus-1") return fallback;
       const override = onboardOverrides[slot];
       return D.byCode[override] ? override : fallback;
     }
 
     const f1TvSessionLibrary = f1TvLibrary || localF1TvLibrary();
     const f1TvRaces = f1TvSessionLibrary.races || [];
-    const selectedF1TvRace = f1TvRaces.find((race) => String(race.rnd || race.name) === f1TvRaceId) || f1TvRaces[0] || null;
+    const currentF1TvWeekendIndex = (() => {
+      const index = f1TvRaces.findIndex((race) => race.status === "live" || race.status === "upcoming");
+      return index >= 0 ? index : Math.max(0, f1TvRaces.length - 1);
+    })();
+    const visibleF1TvRaces = f1TvRaces.length ? f1TvRaces.slice(0, currentF1TvWeekendIndex + 1) : [];
+    const selectedF1TvRace = f1TvRaces.find((race) => raceLibraryId(race) === f1TvRaceId) || visibleF1TvRaces.at(-1) || f1TvRaces[0] || null;
     const standardF1TvSessions = ["Practice 1", "Practice 2", "Practice 3", "Sprint Qualifying", "Sprint", "Qualifying", "Race"];
     const selectedRaceSessions = selectedF1TvRace?.sessions?.length ? selectedF1TvRace.sessions.map((session) => session.kind) : standardF1TvSessions;
     const f1TvSessionOptions = standardF1TvSessions.filter((kind) => selectedRaceSessions.includes(kind)).concat(selectedRaceSessions.filter((kind) => !standardF1TvSessions.includes(kind)));
-    const replayTimingRows = Array.isArray(replayTimingData?.timing) ? replayTimingData.timing : [];
-    const liveTimingRows = Array.isArray(liveTimingData?.timing) ? liveTimingData.timing : [];
-    const timingRows = replaySync.mode === "replay"
-      ? (replayTimingRows.length ? replayTimingRows : D.timing)
-      : (liveTimingRows.length ? liveTimingRows : D.timing);
+    const sessionLibrarySessions = selectedF1TvRace?.sessions?.length
+      ? selectedF1TvRace.sessions
+      : f1TvSessionOptions.map((kind) => ({ kind, status: "unknown" }));
+    const timingRows = activeTimingRows();
     const { registerTimingRow, movingRows } = useTimingRowMotion(timingRows);
     const selectedCode = selected || timingRows[0]?.code || D.standings[0]?.code || D.drivers[0]?.code || "";
+    const preferredCode = (profile.favoriteDrivers || []).find((code) => D.byCode[code]) || "";
     const activeSyncKey = audioFeed || selectedCode || "WORLD";
     const fallbackCodes = timingRows.map((row) => row.code).concat(D.standings.map((row) => row.code)).filter(Boolean);
-    const focusCodes = onboardCodes(3, fallbackCodes);
-    const quadCodes = onboardCodes(3, fallbackCodes);
-    const dataCodes = onboardCodes(5, fallbackCodes);
-    const battlePair = D.battlePairs?.[0] || null;
-    const battleInsight = battlePair || D.insights.find((ins) => ins.kind === "battle");
-    const battleCodes = battleInsight?.a && battleInsight?.b ? [battleInsight.a, battleInsight.b] : focusCodes;
     const liveTimingWeather = liveTimingData?.weather && Object.values(liveTimingData.weather).some((value) => value !== "" && value !== null && value !== undefined) ? liveTimingData.weather : null;
     const wx = replaySync.mode === "replay" && replayTimingData?.weather ? replayTimingData.weather : liveTimingWeather || D.race.weather || {};
-    const currentLiveSession = D.sessions.find((session) => session.status === "live") || D.schedule.find((race) => race.status === "live");
+    const replaySetupActive = pendingF1TvSelection || replaySync.mode === "replay";
+    const currentLiveSession = replaySetupActive ? null : D.sessions.find((session) => session.status === "live") || D.schedule.find((race) => race.status === "live");
+    const activeSessionKind = replaySync.mode === "replay"
+      ? (replayTimingData?.sessionKind || f1TvSessionKind)
+      : (liveTimingData?.sessionKind || currentLiveSession?.kind || f1TvSessionKind);
+    const sessionClock = replaySync.mode === "replay" ? replayTimingData?.sessionClock : liveTimingData?.sessionClock;
+    const qualifyingPhase = qualifyingPhaseFromSession({ sessionKind: activeSessionKind, sessionClock, rowCount: timingRows.length });
+    const focusCodes = intelligentOnboardCodes({
+      timingRows,
+      preferredCode,
+      selectedCode,
+      fallbackCodes,
+      sessionKind: activeSessionKind,
+      sessionClock,
+      qualifyingPhase,
+      previousCodes: intelligentCodesRef.current,
+    });
+    intelligentCodesRef.current = focusCodes;
+    const quadCodes = onboardCodes(3, fallbackCodes);
+    const dataCodes = onboardCodes(5, fallbackCodes);
+    const activeBattlePairs = buildActiveBattlePairs(timingRows);
+    const battlePair = activeBattlePairs[0] || D.battlePairs?.[0] || null;
+    const battleInsight = battlePair || D.insights.find((ins) => ins.kind === "battle");
+    const battleCodes = battleInsight?.a && battleInsight?.b ? [battleInsight.a, battleInsight.b] : focusCodes;
     const hasCurrentLiveSession = Boolean(D.race?.lap || currentLiveSession);
     const sessionStatusLabel = hasCurrentLiveSession
       ? (D.race.lap ? `LAP ${D.race.lap} / ${D.race.laps || "—"}` : dataSource)
       : "No current live session";
     const timingSourceLabel = replaySync.mode === "replay"
       ? (replayTimingData?.sourceLabel || replayTimingData?.message || "Replay timing pending")
-      : (liveTimingData?.sourceLabel || liveTimingData?.message || (D.race.lap ? `Lap ${D.race.lap}/${D.race.laps || "—"}` : dataSource));
-    const sessionClock = replaySync.mode === "replay" ? replayTimingData?.sessionClock : liveTimingData?.sessionClock;
-    const sessionClockLabel = smoothSessionClockLabel(sessionClock, {
+      : pendingF1TvSelection
+        ? "Load a past session to start replay timing"
+        : (liveTimingData?.sourceLabel || liveTimingData?.message || (D.race.lap ? `Lap ${D.race.lap}/${D.race.laps || "—"}` : dataSource));
+    const activeInsights = buildActiveInsights({
+      timingRows,
+      sourceLabel: timingSourceLabel,
+      mode: replaySync.mode,
+      weather: wx,
+      sessionClock,
+      battlePairs: activeBattlePairs,
+    });
+    const sessionClockLabel = sessionClockDisplayLabel(sessionClock, {
       mode: replaySync.mode,
       timingData: replaySync.mode === "replay" ? replayTimingData : liveTimingData,
       replayTime: replaySync.masterTime,
       replayTimingOffset,
       clockTick,
+      sessionKind: activeSessionKind,
     });
     function resolvedOnboardFeedForCode(code) {
       const feeds = resolvedF1TvContent?.feeds || [];
       const exact = feeds.find((feed) => feed.driverCode === code || feed.feedId === code);
       if (exact) return exact;
-      const worldIndex = Math.max(0, feeds.findIndex((feed) => feed.kind === "world" || feed.feedId === "WORLD"));
+      const worldIndex = Math.max(0, feeds.indexOf(preferredMainF1TvFeed(feeds)));
       const onboardFeeds = feeds.filter((_feed, index) => index !== worldIndex);
       if (!onboardFeeds.length || !code) return null;
       const codeOrder = Array.from(new Set(timingRows.map((row) => row.code).concat(fallbackCodes))).filter(Boolean);
@@ -1839,22 +2429,23 @@
     }
     function resolvedFeedForKey(key, code) {
       const feeds = resolvedF1TvContent?.feeds || [];
-      if (key === "WORLD") return feeds.find((feed) => feed.kind === "world" || feed.feedId === "WORLD") || feeds[0] || null;
+      if (key === "WORLD") return preferredMainF1TvFeed(feeds);
       return feeds.find((feed) => feed.driverCode === code || feed.feedId === key) || resolvedOnboardFeedForCode(code);
     }
+    const liveWorkspaceReady = Boolean(streamDescriptor(streamSources.WORLD || resolvedFeedForKey("WORLD")));
     const replayControls = (
       <div className="replay-picker">
         <input className="stream-modal__input" value={f1TvDetailUrl} placeholder="Paste F1 TV detail URL, e.g. https://f1tv.formula1.com/detail/1000010265/-"
-          onChange={(e) => setF1TvDetailUrl(e.target.value)} />
-        <select className="f1tv-picker__select" value={f1TvSeason} onChange={(e) => { setF1TvSeason(e.target.value); loadF1TvLibrary(e.target.value); }}>
+          onChange={(e) => { markF1TvSelectionPending(); setF1TvDetailUrl(e.target.value); }} />
+        <select className="f1tv-picker__select" value={f1TvSeason} onChange={(e) => { markF1TvSelectionPending(); setF1TvSeason(e.target.value); loadF1TvLibrary(e.target.value); }}>
           {selectableSeasons.map((season) => <option key={season} value={season}>{season}</option>)}
         </select>
-        <select className="f1tv-picker__select" value={selectedF1TvRace ? String(selectedF1TvRace.rnd || selectedF1TvRace.name) : ""} onChange={(e) => setF1TvRaceId(e.target.value)}>
-          {f1TvRaces.map((race) => <option key={race.rnd || race.name} value={String(race.rnd || race.name)}>{race.rnd ? "R" + race.rnd + " - " : ""}{race.name}</option>)}
+        <select className="f1tv-picker__select" value={selectedF1TvRace ? raceLibraryId(selectedF1TvRace) : ""} onChange={(e) => { markF1TvSelectionPending(); setF1TvRaceId(e.target.value); }}>
+          {f1TvRaces.map((race) => <option key={raceLibraryId(race)} value={raceLibraryId(race)}>{race.rnd ? "R" + race.rnd + " - " : ""}{race.name}</option>)}
         </select>
         <div className="replay-picker__sessions">
           {(f1TvSessionOptions.length ? f1TvSessionOptions : ["Practice 1", "Qualifying", "Race"]).map((kind) => (
-            <button className="f1tv-session" data-active={f1TvSessionKind === kind} key={kind} onClick={() => setF1TvSessionKind(kind)}>{kind}</button>
+            <button className="f1tv-session" data-active={f1TvSessionKind === kind} key={kind} onClick={() => { markF1TvSelectionPending(); setF1TvSessionKind(kind); }}>{kind}</button>
           ))}
         </div>
       </div>
@@ -1885,39 +2476,48 @@
       replayClockRef.current = replaySync.masterTime || 0;
     }, [replaySync.masterTime]);
     React.useEffect(() => {
-      if (replaySync.mode === "replay") {
+      if (!liveWorkspaceReady || replaySync.mode === "replay" || pendingF1TvSelection) {
         setLiveTimingData(null);
         return undefined;
       }
       if (!window.pitwall?.data?.liveTiming) return undefined;
       let cancelled = false;
       const loadLiveTiming = async () => {
+        if (liveTimingInFlightRef.current) return;
+        const requestId = liveTimingRequestRef.current + 1;
+        liveTimingRequestRef.current = requestId;
+        liveTimingInFlightRef.current = true;
         try {
           const data = await window.pitwall.data.liveTiming({ targetLatencySeconds: syncTargetFor("WORLD") });
-          if (cancelled) return;
-          setLiveTimingData(data || null);
+          if (cancelled || requestId !== liveTimingRequestRef.current) return;
+          setLiveTimingData((current) => data?.timing?.length ? data : current?.timing?.length ? current : data || null);
           logPitWallDebug("live.timing", {
             rowCount: data?.timing?.length || 0,
             ok: Boolean(data?.ok),
           });
         } catch (error) {
-          if (cancelled) return;
+          if (cancelled || requestId !== liveTimingRequestRef.current) return;
           setLiveTimingData({ ok: false, timing: [], weather: {}, sourceLabel: "Live timing unavailable", message: "OpenF1 live timing is unavailable." });
           logPitWallDebug("live.timing-error", { message: error?.message || String(error || "") });
+        } finally {
+          if (requestId === liveTimingRequestRef.current) liveTimingInFlightRef.current = false;
         }
       };
       loadLiveTiming();
       const timer = setInterval(loadLiveTiming, LIVE_TIMING_POLL_INTERVAL_MS);
       return () => {
         cancelled = true;
+        liveTimingRequestRef.current += 1;
+        liveTimingInFlightRef.current = false;
         clearInterval(timer);
       };
-    }, [replaySync.mode, syncSettings]);
+    }, [liveWorkspaceReady, replaySync.mode, syncSettings, pendingF1TvSelection]);
     React.useEffect(() => {
       if (replaySync.mode !== "replay") {
         setReplayTimingData(null);
         return undefined;
       }
+      if (!resolvedF1TvContent?.contentId && !resolvedF1TvContent?.feeds?.length) return undefined;
       const meetingKey = selectedF1TvRace?.meetingKey || debugF1TvMeetingKey || "";
       if (!meetingKey || !window.pitwall?.data?.replayTiming) return undefined;
       let cancelled = false;
@@ -1960,7 +2560,7 @@
         cancelled = true;
         clearInterval(timer);
       };
-    }, [replaySync.mode, selectedF1TvRace?.meetingKey, f1TvSessionKind, replayTimingOffset, resolvedF1TvContent?.contentId]);
+    }, [replaySync.mode, selectedF1TvRace?.meetingKey, f1TvSessionKind, replayTimingOffset, resolvedF1TvContent?.contentId, resolvedF1TvContent?.feeds]);
     React.useEffect(() => {
       if (replaySync.mode !== "replay") return undefined;
       const timer = setInterval(() => {
@@ -1978,10 +2578,11 @@
     }, [replaySync.mode, replaySync.masterKey]);
     React.useEffect(() => {
       if (!autopairs || !battlePair?.a || !battlePair?.b) return;
+      if (layout === "focus") return;
       setPreset("Battle Mode");
       setSelected(battlePair.b);
       setExpandedPane(null);
-    }, [autopairs, battlePair?.a, battlePair?.b]);
+    }, [autopairs, battlePair?.a, battlePair?.b, layout]);
     React.useEffect(() => {
       if (layout !== "focus") setAiPopupOpen(false);
     }, [layout]);
@@ -1997,6 +2598,7 @@
       "--data-col-b": `${panelSizes.dataColB}%`,
       "--data-row": `${panelSizes.dataRow}%`,
     };
+    const presetOptions = Array.from(new Set((D.presets?.length ? D.presets : Object.keys(LAYOUTS)).map(normalizePresetName))).filter((name) => LAYOUTS[name]);
     const panes = layout === "battle"
       ? [
           { feed: "Onboard", code: onboardCodeForSlot("battle-a", battleCodes[0]), slot: "battle-a", focus: false, telemetry: true },
@@ -2039,7 +2641,7 @@
     const parkedPanes = retainedPanes.filter((pane) => !activePaneMap.has(pane.paneId)).map((pane) => ({ ...pane, visible: false }));
     const panesToRender = activePanes.concat(parkedPanes);
 
-    function InsightsPane({ popup = false }) {
+    function renderInsightsPane(popup = false) {
       return (
         <div className={"live__insights" + (popup ? " live__insights--popup" : "")}>
           <div className="ins__feed">
@@ -2051,7 +2653,7 @@
               </span>
             </div>
             <div className="ins__list">
-              {D.insights.map((ins, i) => ({ ins, i })).filter((item) => !dismissedInsights.includes(item.i)).map(({ ins, i }) => (
+              {activeInsights.map((ins, i) => ({ ins, i })).filter((item) => !dismissedInsights.includes(item.i)).map(({ ins, i }) => (
                 <div className="insight" key={i} data-kind={ins.kind}>
                   <span className="insight__icon"><Icon name={ins.kind === "battle" ? "zap" : ins.kind === "strategy" ? "flag" : "chart"} size={16} /></span>
                   <div style={{ minWidth: 0 }}>
@@ -2070,13 +2672,89 @@
           </div>
           <div className="ins__chat">
             <div className="ins__hd"><h3><Icon name="radio" size={14} /> Ask the engineer</h3><span className="ins__model" style={{ marginLeft: "auto" }}>What-if ⌥W</span></div>
-            <div className="ins__msgs">
+            <div className="ins__msgs" aria-busy={chatThinking ? "true" : "false"}>
               {chatMessages.map((msg, i) => <AiMessage message={msg} key={i} />)}
+              {chatThinking && <AiMessage message={{ who: "ai", text: "Engineer is thinking", thinking: true }} />}
             </div>
             <div className="ins__compose">
               <input className="ins__input" placeholder="Ask about strategy, gaps, projections…" value={chatDraft}
                 onChange={(e) => setChatDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendChat(); }} />
               <IconButton variant="accent" label="Send" onClick={sendChat}><Icon name="chevronRight" size={16} /></IconButton>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function renderSessionLibrary(options = {}) {
+      const inline = Boolean(options.inline);
+      return (
+        <div className={"session-library" + (inline ? " session-library--inline" : "")} role="dialog" aria-modal={inline ? "false" : "true"} aria-label="Session Library">
+          <div className="session-library__panel">
+            <div className="session-library__head">
+              <span className="session-library__glyph"><Icon name="grid" size={24} /></span>
+              <div>
+                <h2 className="session-library__title">Session Library</h2>
+                <div className="session-library__sub">Pick a weekend, then load any session into Live Racing</div>
+              </div>
+              <span className="session-library__close">
+                <IconButton variant="ghost" label="Close session library" onClick={() => setSessionLibraryOpen(false)}><Icon name="close" size={22} /></IconButton>
+              </span>
+            </div>
+            <div className="session-library__body">
+              <aside className="session-library__rail">
+                <div className="session-library__eyebrow">Race weekends</div>
+                {visibleF1TvRaces.map((race, index) => {
+                  const id = raceLibraryId(race);
+                  const active = selectedF1TvRace && raceLibraryId(selectedF1TvRace) === id;
+                  const isCurrent = index === currentF1TvWeekendIndex;
+                  const sessions = race.sessions?.length || 0;
+                  return (
+                    <button className="session-library__race" data-active={String(active)} key={id} type="button" onClick={() => chooseLibraryRace(race)}>
+                      <span className="session-library__race-top">
+                        <span>{race.rnd ? "R" + race.rnd : "R-"}</span>
+                        {isCurrent && <Badge tone={race.status === "live" ? "live" : "accent"}>{race.status === "live" ? "LIVE" : "CURRENT"}</Badge>}
+                        {!isCurrent && sessions > 0 && <Badge tone="outline">{sessions} session{sessions === 1 ? "" : "s"}</Badge>}
+                      </span>
+                      <span className="session-library__race-name">{race.name || "Race weekend"}</span>
+                      <span className="session-library__race-meta"><Icon name="calendar" size={13} /> {[racePlace(race), race.date].filter(Boolean).join(" - ")}</span>
+                    </button>
+                  );
+                })}
+              </aside>
+              <section className="session-library__content">
+                {selectedF1TvRace ? (
+                  <>
+                    <div className="session-library__summary">
+                      <div>
+                        <h3>{selectedF1TvRace.name}</h3>
+                        <p>{[selectedF1TvRace.circuit, selectedF1TvRace.loc, selectedF1TvRace.date].filter(Boolean).join(" - ")}</p>
+                      </div>
+                      <span className="session-library__count">{sessionLibrarySessions.length} session{sessionLibrarySessions.length === 1 ? "" : "s"}</span>
+                    </div>
+                    <div className="session-library__rows">
+                      {sessionLibrarySessions.map((session) => {
+                        const active = f1TvSessionKind === session.kind;
+                        const live = session.status === "live";
+                        return (
+                          <div className="session-library__row" data-active={String(active)} key={session.kind}>
+                            <span className="session-library__code">{sessionShortCode(session.kind)}</span>
+                            <div>
+                              <div className="session-library__kind">{session.kind}</div>
+                              <div className="session-library__when"><Icon name="calendar" size={13} /> {sessionScheduleText(session)}</div>
+                            </div>
+                            <Button variant={live ? "primary" : "secondary"} onClick={() => loadLibrarySession(selectedF1TvRace, session)} disabled={f1TvResolving} iconLeft={<Icon name="play" size={14} />}>
+                              {f1TvResolving && active ? "Resolving..." : live ? "Watch live" : "Watch replay"}
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <div className="session-library__empty">No race weekends are loaded yet.</div>
+                )}
+              </section>
             </div>
           </div>
         </div>
@@ -2098,7 +2776,7 @@
           <div className="live__presets">
             <span className="preset-select-wrap">
               <select className="preset-select" aria-label="Layout preset" value={preset} onChange={(e) => { setPreset(e.target.value); setExpandedPane(null); }}>
-                {D.presets.map((p) => <option key={p} value={p}>{p}</option>)}
+                {presetOptions.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
               <Icon name="chevronDown" size={14} className="preset-select__icon" />
             </span>
@@ -2106,7 +2784,7 @@
           </div>
           <div className="live__barright">
             {layout === "focus" && <Button variant="secondary" size="sm" onClick={() => setAiPopupOpen(true)} iconLeft={<Icon name="sparkles" size={14} />}>AI</Button>}
-            <Button variant="primary" size="sm" onClick={loadSelectedF1TvReplay} iconLeft={<Icon name="play" size={14} />}>Load past session</Button>
+            <Button variant="primary" size="sm" onClick={openSessionLibrary} iconLeft={<Icon name="play" size={14} />}>Load past session</Button>
             <span className="live__syncwrap">
               <Button variant={syncMenuOpen ? "secondary" : "ghost"} size="sm" onClick={() => setSyncMenuOpen((open) => !open)} iconLeft={<Icon name="timer" size={14} />}>Sync</Button>
               <SyncMenu
@@ -2126,20 +2804,25 @@
         </div>
 
         {/* Body */}
+        {liveWorkspaceReady ? (
         <div className="live__body" data-layout={layout} ref={bodyRef} style={panelStyle}>
           {/* Live timing sidebar */}
           <aside className="live__timing">
             <div className="live__timinghd">
-              <Icon name="timer" size={15} />
-              <h3>Live Timing</h3>
-              <span style={{ marginLeft: "auto" }}><Badge tone="outline">P1–12</Badge></span>
-              <IconButton variant={timingConfigOpen ? "accent" : "ghost"} size="sm" label="Timing columns" onClick={() => setTimingConfigOpen((open) => !open)}><Icon name="settings" size={14} /></IconButton>
+              <span className="live__timingtitle">
+                <Icon name="timer" size={15} />
+                <h3>Live Timing</h3>
+              </span>
+              {sessionClockLabel && <span className="live__timingclock" aria-label="Session clock">{sessionClockLabel}</span>}
+              <span className="live__timingactions">
+                <Badge tone="outline">P1–12</Badge>
+                <IconButton variant={timingConfigOpen ? "accent" : "ghost"} size="sm" label="Edit timing columns" onClick={() => setTimingConfigOpen((open) => !open)}><Icon name="pencil" size={14} /></IconButton>
+              </span>
             </div>
             {timingConfigOpen && <TimingColumnMenu columns={timingColumns} onToggle={toggleTimingColumn} />}
             <div className="live__statusbar">
               <FlagStatus status={hasCurrentLiveSession ? "green" : "yellow"} label={hasCurrentLiveSession ? "Clear" : "Replay"} />
               <Badge tone="neutral">{timingSourceLabel}</Badge>
-              {sessionClockLabel && <Badge tone="accent">Remaining {sessionClockLabel}</Badge>}
               <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-tertiary)" }}>{timingRows.length} timing rows</span>
             </div>
             <div className="live__timingscroll">
@@ -2149,8 +2832,8 @@
                   const d = D.byCode[t.code] || {};
                   return (
                     <TimingTowerRow key={t.code} row={t} driver={d} columns={timingColumns}
-                      selected={selectedCode === t.code} moving={Boolean(movingRows[t.code])} registerRow={registerTimingRow}
-                      onClick={() => { setSelected(t.code); setOnboardOverrides((overrides) => ({ ...overrides, "focus-1": t.code })); setPreset("Driver Focus"); setExpandedPane(null); }} />
+                      selected={selectedCode === t.code} moving={Boolean(movingRows[t.code])} elimination={isQualifyingEliminationRow(t, { qualifyingPhase, rowCount: timingRows.length })} registerRow={registerTimingRow}
+                      onClick={() => { setSelected(t.code); setPreset("Intelligent"); setExpandedPane(null); }} />
                   );
                 })}
               </div>
@@ -2194,7 +2877,7 @@
               )}
               {panesToRender.map((p) => {
                 const key = p.broadcast ? "WORLD" : p.code;
-                const label = p.broadcast ? "World Feed" : (D.byCode[p.code]?.name || p.code || "Driver") + " onboard";
+                const label = p.broadcast ? "F1 Live" : (D.byCode[p.code]?.name || p.code || "Driver") + " onboard";
                 const paneKey = p.paneId;
                 return (
                   <Pane key={paneKey} {...p}
@@ -2210,7 +2893,8 @@
                     onConfigureStream={() => configureStream(key, label)}
                     hasCurrentLiveSession={hasCurrentLiveSession}
                     replayControls={replayControls}
-                    onLoadPastSession={loadSelectedF1TvReplay}
+                    sessionLibrary={renderSessionLibrary({ inline: true })}
+                    onLoadPastSession={openSessionLibrary}
                     onConnectF1Tv={connectF1TvFromLive}
                     streamStatus={streamStatus}
                     resolving={f1TvResolving}
@@ -2227,6 +2911,7 @@
                     onSyncAdjust={adjustSyncTarget}
                     onSyncReset={resetSyncTarget}
                     timingRows={timingRows}
+                    sessionKind={activeSessionKind}
                     expanded={expandedPane === paneKey}
                     onExpand={() => setExpandedPane(expandedPane === paneKey ? null : paneKey)} />
                 );
@@ -2234,19 +2919,25 @@
             </div>
 
             {layout !== "focus" && <ResizeHandle kind="insights" label="Resize AI insights" />}
-            {layout !== "focus" && <InsightsPane />}
+            {layout !== "focus" && renderInsightsPane()}
           </div>
         </div>
+        ) : (
+          <div className="live__preload">
+            {renderSessionLibrary({ inline: true })}
+          </div>
+        )}
         {layout === "focus" && aiPopupOpen && (
           <div className="ai-popup" role="dialog" aria-modal="true">
             <div className="ai-popup__panel">
               <span className="ai-popup__close">
                 <IconButton variant="ghost" size="sm" label="Close AI popup" onClick={() => setAiPopupOpen(false)}><Icon name="close" size={14} /></IconButton>
               </span>
-              <InsightsPane popup />
+              {renderInsightsPane(true)}
             </div>
           </div>
         )}
+        {sessionLibraryOpen && renderSessionLibrary()}
         {streamTarget && (
           <div className="stream-modal" role="dialog" aria-modal="true">
             <div className="stream-modal__panel">
@@ -2260,23 +2951,23 @@
                 <div className="stream-modal__section">
                   <h4>F1 TV session picker</h4>
                   <div className="f1tv-picker">
-                    <select className="f1tv-picker__select" value={f1TvSeason} onChange={(e) => { setF1TvSeason(e.target.value); loadF1TvLibrary(e.target.value); }}>
+                    <select className="f1tv-picker__select" value={f1TvSeason} onChange={(e) => { markF1TvSelectionPending(); setF1TvSeason(e.target.value); loadF1TvLibrary(e.target.value); }}>
                       {selectableSeasons.map((season) => <option key={season} value={season}>{season}</option>)}
                     </select>
-                    <select className="f1tv-picker__select" value={selectedF1TvRace ? String(selectedF1TvRace.rnd || selectedF1TvRace.name) : ""} onChange={(e) => setF1TvRaceId(e.target.value)}>
-                      {f1TvRaces.map((race) => <option key={race.rnd || race.name} value={String(race.rnd || race.name)}>{race.rnd ? "R" + race.rnd + " - " : ""}{race.name}</option>)}
+                    <select className="f1tv-picker__select" value={selectedF1TvRace ? raceLibraryId(selectedF1TvRace) : ""} onChange={(e) => { markF1TvSelectionPending(); setF1TvRaceId(e.target.value); }}>
+                      {f1TvRaces.map((race) => <option key={raceLibraryId(race)} value={raceLibraryId(race)}>{race.rnd ? "R" + race.rnd + " - " : ""}{race.name}</option>)}
                     </select>
                   </div>
                   <div className="f1tv-picker__sessions">
                     {f1TvSessionOptions.map((kind) => (
-                      <button className="f1tv-session" data-active={f1TvSessionKind === kind} key={kind} onClick={() => setF1TvSessionKind(kind)}>{kind}</button>
+                      <button className="f1tv-session" data-active={f1TvSessionKind === kind} key={kind} onClick={() => { markF1TvSelectionPending(); setF1TvSessionKind(kind); }}>{kind}</button>
                     ))}
                     {!f1TvSessionOptions.length && ["Practice 1", "Qualifying", "Race"].map((kind) => (
-                      <button className="f1tv-session" data-active={f1TvSessionKind === kind} key={kind} onClick={() => setF1TvSessionKind(kind)}>{kind}</button>
+                      <button className="f1tv-session" data-active={f1TvSessionKind === kind} key={kind} onClick={() => { markF1TvSelectionPending(); setF1TvSessionKind(kind); }}>{kind}</button>
                     ))}
                   </div>
                   <input className="stream-modal__input" value={f1TvDetailUrl} placeholder="Paste F1 TV detail URL, e.g. https://f1tv.formula1.com/detail/1000010265/-"
-                    onChange={(e) => setF1TvDetailUrl(e.target.value)} />
+                    onChange={(e) => { markF1TvSelectionPending(); setF1TvDetailUrl(e.target.value); }} />
                   <div className="f1tv-picker__meta">
                     <Icon name="calendar" size={13} />
                     <span>PitWall resolves the selected session or pasted detail URL in the background, then loads the clean video stream here.</span>

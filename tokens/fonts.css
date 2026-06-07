@@ -1,0 +1,9 @@
+/* ============================================================
+   PitWall — Webfonts
+   Saira (display + UI) and JetBrains Mono (data/timing) via
+   Google Fonts. These are the real brand faces, not subs.
+   To self-host, replace the @import with @font-face rules
+   pointing at local .woff2 binaries.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Saira:wght@300;400;500;600;700;800&family=Saira+SemiCondensed:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');

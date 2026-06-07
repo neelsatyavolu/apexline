@@ -1,0 +1,73 @@
+/* ==========================================================================
+   PitWall — Base layer
+   Element defaults + a few brand utility classes built on the tokens.
+   ========================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--lh-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--accent-quiet); color: var(--text-strong); }
+
+a { color: var(--text-link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Tabular numerals wherever numbers matter */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* Custom scrollbars (cockpit) */
+* { scrollbar-width: thin; scrollbar-color: var(--ink-600) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--ink-600);
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--ink-500); background-clip: content-box; }
+
+/* ---- Type utilities ---- */
+.pw-display { font-family: var(--font-display); font-weight: var(--fw-bold); letter-spacing: var(--tracking-tight); }
+.pw-mono    { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.pw-eyebrow {
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+  color: var(--text-tertiary);
+}
+
+/* ---- Pit-lane grid texture (behind hero / empty areas) ---- */
+.pw-grid-texture {
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: center;
+}
+
+/* ---- Live pulse dot ---- */
+.pw-live-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--live);
+  box-shadow: 0 0 8px var(--live-glow);
+  animation: pw-pulse-live 1.4s var(--ease-in-out) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pw-live-dot { animation: none; }
+}

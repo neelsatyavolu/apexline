@@ -1,0 +1,54 @@
+/* ============================================================
+   PitWall — Radius, elevation & effect tokens
+   Dark UI: shadows are deep + soft; "elevation" reads mostly
+   through surface lightness + hairline borders, with glow
+   reserved for live/accent states.
+   ============================================================ */
+
+:root {
+  /* ---- Corner radius ---- */
+  --radius-none: 0px;
+  --radius-xs:   3px;    /* chips, tags, data cells */
+  --radius-sm:   5px;    /* buttons, inputs */
+  --radius-md:   8px;    /* cards, panels */
+  --radius-lg:   12px;   /* large cards, modals */
+  --radius-xl:   16px;   /* hero containers */
+  --radius-2xl:  22px;
+  --radius-pill: 999px;
+  --radius-window: 10px; /* macOS window corner */
+
+  /* ---- Shadows (dark-tuned, cool) ---- */
+  --shadow-xs:   0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm:   0 2px 6px rgba(0, 0, 0, 0.45);
+  --shadow-md:   0 6px 18px rgba(0, 0, 0, 0.5);
+  --shadow-lg:   0 16px 40px rgba(0, 0, 0, 0.55);
+  --shadow-xl:   0 28px 70px rgba(0, 0, 0, 0.62);
+  --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.6),
+                    0 0 0 1px rgba(255, 255, 255, 0.06);
+
+  /* ---- Inset / hairline highlights ---- */
+  --inset-top-light: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --inset-hairline:  inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+
+  /* ---- Glow (live / accent / signal) ---- */
+  --glow-accent:  0 0 0 1px rgba(47, 125, 255, 0.5), 0 0 18px var(--blue-glow);
+  --glow-live:    0 0 0 1px rgba(255, 59, 59, 0.55), 0 0 16px rgba(255, 59, 59, 0.4);
+  --glow-fastest: 0 0 0 1px rgba(177, 75, 255, 0.6), 0 0 16px rgba(177, 75, 255, 0.45);
+  --glow-soft:    0 0 24px rgba(47, 125, 255, 0.25);
+
+  /* ---- Focus ring ---- */
+  --ring-width: 2px;  /* @kind spacing */
+  --ring-offset: 2px; /* @kind spacing */
+  --ring: 0 0 0 var(--ring-width) var(--bg-app),
+          0 0 0 calc(var(--ring-width) + 2px) var(--focus-ring);
+
+  /* ---- Backdrop blur ---- */
+  --blur-sm: 8px;  /* @kind spacing */
+  --blur-md: 16px; /* @kind spacing */
+  --blur-lg: 28px; /* @kind spacing */
+
+  /* ---- Decorative ---- */
+  --grid-line: rgba(255, 255, 255, 0.04);   /* faint telemetry grid */
+  --scanline:  rgba(47, 125, 255, 0.06);
+  --noise-opacity: 0.025; /* @kind other */
+}

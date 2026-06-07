@@ -1,0 +1,37 @@
+/* ==========================================================================
+   PitWall — Spacing, sizing & layout tokens
+   4px base grid. Cockpit UI is dense; gutters stay tight.
+   ========================================================================== */
+
+:root {
+  /* ---- Spacing scale ---- */
+  --space-0: 0px;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+  --space-9: 20px;
+  --space-10: 24px;
+  --space-11: 32px;
+  --space-12: 40px;
+  --space-13: 56px;
+  --space-14: 80px;
+
+  /* ---- Control heights ---- */
+  --size-control-sm: 28px;
+  --size-control-md: 34px;
+  --size-control-lg: 42px;
+  --tap-min: 44px;            /* minimum hit target */
+
+  /* ---- Layout rails ---- */
+  --sidebar-w: 244px;
+  --sidebar-w-collapsed: 64px;
+  --topbar-h: 52px;
+  --timing-sidebar-w: 320px;
+  --insights-h: 240px;
+  --content-max: 1280px;
+}

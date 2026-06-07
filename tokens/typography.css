@@ -1,0 +1,48 @@
+/* ==========================================================================
+   PitWall — Typography tokens  (canonical)
+   Display: Saira SemiCondensed · UI/body: Saira · Data: JetBrains Mono
+   ========================================================================== */
+
+:root {
+  /* ---- Families ---- */
+  --font-display: 'Saira SemiCondensed', 'Saira', system-ui, sans-serif;
+  --font-sans:    'Saira', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-data:    var(--font-mono);   /* alias: timing/telemetry numerals */
+
+  /* ---- Size scale (px) ---- */
+  --text-3xs: 10px;
+  --text-2xs: 11px;
+  --text-xs:  12px;
+  --text-sm:  13px;
+  --text-md:  14px;   /* base UI text */
+  --text-lg:  16px;
+  --text-xl:  18px;
+  --text-2xl: 22px;
+  --text-3xl: 28px;
+  --text-4xl: 36px;
+  --text-5xl: 48px;
+  --text-6xl: 64px;
+  --text-7xl: 84px;   /* hero countdown numerals */
+
+  /* ---- Weights ---- */
+  --fw-regular:  400;  /* @kind other */
+  --fw-medium:   500;  /* @kind other */
+  --fw-semibold: 600;  /* @kind other */
+  --fw-bold:     700;  /* @kind other */
+  --fw-black:    800;  /* @kind other */
+
+  /* ---- Line heights ---- */
+  --lh-none:    1;     /* @kind other */
+  --lh-tight:   1.1;   /* @kind other */
+  --lh-snug:    1.25;  /* @kind other */
+  --lh-normal:  1.5;   /* @kind other */
+  --lh-relaxed: 1.65;  /* @kind other */
+
+  /* ---- Letter spacing ---- */
+  --tracking-tighter: -0.02em; /* @kind other */
+  --tracking-tight:   -0.01em; /* @kind other */
+  --tracking-normal:  0em;     /* @kind other */
+  --tracking-wide:    0.02em;  /* @kind other */
+  --tracking-caps:    0.14em;  /* @kind other */
+}

@@ -1,0 +1,38 @@
+/* ==========================================================================
+   PitWall — F1 constructor palette (2026 grid)
+   Use for driver/constructor tables, onboard tags, standings bars, legends.
+   Each team: primary brand color + an accessible "on" text color.
+   ========================================================================== */
+
+:root {
+  --team-redbull:    #3671c6;
+  --team-redbull-2:  #0a1f4d;
+  --team-ferrari:    #e8002d;
+  --team-ferrari-2:  #a30021;
+  --team-mercedes:   #27f4d2;
+  --team-mercedes-2: #0b3b34;
+  --team-mclaren:    #ff8000;
+  --team-mclaren-2:  #4a2600;
+  --team-aston:      #229971;
+  --team-aston-2:    #0c3a2c;
+  --team-alpine:     #00a1e8;
+  --team-alpine-2:   #002b3d;
+  --team-williams:   #1868db;
+  --team-williams-2: #0a2452;
+  --team-racingbulls:#6692ff;
+  --team-racingbulls-2:#1a2a52;
+
+  /* Audi takes over the Sauber entry from 2026. Livery provisional —
+     using Audi corporate red on titanium; --team-sauber kept as an alias. */
+  --team-audi:       #d11d3c;
+  --team-audi-2:     #4a0a16;
+  --team-sauber:     var(--team-audi);
+  --team-sauber-2:   var(--team-audi-2);
+
+  /* Cadillac — 11th team, new for 2026. Livery provisional. */
+  --team-cadillac:   #16335c;
+  --team-cadillac-2: #d9b25a;
+
+  --team-haas:       #b6babd;
+  --team-haas-2:     #303336;
+}

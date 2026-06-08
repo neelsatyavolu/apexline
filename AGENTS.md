@@ -1,6 +1,6 @@
-# PitWall Agent Guide
+# Apexline Agent Guide
 
-PitWall is an Electron macOS F1 companion app. The renderer is React in
+Apexline is an Electron macOS F1 companion app. The renderer is React in
 `ui_kits/pitwall`, the Electron main process is `electron/main.cjs`, and the
 renderer bridge is `electron/preload.cjs`. Build, package, and smoke-test
 helpers live in `scripts`.
@@ -26,6 +26,34 @@ helpers live in `scripts`.
 - Package with CastLabs VMP signing: `/opt/homebrew/bin/npm run package:mac:vmp`
 - Launch dev app: `/opt/homebrew/bin/npm run dev`
 
+## Public Site and Updates
+
+- Public landing/download/update site: `https://apexline-app.vercel.app`.
+  Use the Apexline alias for app update checks after confirming the feed
+  returns public JSON.
+- The static Vercel project lives in `updates-site`. It hosts the landing page,
+  design tokens/assets, macOS update feed, and downloadable app zips.
+- The app's packaged update base URL is `package.json` →
+  `apexline.updateBaseUrl`. Keep it aligned with the public Vercel site before
+  packaging. The legacy `pitwall.updateBaseUrl` key is still read for older
+  packaged builds.
+- Current update feed path:
+  `updates-site/public/updates/darwin/arm64/releases.json`.
+- Current macOS artifact path pattern:
+  `updates-site/public/updates/darwin/arm64/Apexline-<version>-mac-arm64.zip`.
+- To publish a new update: bump `package.json` version, run
+  `/opt/homebrew/bin/npm run package:mac:vmp`, run
+  `/opt/homebrew/bin/npm run release:update-feed`, then deploy with
+  `/usr/bin/env CI=1 /opt/homebrew/bin/vercel deploy updates-site --prod -y`.
+  Confirm `/updates/darwin/arm64/releases.json` returns public
+  `200 application/json` without Vercel authentication before packaging a build
+  that points at a new alias.
+- Because this project does not use Apple Developer ID signing/notarization,
+  updates are manual-download updates: the app checks the public feed and opens
+  the hosted zip instead of silently installing and restarting.
+- Do not embed Vercel or GitHub tokens in the app. The feed and zip URLs must be
+  public static HTTPS URLs.
+
 ## Architecture Notes
 
 - `DataProvider.jsx` is the renderer's app-data boundary. Prefer routing new
@@ -39,7 +67,7 @@ helpers live in `scripts`.
 
 ## F1 TV, DRM, and Privacy
 
-- PitWall may authenticate the user's F1 TV account, resolve content metadata,
+- Apexline may authenticate the user's F1 TV account, resolve content metadata,
   and play streams only through legitimate authenticated requests.
 - Do not implement DRM bypasses, key extraction, license-response tampering,
   token scraping for persistence, or broad header spoofing.
@@ -54,7 +82,7 @@ helpers live in `scripts`.
 
 - Keep the dense, dark, F1-style dashboard language. Avoid placeholder mock data
   when a real data source is already wired.
-- Preserve the MultiViewer-like goal for Live Racing: native PitWall controls,
+- Preserve the MultiViewer-like goal for Live Racing: native Apexline controls,
   clean video panes, synchronized replay/live playback, and no visible F1 TV
   website chrome during normal playback.
 - When adding visual details, verify that text and controls fit at the current

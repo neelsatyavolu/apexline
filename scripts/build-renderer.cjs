@@ -25,6 +25,7 @@ const screens = [
 fs.mkdirSync(outDir, { recursive: true });
 fs.copyFileSync(path.join(srcDir, "data.js"), path.join(outDir, "data.js"));
 fs.copyFileSync(path.join(srcDir, "sync.js"), path.join(outDir, "sync.js"));
+fs.copyFileSync(path.join(srcDir, "social.js"), path.join(outDir, "social.js"));
 fs.copyFileSync(path.join(srcDir, "theme.js"), path.join(outDir, "theme.js"));
 fs.copyFileSync(path.join(srcDir, "trackmap-circuits.js"), path.join(outDir, "trackmap-circuits.js"));
 
@@ -37,13 +38,13 @@ for (const name of screens) {
 }
 
 const screenScripts = screens.map((name) => `<script src="${name}.js"></script>`).join("\n");
-const html = `<!-- Built PitWall renderer. Source: ui_kits/pitwall/index.html -->
+const html = `<!-- Built Apexline renderer. Source: ui_kits/pitwall/index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="darkreader-lock">
-<title>PitWall</title>
+<title>Apexline</title>
 <link rel="stylesheet" href="../../styles.css">
 <style>
   html, body { margin: 0; height: 100%; background: var(--bg-app); }
@@ -64,6 +65,7 @@ const html = `<!-- Built PitWall renderer. Source: ui_kits/pitwall/index.html --
 <script src="theme.js"></script>
 <script src="data.js"></script>
 <script src="sync.js"></script>
+<script src="social.js"></script>
 <script src="trackmap-circuits.js"></script>
 ${screenScripts}
 <script>
@@ -130,4 +132,4 @@ ${screenScripts}
 `;
 
 fs.writeFileSync(path.join(outDir, "index.html"), html);
-console.log("Built PitWall renderer to dist/pitwall");
+console.log("Built Apexline renderer to dist/pitwall");

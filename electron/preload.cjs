@@ -80,6 +80,16 @@ contextBridge.exposeInMainWorld("pitwall", {
   history: {
     query: (options = {}) => ipcRenderer.invoke("pitwall:history:query", options),
   },
+  social: {
+    bootstrap: (options = {}) => ipcRenderer.invoke("pitwall:social:bootstrap", options),
+    friends: (options = {}) => ipcRenderer.invoke("pitwall:social:friends", options),
+    addFriend: (options = {}) => ipcRenderer.invoke("pitwall:social:addFriend", options),
+    roomCreate: (options = {}) => ipcRenderer.invoke("pitwall:social:roomCreate", options),
+    roomJoin: (options = {}) => ipcRenderer.invoke("pitwall:social:roomJoin", options),
+    ablyToken: (options = {}) => ipcRenderer.invoke("pitwall:social:ablyToken", options),
+    chatHistory: (options = {}) => ipcRenderer.invoke("pitwall:social:chatHistory", options),
+    chatSave: (options = {}) => ipcRenderer.invoke("pitwall:social:chatSave", options),
+  },
   analytics: {
     library: (options = {}) => ipcRenderer.invoke("pitwall:analytics:library", options),
     session: (options = {}) => ipcRenderer.invoke("pitwall:analytics:session", options),
@@ -102,5 +112,10 @@ contextBridge.exposeInMainWorld("pitwall", {
   },
   external: {
     openExternal: (url) => ipcRenderer.invoke("pitwall:external:open", url),
+  },
+  updates: {
+    check: () => ipcRenderer.invoke("pitwall:updates:check"),
+    open: (url) => ipcRenderer.invoke("pitwall:updates:open", url),
+    install: (url) => ipcRenderer.invoke("pitwall:updates:install", url),
   },
 });

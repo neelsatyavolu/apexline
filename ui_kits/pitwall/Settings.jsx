@@ -1,4 +1,4 @@
-/* PitWall Settings / API keys. window.PW.Settings */
+/* Apexline Settings. window.PW.Settings */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const { Card, Badge, Icon, Switch, Input, Button, SegmentedControl, Avatar, Tabs } = NS;
@@ -6,10 +6,9 @@
   const AI_MODEL_STORAGE = "pw-ai-model";
   const SYNC_STORAGE_KEY = "pw-sync-settings";
   const DEFAULT_WORLD_SYNC_TARGET = 36;
-  const DEFAULT_AI_MODEL = "anthropic:claude-sonnet-4-20250514";
+  const DEFAULT_AI_MODEL = "codex:gpt-5.4-mini";
+  const PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
   const AI_MODEL_OPTIONS = [
-    { value: "anthropic:claude-sonnet-4-20250514", label: "Claude 4" },
-    { value: "openai:gpt-4o", label: "GPT-4o" },
     { value: "codex:gpt-5.4-mini", label: "GPT-5.4 mini" },
     { value: "grok:grok-4.3", label: "Grok 4.3" },
     { value: "local", label: "Local MLX" },
@@ -32,14 +31,11 @@
     .row__txt { flex: 1; min-width: 0; }
     .row__t { font-size: var(--text-md); font-weight: 500; color: var(--text-primary); }
     .row__s { font-size: var(--text-sm); color: var(--text-tertiary); margin-top: 2px; line-height: 1.4; }
-    .keyrow { display: flex; align-items: flex-end; gap: var(--space-6); }
-    .keyrow .pw-field { flex: 1; }
     .provider { display: flex; align-items: center; gap: var(--space-6); padding: var(--space-7); border-radius: var(--radius-md); border: 1px solid var(--border-subtle); background: var(--surface-raised); }
     .provider__logo { width: 38px; height: 38px; border-radius: var(--radius-sm); display: grid; place-items: center; flex: none; color: var(--provider-logo-fg, #fff); background: var(--provider-logo-bg, #111827); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); }
     .provider__logo svg { width: 24px; height: 24px; display: block; fill: currentColor; }
-    .provider__logo--codex, .provider__logo--openai { --provider-logo-bg: #fff; --provider-logo-fg: #0f172a; }
+    .provider__logo--codex { --provider-logo-bg: #fff; --provider-logo-fg: #0f172a; }
     .provider__logo--grok { --provider-logo-bg: #050505; --provider-logo-fg: #fff; }
-    .provider__logo--anthropic { --provider-logo-bg: #f4efe7; --provider-logo-fg: #191919; }
     .f1-login { overflow: hidden; border-radius: var(--radius-md); background: #1a1a1d; border: 1px solid var(--border-subtle); }
     .f1-login__main { padding: var(--space-9); }
     .f1-login__top { display: flex; align-items: center; gap: var(--space-7); margin-bottom: var(--space-8); }
@@ -50,6 +46,7 @@
     .f1-login__sub { color: var(--text-tertiary); font-size: var(--text-sm); margin-top: 2px; }
     .f1-login__status { margin-left: auto; display: flex; align-items: center; gap: var(--space-4); }
     .f1-login__fields { display: grid; gap: var(--space-7); }
+    .friends-add-form { align-items: end; }
     .f1-login__actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-5); margin-top: var(--space-8); }
     .f1-login__note { margin-top: var(--space-6); color: var(--text-tertiary); font-size: var(--text-sm); min-height: 20px; }
     .ai-flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-5); }
@@ -58,6 +55,11 @@
     .ai-step__t { font-size: var(--text-md); font-weight: 600; color: var(--text-primary); margin: 6px 0 4px; }
     .ai-step__d { font-size: var(--text-sm); color: var(--text-tertiary); line-height: 1.4; }
     .ai-step__arrow { position: absolute; right: -13px; top: 50%; transform: translateY(-50%); color: var(--border-strong); z-index: 2; }
+    .profile-photo { display: flex; align-items: center; gap: var(--space-7); min-width: 260px; }
+    .profile-photo__body { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+    .profile-photo__actions { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+    .profile-photo__input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+    .profile-photo__msg { font-size: var(--text-2xs); color: var(--text-tertiary); min-height: 16px; }
 
     /* Favorites */
     .fav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-9); align-items: start; }
@@ -88,11 +90,13 @@
   }
 
   const SECTIONS = [
-    { id: "ai", label: "AI & API keys", icon: "sparkles" },
+    { id: "ai", label: "AI providers", icon: "sparkles" },
     { id: "favorites", label: "Favorites", icon: "star" },
-    { id: "account", label: "F1 TV account", icon: "user" },
+    { id: "friends", label: "Friends", icon: "radio" },
+    { id: "account", label: "Account", icon: "user" },
     { id: "appearance", label: "Appearance", icon: "layers" },
     { id: "notifications", label: "Notifications", icon: "bell" },
+    { id: "updates", label: "Updates", icon: "arrowDown" },
     { id: "layouts", label: "Layout defaults", icon: "grid" },
   ];
   const DEFAULT_PREFS = {
@@ -176,15 +180,6 @@
         </span>
       );
     }
-    if (provider === "anthropic") {
-      return (
-        <span className="provider__logo provider__logo--anthropic" aria-hidden="true">
-          <svg viewBox="0 0 24 24" focusable="false">
-            <path d="M13.827 3.52h3.603L24 20h-3.603l-6.57-16.48zm-7.258 0h3.767L16.906 20h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm4.132 9.959L8.453 7.687 6.205 13.48H10.7z" />
-          </svg>
-        </span>
-      );
-    }
     return (
       <span className={"provider__logo provider__logo--" + provider} aria-hidden="true">
         <svg viewBox="0 0 24 24" focusable="false">
@@ -197,10 +192,16 @@
   function Settings() {
     const { data: D, profile, updateProfile, refreshConnections } = window.PW.usePitWall();
     const [sec, setSec] = React.useState("ai");
-    const [model, setModel] = React.useState(() => localStorage.getItem(AI_MODEL_STORAGE) || DEFAULT_AI_MODEL);
+    const [model, setModel] = React.useState(() => {
+      const saved = localStorage.getItem(AI_MODEL_STORAGE) || DEFAULT_AI_MODEL;
+      return AI_MODEL_OPTIONS.some((option) => option.value === saved) ? saved : DEFAULT_AI_MODEL;
+    });
     const [userName, setUserName] = React.useState(profile.name || "");
+    const [profileImageUrl, setProfileImageUrl] = React.useState(profile.profileImageUrl || "");
+    const [profileImageMessage, setProfileImageMessage] = React.useState("");
     const [favDrivers, setFavDrivers] = React.useState(profile.favoriteDrivers || []);
     const [favTeams, setFavTeams] = React.useState(profile.favoriteTeams || []);
+    const profileImageInputRef = React.useRef(null);
     function normalizePresetName(name) {
       return name === "Driver Focus" ? "Intelligent" : name;
     }
@@ -212,8 +213,6 @@
       }
       catch { return DEFAULT_PREFS; }
     });
-    const [keyInputs, setKeyInputs] = React.useState({ anthropic: "", openai: "" });
-    const [savedKeys, setSavedKeys] = React.useState({ anthropic: false, openai: false });
     const [oauthStatus, setOauthStatus] = React.useState({ codexConnected: false, grokConnected: false });
     const [oauthBusy, setOauthBusy] = React.useState("");
     const [keyStatus, setKeyStatus] = React.useState("");
@@ -222,6 +221,12 @@
     const [f1Status, setF1Status] = React.useState({ authenticated: false, cookieCount: 0 });
     const [f1Busy, setF1Busy] = React.useState(false);
     const [f1Message, setF1Message] = React.useState("");
+    const [socialIdentity, setSocialIdentity] = React.useState(null);
+    const [socialFriends, setSocialFriends] = React.useState([]);
+    const [friendCodeInput, setFriendCodeInput] = React.useState("");
+    const [friendStatus, setFriendStatus] = React.useState("Friends sync when the Apexline social backend is reachable.");
+    const [updateStatus, setUpdateStatus] = React.useState({ status: "idle", currentVersion: "", update: null, message: "" });
+    const [updateBusy, setUpdateBusy] = React.useState(false);
     const [f1LiveLatencyDraft, setF1LiveLatencyDraft] = React.useState(() => String(appPrefs.f1LiveLatency));
 
     React.useEffect(() => {
@@ -235,17 +240,37 @@
 
     React.useEffect(() => {
       setUserName(profile.name || "");
+      setProfileImageUrl(profile.profileImageUrl || "");
       setFavDrivers(profile.favoriteDrivers || []);
       setFavTeams(profile.favoriteTeams || []);
-    }, [profile.name, (profile.favoriteDrivers || []).join("|"), (profile.favoriteTeams || []).join("|")]);
+    }, [profile.name, profile.profileImageUrl, (profile.favoriteDrivers || []).join("|"), (profile.favoriteTeams || []).join("|")]);
 
     React.useEffect(() => {
       setF1LiveLatencyDraft(String(appPrefs.f1LiveLatency));
     }, [appPrefs.f1LiveLatency]);
 
     React.useEffect(() => {
-      updateProfile({ name: userName, favoriteDrivers: favDrivers, favoriteTeams: favTeams });
-    }, [userName, favDrivers.join("|"), favTeams.join("|")]);
+      updateProfile({ name: userName, profileImageUrl, favoriteDrivers: favDrivers, favoriteTeams: favTeams });
+    }, [userName, profileImageUrl, favDrivers.join("|"), favTeams.join("|")]);
+
+    React.useEffect(() => {
+      let cancelled = false;
+      async function loadSocial() {
+        if (!window.pitwall?.social?.bootstrap) return;
+        try {
+          const identity = await window.pitwall.social.bootstrap({ profile });
+          if (cancelled) return;
+          setSocialIdentity(identity);
+          setFriendStatus(identity?.offline ? "Social backend is offline; your local friend code is ready." : "Friends ready.");
+          const list = await window.pitwall.social.friends({ userId: identity.userId }).catch(() => null);
+          if (!cancelled && Array.isArray(list?.friends)) setSocialFriends(list.friends);
+        } catch (error) {
+          if (!cancelled) setFriendStatus(error?.message || "Friends are unavailable.");
+        }
+      }
+      loadSocial();
+      return () => { cancelled = true; };
+    }, [profile.name, profile.profileImageUrl]);
 
     function setPref(key, value) {
       setAppPrefs((prefs) => ({ ...prefs, [key]: value }));
@@ -258,8 +283,53 @@
       setAppPrefs((prefs) => ({ ...prefs, f1LiveLatency: nextValue }));
     }
 
+    async function refreshFriends() {
+      if (!socialIdentity?.userId || !window.pitwall?.social?.friends) return;
+      try {
+        const list = await window.pitwall.social.friends({ userId: socialIdentity.userId });
+        setSocialFriends(Array.isArray(list?.friends) ? list.friends : []);
+        setFriendStatus("Friends refreshed.");
+      } catch (error) {
+        setFriendStatus(error?.message || "Could not refresh friends.");
+      }
+    }
+
+    async function addFriendByCode() {
+      const friendCode = friendCodeInput.trim().toUpperCase();
+      if (!friendCode || !window.pitwall?.social?.addFriend) return;
+      try {
+        const result = await window.pitwall.social.addFriend({ userId: socialIdentity?.userId, friendCode });
+        setFriendStatus(result?.message || (result?.ok ? "Friend added." : "Friend request unavailable."));
+        setFriendCodeInput("");
+        refreshFriends();
+      } catch (error) {
+        setFriendStatus(error?.message || "Could not add friend.");
+      }
+    }
+
     function setNotification(key, value) {
       setAppPrefs((prefs) => ({ ...prefs, notifications: { ...prefs.notifications, [key]: value } }));
+    }
+
+    function selectProfileImage(event) {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) return;
+      if (!/^image\//i.test(file.type || "")) {
+        setProfileImageMessage("Choose a PNG, JPG, GIF, WebP, or SVG image.");
+        return;
+      }
+      if (file.size > PROFILE_IMAGE_MAX_BYTES) {
+        setProfileImageMessage("Choose an image under 2 MB.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        setProfileImageUrl(String(reader.result || ""));
+        setProfileImageMessage("Profile photo updated.");
+      };
+      reader.onerror = () => setProfileImageMessage("Could not read that image.");
+      reader.readAsDataURL(file);
     }
 
     function keyStore() {
@@ -278,21 +348,57 @@
     function providerLabel(provider) {
       if (provider === "codex") return "ChatGPT";
       if (provider === "grok") return "Grok";
-      if (provider === "anthropic") return "Anthropic";
-      return "OpenAI";
+      return "AI provider";
     }
 
     function f1TvAuth() {
       return window.pitwall && window.pitwall.f1tv ? window.pitwall.f1tv : null;
     }
 
+    function f1TvLoginMessage(status) {
+      if (status.authenticated) return "F1 TV playback token connected.";
+      if (status.credentialError) return `F1 TV email/password sign-in did not return a playback token: ${status.credentialError}`;
+      if (status.browserSession) return "Browser signed in. The playback token is still missing, so use email/password sign-in for streams.";
+      return "Sign-in window closed before a playback token was detected.";
+    }
+
+    function updateApi() {
+      return window.pitwall?.updates || null;
+    }
+
+    async function checkForUpdates() {
+      const updates = updateApi();
+      if (!updates?.check) {
+        setUpdateStatus({ status: "unavailable", currentVersion: "", update: null, message: "Open Apexline as the macOS app to check for updates." });
+        return;
+      }
+      setUpdateBusy(true);
+      try {
+        const status = await updates.check();
+        setUpdateStatus(status || { status: "unavailable", currentVersion: "", update: null, message: "Update feed did not return a status." });
+      } catch {
+        setUpdateStatus({ status: "error", currentVersion: "", update: null, message: "Could not reach the Vercel update feed." });
+      } finally {
+        setUpdateBusy(false);
+      }
+    }
+
+    async function installUpdateAndRestart() {
+      const url = updateStatus.update?.url;
+      if (!url) return;
+      setUpdateBusy(true);
+      setUpdateStatus((current) => ({ ...current, message: "Downloading update. Apexline will restart when installation is ready." }));
+      try {
+        await updateApi()?.install?.(url);
+        setUpdateStatus((current) => ({ ...current, message: "Installing update and restarting Apexline." }));
+      } catch (error) {
+        setUpdateStatus((current) => ({ ...current, message: error?.message || "Could not install the update." }));
+        setUpdateBusy(false);
+      }
+    }
+
     React.useEffect(() => {
       let mounted = true;
-      Promise.all([keyStore().get("anthropic"), keyStore().get("openai")])
-        .then(([anthropic, openai]) => {
-          if (mounted) setSavedKeys({ anthropic: Boolean(anthropic), openai: Boolean(openai) });
-        })
-        .catch(() => mounted && setKeyStatus("Keychain unavailable"));
       aiAuth()?.authStatus?.()
         .then((status) => mounted && setOauthStatus(status || { codexConnected: false, grokConnected: false }))
         .catch(() => {});
@@ -313,30 +419,9 @@
       return () => { mounted = false; };
     }, []);
 
-    async function saveProvider(provider) {
-      try {
-        await keyStore().set(provider, keyInputs[provider]);
-        setSavedKeys((current) => ({ ...current, [provider]: Boolean(keyInputs[provider].trim()) }));
-        setKeyInputs((current) => ({ ...current, [provider]: "" }));
-        setKeyStatus(`${providerLabel(provider)} key saved`);
-        refreshConnections();
-        setTimeout(() => setKeyStatus(""), 1800);
-      } catch {
-        setKeyStatus("Could not save key");
-      }
-    }
-
-    async function deleteProvider(provider) {
-      try {
-        await keyStore().delete(provider);
-        setSavedKeys((current) => ({ ...current, [provider]: false }));
-        setKeyStatus(`${providerLabel(provider)} key removed`);
-        refreshConnections();
-        setTimeout(() => setKeyStatus(""), 1800);
-      } catch {
-        setKeyStatus("Could not remove key");
-      }
-    }
+    React.useEffect(() => {
+      checkForUpdates();
+    }, []);
 
     async function connectOAuthProvider(provider) {
       const auth = aiAuth();
@@ -382,7 +467,7 @@
     async function signInF1Tv(mode) {
       const auth = f1TvAuth();
       if (!auth) {
-        setF1Message("Open PitWall as the macOS app to connect F1 TV.");
+        setF1Message("Open Apexline as the macOS app to connect F1 TV.");
         return;
       }
       setF1Busy(true);
@@ -395,7 +480,7 @@
         });
         setF1Status(status);
         setF1Password("");
-        setF1Message(status.authenticated ? "F1 TV playback token connected." : status.browserSession ? "Browser signed in. The playback token is still missing, so use email/password sign-in for streams." : "Sign-in window closed before a playback token was detected.");
+        setF1Message(f1TvLoginMessage(status));
         refreshConnections();
       } catch {
         setF1Message("Could not open F1 TV sign-in.");
@@ -441,7 +526,7 @@
     const f1Note = f1SignedIn
       ? "F1 TV playback token is stored in Keychain and ready for streams."
       : f1BrowserSignedIn
-        ? "F1 TV browser is signed in, but the playback token is still missing. Use email/password sign-in so PitWall can load streams."
+        ? "F1 TV browser is signed in, but the playback token is still missing. Use email/password sign-in so Apexline can load streams."
         : "No F1 TV playback token connected. MultiViewer uses its own app profile.";
     return (
       <div className="set">
@@ -456,7 +541,7 @@
         <div className="set__col">
           {sec === "ai" && (
             <>
-              <Card title="AI provider" subtitle="PitWall uses your own accounts. OAuth sessions and keys stay in the macOS Keychain.">
+              <Card title="AI provider" subtitle="Apexline uses your own accounts. OAuth sessions stay in the macOS Keychain.">
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                   <div className="provider">
                     <ProviderLogo provider="codex" />
@@ -476,32 +561,6 @@
                     <Badge tone={oauthStatus.grokConnected ? "success" : "neutral"} dot>{oauthStatus.grokConnected ? "Active" : "OAuth"}</Badge>
                     <Button variant={oauthStatus.grokConnected ? "ghost" : "secondary"} disabled={oauthBusy === "grok"} onClick={() => oauthStatus.grokConnected ? disconnectOAuthProvider("grok") : connectOAuthProvider("grok")}>{oauthStatus.grokConnected ? "Disconnect" : "Connect"}</Button>
                   </div>
-                  <div className="provider">
-                    <ProviderLogo provider="anthropic" />
-                    <div style={{ flex: 1 }}>
-                      <div className="row__t">Anthropic · Claude</div>
-                      <div className="row__s">{savedKeys.anthropic ? "Connected · Claude 4 Sonnet" : "No key saved"}</div>
-                    </div>
-                    <Badge tone={savedKeys.anthropic ? "success" : "neutral"} dot>{savedKeys.anthropic ? "Active" : "Fallback"}</Badge>
-                  </div>
-                  <div className="keyrow">
-                    <Input label="Anthropic API key" mono value={keyInputs.anthropic} placeholder={savedKeys.anthropic ? "Saved in Keychain" : "sk-ant-..."} onChange={(e) => setKeyInputs({ ...keyInputs, anthropic: e.target.value })} suffix={<Icon name="key" size={15} />} />
-                    <Button variant="secondary" disabled={!keyInputs.anthropic.trim()} onClick={() => saveProvider("anthropic")}>{savedKeys.anthropic ? "Update" : "Add"}</Button>
-                    {savedKeys.anthropic && <Button variant="ghost" onClick={() => deleteProvider("anthropic")}>Remove</Button>}
-                  </div>
-                  <div className="provider">
-                    <ProviderLogo provider="openai" />
-                    <div style={{ flex: 1 }}>
-                      <div className="row__t">OpenAI fallback</div>
-                      <div className="row__s">{savedKeys.openai ? "Connected · GPT-4o fallback" : "No key saved"}</div>
-                    </div>
-                    <Badge tone={savedKeys.openai ? "success" : "neutral"} dot>{savedKeys.openai ? "Active" : "Optional"}</Badge>
-                  </div>
-                  <div className="keyrow">
-                    <Input label="OpenAI API key" mono value={keyInputs.openai} placeholder={savedKeys.openai ? "Saved in Keychain" : "sk-... (optional fallback)"} onChange={(e) => setKeyInputs({ ...keyInputs, openai: e.target.value })} suffix={<Icon name="key" size={15} />} />
-                    <Button variant={savedKeys.openai ? "secondary" : "ghost"} disabled={!keyInputs.openai.trim()} onClick={() => saveProvider("openai")}>{savedKeys.openai ? "Update" : "Add"}</Button>
-                    {savedKeys.openai && <Button variant="ghost" onClick={() => deleteProvider("openai")}>Remove</Button>}
-                  </div>
                   {keyStatus && <Badge tone="success">{keyStatus}</Badge>}
                 </div>
               </Card>
@@ -515,7 +574,7 @@
                 </div>
               </Card>
 
-              <Card title="How PitWall's AI works" subtitle="Hybrid: the app computes the precise numbers, the model reasons about strategy">
+              <Card title="How Apexline's AI works" subtitle="Hybrid: the app computes the precise numbers, the model reasons about strategy">
                 <div className="ai-flow">
                   {[
                     { n: "01", t: "Telemetry in", d: "OpenF1 stream: gaps, sectors, tyres, DRS." },
@@ -615,6 +674,47 @@
             );
           })()}
 
+          {sec === "friends" && (
+            <Card title="Friends" subtitle="Add Apexline friends for Watch Party chat and synced sessions.">
+              <div className="row" style={{ paddingTop: 0 }}>
+                <div className="row__txt">
+                  <div className="row__t">Your friend code</div>
+                  <div className="row__s">Share this with people you want to watch live races or replays with.</div>
+                </div>
+                <div className="profile-photo__body">
+                  <div className="f1-login__title">{socialIdentity?.friendCode || "Pending"}</div>
+                  <div className="profile-photo__msg">{friendStatus}</div>
+                </div>
+              </div>
+              <div className="row">
+                <div className="row__txt">
+                  <div className="row__t">Add friend</div>
+                  <div className="row__s">Friend identities are Apexline-local and separate from F1 TV or AI accounts.</div>
+                </div>
+                <div className="f1-login__fields friends-add-form" style={{ gridTemplateColumns: "minmax(0, 1fr) auto" }}>
+                  <Input label="Friend code" value={friendCodeInput} placeholder="AB12CD34" onChange={(e) => setFriendCodeInput(e.target.value.toUpperCase())} />
+                  <Button variant="secondary" onClick={addFriendByCode}>Add</Button>
+                </div>
+              </div>
+              <div className="row">
+                <div className="row__txt">
+                  <div className="row__t">Accepted friends</div>
+                  <div className="row__s">{socialFriends.length ? `${socialFriends.length} friend${socialFriends.length === 1 ? "" : "s"} available for Watch Party invites.` : "No friends added yet."}</div>
+                </div>
+                <Button variant="ghost" onClick={refreshFriends}>Refresh</Button>
+              </div>
+              {socialFriends.map((item, index) => (
+                <div className="row" key={item.friend?.userId || index}>
+                  <div className="row__txt">
+                    <div className="row__t">{item.friend?.displayName || "Apexline fan"}</div>
+                    <div className="row__s">{item.status || "accepted"}</div>
+                  </div>
+                  <Button variant="ghost" disabled>Remove</Button>
+                </div>
+              ))}
+            </Card>
+          )}
+
           {sec === "account" && (
             <Card title="F1 TV account" subtitle="Required to watch live streams. The sign-in session stays inside this Mac app.">
               <div className="row" style={{ paddingTop: 0 }}>
@@ -623,6 +723,23 @@
                   <div className="row__s">Used for greetings and local personalization only.</div>
                 </div>
                 <Input label="Display name" value={userName} placeholder="Enter your name" onChange={(e) => setUserName(e.target.value)} />
+              </div>
+              <div className="row">
+                <div className="row__txt">
+                  <div className="row__t">Profile picture</div>
+                  <div className="row__s">Shown in the Apexline sidebar and stored with this local app profile.</div>
+                </div>
+                <div className="profile-photo">
+                  <Avatar initials={(userName || "PW").trim().slice(0, 2).toUpperCase()} src={profileImageUrl} size="lg" />
+                  <div className="profile-photo__body">
+                    <div className="profile-photo__actions">
+                      <input id="profile-image-input" className="profile-photo__input" ref={profileImageInputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" onChange={selectProfileImage} />
+                      <Button variant="secondary" onClick={() => profileImageInputRef.current?.click()}>Choose photo</Button>
+                      {profileImageUrl && <Button variant="ghost" onClick={() => { setProfileImageUrl(""); setProfileImageMessage("Profile photo cleared."); }}>Clear photo</Button>}
+                    </div>
+                    <div className="profile-photo__msg">{profileImageMessage || "PNG, JPG, GIF, WebP, or SVG under 2 MB."}</div>
+                  </div>
+                </div>
               </div>
               <div className="f1-login">
                 <div className="f1-login__main">
@@ -633,21 +750,25 @@
                       <div className="f1-login__sub">Sign in with your F1 TV account. MultiViewer uses its own app profile, so sign in here too.</div>
                     </div>
                     <div className="f1-login__status">
+                      {(f1SignedIn || f1BrowserSignedIn) && <Button variant="ghost" disabled={f1Busy} onClick={signOutF1Tv}>Sign out</Button>}
                       <Badge tone={f1BadgeTone} dot>{f1BadgeLabel}</Badge>
                     </div>
                   </div>
-                  <div className="f1-login__fields">
-                    <Input label="Email" value={f1Email} placeholder="Email" onChange={(e) => setF1Email(e.target.value)} />
-                    <Input label="Password" type="password" value={f1Password} placeholder="Password" onChange={(e) => setF1Password(e.target.value)} />
-                  </div>
-                  <div className="f1-login__actions">
-                    {(f1SignedIn || f1BrowserSignedIn) && <Button variant="ghost" disabled={f1Busy} onClick={signOutF1Tv}>Sign out</Button>}
-                    <Button variant="secondary" disabled={f1Busy} onClick={() => signInF1Tv("credentials")}>{f1Busy ? "Opening..." : "SIGN IN"}</Button>
-                  </div>
+                  {!f1SignedIn && (
+                    <>
+                      <div className="f1-login__fields">
+                        <Input label="Email" value={f1Email} placeholder="Email" onChange={(e) => setF1Email(e.target.value)} />
+                        <Input label="Password" type="password" value={f1Password} placeholder="Password" onChange={(e) => setF1Password(e.target.value)} />
+                      </div>
+                      <div className="f1-login__actions">
+                        <Button variant="secondary" disabled={f1Busy} onClick={() => signInF1Tv("credentials")}>{f1Busy ? "Opening..." : "SIGN IN"}</Button>
+                      </div>
+                    </>
+                  )}
                   <div className="f1-login__note">{f1Message || f1Note}</div>
                 </div>
               </div>
-              <div className="row"><div className="row__txt"><div className="row__t">Unofficial companion app</div><div className="row__s">PitWall requires an active F1 TV subscription. Not affiliated with Formula 1.</div></div></div>
+              <div className="row"><div className="row__txt"><div className="row__t">Unofficial companion app</div><div className="row__s">Apexline requires an active F1 TV subscription. Not affiliated with Formula 1.</div></div></div>
             </Card>
           )}
 
@@ -660,7 +781,7 @@
           )}
 
           {sec === "notifications" && (
-            <Card title="Notifications" subtitle="What PitWall pings you about">
+            <Card title="Notifications" subtitle="What Apexline pings you about">
               {[
                 ["lightsOut", "Lights out", "5 minutes before every race start"],
                 ["battles", "Battle alerts", "When the AI detects a close fight"],
@@ -670,6 +791,36 @@
               ].map((r) => (
                 <div className="row" key={r[0]}><div className="row__txt"><div className="row__t">{r[1]}</div><div className="row__s">{r[2]}</div></div><Switch checked={appPrefs.notifications[r[0]]} onChange={(value) => setNotification(r[0], value)} /></div>
               ))}
+            </Card>
+          )}
+
+          {sec === "updates" && (
+            <Card title="Updates" subtitle="Checks the public Vercel release feed without exposing the private source repo.">
+              <div className="row" style={{ paddingTop: 0 }}>
+                <div className="row__txt">
+                  <div className="row__t">Installed version</div>
+                  <div className="row__s">{updateStatus.currentVersion ? "Version " + updateStatus.currentVersion : "Version is available in the packaged macOS app."}</div>
+                </div>
+                <Badge tone={updateStatus.status === "available" ? "warning" : updateStatus.status === "current" ? "success" : "neutral"} dot>
+                  {updateStatus.status === "available" ? "Update" : updateStatus.status === "current" ? "Current" : "Feed"}
+                </Badge>
+              </div>
+              <div className="row">
+                <div className="row__txt">
+                  <div className="row__t">{updateStatus.update ? "Version " + updateStatus.update.version + " available" : "Vercel update feed"}</div>
+                  <div className="row__s">{updateStatus.message || "Apexline checks for a newer signed or manually installed macOS build."}</div>
+                </div>
+                <Button variant="ghost" disabled={updateBusy} onClick={checkForUpdates}>{updateBusy ? "Checking..." : "Check"}</Button>
+                {updateStatus.update && <Button variant="secondary" disabled={updateBusy} onClick={installUpdateAndRestart}>Install & Restart</Button>}
+              </div>
+              {updateStatus.update?.notes && (
+                <div className="row">
+                  <div className="row__txt">
+                    <div className="row__t">Release notes</div>
+                    <div className="row__s">{updateStatus.update.notes}</div>
+                  </div>
+                </div>
+              )}
             </Card>
           )}
 

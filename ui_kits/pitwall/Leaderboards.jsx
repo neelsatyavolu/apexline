@@ -1,4 +1,4 @@
-/* PitWall Leaderboards & Standings. window.PW.Leaderboards */
+/* Apexline Leaderboards & Standings. window.PW.Leaderboards */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const { Card, Badge, Icon, SegmentedControl, DriverTag, GapDelta, Avatar, Button, Tag } = NS;

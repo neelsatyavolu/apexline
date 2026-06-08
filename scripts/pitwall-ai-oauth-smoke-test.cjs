@@ -23,6 +23,7 @@ assert.match(mainProcess, /pitwall:ai:authStart/, "Electron main should expose A
 assert.match(mainProcess, /pitwall:ai:authDisconnect/, "Electron main should expose AI OAuth disconnect IPC");
 assert.match(mainProcess, /preferred === "codex"/, "AI router should honor Codex as a preferred provider");
 assert.match(mainProcess, /preferred === "grok"/, "AI router should honor Grok as a preferred provider");
+assert.doesNotMatch(mainProcess, /preferred === "openai"|preferred === "anthropic"|Add an OpenAI\/Anthropic API key/, "AI router should not offer removed API-key providers");
 assert.match(mainProcess, /gpt-5\.4-mini/, "AI model list should include GPT 5.4 mini");
 assert.match(mainProcess, /requestCodexResponsesStream/, "Codex OAuth should use the streaming Codex responses contract");
 assert.match(mainProcess, /instructions:\s*AI_SYSTEM_PROMPT/, "Codex OAuth should send system guidance as top-level instructions");
@@ -36,12 +37,13 @@ assert.match(settings, /ChatGPT \(Codex\)/, "Settings should offer ChatGPT/Codex
 assert.match(settings, /Grok/, "Settings should offer Grok OAuth");
 assert.match(settings, /function ProviderLogo/, "Settings should render brand provider logos");
 assert.match(settings, /M9\.205 8\.658/, "Settings should include the ChatGPT\/OpenAI logo path");
-assert.match(settings, /M13\.827 3\.52h3\.603/, "Settings should include the Anthropic logo path");
 assert.match(settings, /m557\.09 211\.99 8\.31 326\.37/, "Settings should include the xAI\/Grok logo path");
-assert.match(settings, /OpenAI fallback/, "Settings should show OpenAI as an icon-backed fallback provider");
 assert.match(settings, /GPT-5\.4 mini/, "Settings should show GPT 5.4 mini as a model option");
+assert.doesNotMatch(settings, /Anthropic API key|Anthropic · Claude|Claude 4|anthropic:claude/, "Settings should not offer Anthropic API-key options");
+assert.doesNotMatch(settings, /OpenAI API key|OpenAI fallback|GPT-4o|openai:gpt/, "Settings should not offer OpenAI API-key options");
 assert.match(settings, /pw-ai-model/, "Settings should persist the preferred AI model");
 assert.match(dataProvider, /authStatus/, "Connection status should include OAuth sessions");
+assert.doesNotMatch(dataProvider, /keys\.get\("anthropic"\)|keys\.get\("openai"\)/, "Connection status should not depend on removed API-key providers");
 assert.match(copilot, /aiRequestOptions/, "Copilot should send the selected AI provider/model");
 assert.match(liveRacing, /aiRequestOptions/, "Live Racing chat should send the selected AI provider/model");
 

@@ -1,4 +1,4 @@
-/* PitWall Dashboard screen. window.PW.Dashboard */
+/* Apexline Dashboard screen. window.PW.Dashboard */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const { Card, Badge, Icon, Countdown, StatTile, DriverTag, GapDelta, Button, Avatar } = NS;

@@ -1,4 +1,4 @@
-/* PitWall Teams — selectable constructor profiles, F1-site style. window.PW.Teams */
+/* Apexline Teams — selectable constructor profiles, F1-site style. window.PW.Teams */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const { Card, Badge, Icon, Avatar, StatTile } = NS;

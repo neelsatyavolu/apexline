@@ -1,4 +1,4 @@
-/* PitWall — Track Map circuit geometry.
+/* Apexline — Track Map circuit geometry.
    Real circuit centerlines from the bacinger/f1-circuits dataset (OpenStreetMap,
    ODbL), projected (equirectangular) and scaled to a shared ~760u canvas.
    points: [[x,y],...] closed loop (renderer closes it). facts merge dataset

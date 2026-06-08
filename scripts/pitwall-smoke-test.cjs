@@ -70,6 +70,13 @@ function pixelAt(image, x, y) {
   return image.pixels.subarray(offset, offset + 4);
 }
 
+function readPngSize(file) {
+  const buffer = fs.readFileSync(file);
+  assert.equal(buffer.toString("hex", 0, 8), "89504e470d0a1a0a", `${path.basename(file)} should be a PNG`);
+  assert.equal(buffer.toString("ascii", 12, 16), "IHDR", `${path.basename(file)} should have an IHDR header`);
+  return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+}
+
 function assertAppIconHasTransparentCorners() {
   const image = decodePngRgba(readIcnsEntry(path.join(root, "assets/app-icon.icns"), "ic07"));
   assert.equal(pixelAt(image, 0, 0)[3], 0, "App icon corners should be transparent, not an opaque white canvas");
@@ -148,12 +155,14 @@ for (const driver of data.drivers) {
     assert.match(driver.remoteImage, /^https:\/\/media\.formula1\.com\//, `${driver.code} should retain the official remote image URL`);
   }
   assert.match(driver.teamLogo, /^https:\/\/media\.formula1\.com\//, `${driver.code} needs an official team logo`);
+  assert.match(driver.teamLogo, /c_fit%2Ch_256/, `${driver.code} team logo should request a high-resolution source`);
 }
 const driverAssetReadme = fs.readFileSync(path.join(root, "assets/drivers/README.md"), "utf8");
 assert.match(driverAssetReadme, /Arvid Lindblad[\s\S]*Yu Chu Chin[\s\S]*CC BY-SA 4\.0/, "Vendored driver headshots should document source attribution and license");
 
 for (const constructor of data.constructors) {
   assert.match(constructor.logo, /^https:\/\/media\.formula1\.com\//, `${constructor.name} needs an official logo`);
+  assert.match(constructor.logo, /c_fit%2Ch_256/, `${constructor.name} logo should request a high-resolution source`);
 }
 
 const bundle = fs.readFileSync(path.join(root, "_ds_bundle.js"), "utf8");
@@ -172,8 +181,12 @@ assert.ok(packageJson.scripts.build, "Renderer should have a build script");
 assert.match(packageJson.scripts.start, /electron \./, "Start should launch Electron");
 assert.match(packageJson.scripts.start, /node scripts\/build-renderer\.cjs/, "Start should build without depending on a nested npm executable");
 assert.match(packageJson.scripts["package:mac:vmp"], /PITWALL_CASTLABS_VMP=1/, "macOS package scripts should include an opt-in CastLabs VMP signing path");
+assert.match(packageJson.scripts["release:update-feed"] || "", /prepare-vercel-update\.cjs/, "Release scripts should prepare the Vercel update feed from the packaged app");
+assert.match(packageJson.scripts["screenshot:site"] || "", /capture-site-screenshots\.cjs/, "Repo should expose a site screenshot capture script");
 assert.match(packageJson.scripts["probe:openf1:monaco"], /pitwall-openf1-replay-probe\.cjs/, "Repo should expose a non-UI OpenF1 Monaco replay probe");
 assert.match(packageJson.scripts["probe:f1timing:monaco"] || "", /pitwall-f1timing-replay-probe\.cjs/, "Repo should expose a non-UI Formula 1 livetiming Monaco replay probe");
+assert.equal(packageJson.name, "apexline", "Package metadata should use the Apexline app name");
+assert.equal(packageJson.apexline?.updateBaseUrl, "https://apexline-app.vercel.app", "Packaged apps should use the public Apexline Vercel update domain");
 assert.ok(fs.existsSync(f1TimingReplayProbePath), "Formula 1 livetiming replay probe should exist for validating rich replay timing");
 assert.match(f1TimingReplayProbe, /livetiming\.formula1\.com/, "Formula 1 replay probe should fetch the official F1 livetiming archive directly");
 assert.match(f1TimingReplayProbe, /CarData\.z\.jsonStream/, "Formula 1 replay probe should decode compressed telemetry feed data");
@@ -183,16 +196,16 @@ assert.match(openF1ReplayProbe, /EMAIL[\s\S]*PASSWORD/, "OpenF1 replay probe sho
 assert.match(openF1ReplayProbe, /Authorization: `Bearer \$\{accessToken\}`/, "OpenF1 replay probe should use authenticated bearer requests");
 assert.match(openF1ReplayProbe, /requestTimes\.length < 60/, "OpenF1 replay probe should enforce the 60 requests per minute cap");
 assert.match(openF1ReplayProbe, /parseTiming\(drivers, positions, intervals/, "OpenF1 replay probe should use the same timing parser as the app");
-assert.match(packageScript, /const appPath = baseOut/, "macOS packaging should always rebuild dist/PitWall.app as the current app");
+assert.match(packageScript, /const appPath = baseOut/, "macOS packaging should always rebuild dist/Apexline.app as the current app");
 assert.match(packageScript, /Snapshot \$\{snapshotPath\}/, "macOS packaging should also keep a timestamped snapshot path");
 assert.ok(packageJson.dependencies.react, "React should be a local dependency");
 assert.ok(packageJson.dependencies["hls.js"], "HLS playback should use hls.js");
 assert.ok(packageJson.dependencies["shaka-player"], "Protected DASH/Widevine playback should use Shaka Player");
-assert.match(packageJson.devDependencies.electron, /castlabs\/electron-releases#v[0-9.]+\+wvcus/, "PitWall should use CastLabs Electron ECS for Widevine-capable playback");
+assert.match(packageJson.devDependencies.electron, /castlabs\/electron-releases#v[0-9.]+\+wvcus/, "Apexline should use CastLabs Electron ECS for Widevine-capable playback");
 assert.ok(fs.existsSync(path.join(root, "electron/main.cjs")), "Electron main process should exist");
 assert.ok(fs.existsSync(path.join(root, "electron/preload.cjs")), "Electron preload should exist");
 assert.ok(fs.existsSync(path.join(root, "scripts/build-renderer.cjs")), "Renderer build script should exist");
-assert.ok(fs.existsSync(path.join(root, "assets/app-icon.icns")), "macOS package should have a custom PitWall app icon");
+assert.ok(fs.existsSync(path.join(root, "assets/app-icon.icns")), "macOS package should have a custom Apexline app icon");
 assertAppIconHasTransparentCorners();
 const packageMac = fs.readFileSync(path.join(root, "scripts/package-macos.cjs"), "utf8");
 assert.match(packageMac, /repairMacFrameworkSymlinks/, "macOS package step should repair Electron framework symlinks when CastLabs assets need them");
@@ -201,25 +214,90 @@ assert.match(packageMac, /PITWALL_CASTLABS_VMP/, "macOS package step should supp
 assert.match(packageMac, /castlabs_evs\.vmp/, "CastLabs VMP signing should use the official EVS module");
 assert.match(packageMac, /"sign-pkg"[\s\S]*"verify-pkg"/, "CastLabs VMP package signing should verify the signature after signing");
 assert.match(packageMac, /signWithCastLabsVmp\(appPath\)[\s\S]*codesign/, "macOS package step should run VMP signing before macOS codesign");
-assert.match(packageMac, /CFBundleIconFile", "app-icon"/, "macOS package step should use the custom PitWall app icon");
+assert.match(packageMac, /CFBundleDisplayName", "Apexline"/, "macOS package step should set the Apexline app name");
+assert.match(packageMac, /CFBundleIconFile", "app-icon"/, "macOS package step should use the custom Apexline app icon");
+assert.match(packageMac, /rootPackage\.version/, "macOS package step should read the app version from package.json");
+assert.match(packageMac, /CFBundleShortVersionString/, "macOS package step should stamp the user-visible app version");
+assert.match(packageMac, /APEXLINE_UPDATE_BASE_URL/, "macOS package step should embed the Vercel update feed base URL");
 const mainProcess = fs.readFileSync(path.join(root, "electron/main.cjs"), "utf8");
 const preload = fs.readFileSync(path.join(root, "electron/preload.cjs"), "utf8");
 const dataProviderSource = fs.readFileSync(path.join(root, "ui_kits/pitwall/DataProvider.jsx"), "utf8");
 const liveRacingSource = fs.readFileSync(path.join(root, "ui_kits/pitwall/LiveRacing.jsx"), "utf8");
+const settingsSource = fs.readFileSync(path.join(root, "ui_kits/pitwall/Settings.jsx"), "utf8");
+const syncSource = fs.readFileSync(path.join(root, "ui_kits/pitwall/sync.js"), "utf8");
 const trackMapSource = fs.readFileSync(path.join(root, "ui_kits/pitwall/TrackMap.jsx"), "utf8");
 const trackMapCircuitsSource = fs.readFileSync(path.join(root, "ui_kits/pitwall/trackmap-circuits.js"), "utf8");
 const pitwallIndex = fs.readFileSync(path.join(root, "ui_kits/pitwall/index.html"), "utf8");
 const appShellSource = fs.readFileSync(path.join(root, "ui_kits/pitwall/AppShell.jsx"), "utf8");
 const buildRendererSource = fs.readFileSync(path.join(root, "scripts/build-renderer.cjs"), "utf8");
-assert.ok(fs.existsSync(path.join(root, "ui_kits/pitwall/Drivers.jsx")), "PitWall should include a dedicated drivers page component");
-assert.ok(fs.existsSync(path.join(root, "ui_kits/pitwall/Teams.jsx")), "PitWall should include a dedicated teams page component");
-assert.ok(fs.existsSync(path.join(root, "ui_kits/pitwall/TrackMap.jsx")), "PitWall should include a dedicated track map page component");
-assert.ok(fs.existsSync(path.join(root, "ui_kits/pitwall/trackmap-circuits.js")), "PitWall should include packaged track map circuit geometry");
-assert.match(pitwallIndex, /Drivers\.jsx/, "PitWall app should load the drivers page component");
-assert.match(pitwallIndex, /Teams\.jsx/, "PitWall app should load the teams page component");
-assert.match(pitwallIndex, /trackmap-circuits\.js[\s\S]*TrackMap\.jsx/, "PitWall app should load track map geometry before the Track Map component");
+const socialClientPath = path.join(root, "ui_kits/pitwall/social.js");
+assert.ok(fs.existsSync(path.join(root, "ui_kits/pitwall/Drivers.jsx")), "Apexline should include a dedicated drivers page component");
+assert.ok(fs.existsSync(path.join(root, "ui_kits/pitwall/Teams.jsx")), "Apexline should include a dedicated teams page component");
+assert.ok(fs.existsSync(path.join(root, "ui_kits/pitwall/TrackMap.jsx")), "Apexline should include a dedicated track map page component");
+assert.ok(fs.existsSync(path.join(root, "ui_kits/pitwall/trackmap-circuits.js")), "Apexline should include packaged track map circuit geometry");
+assert.ok(fs.existsSync(socialClientPath), "Apexline should include a renderer social client for watch parties");
+const socialClientSource = fs.existsSync(socialClientPath) ? fs.readFileSync(socialClientPath, "utf8") : "";
+assert.ok(fs.existsSync(path.join(root, "scripts/prepare-vercel-update.cjs")), "Apexline should include a script that writes the Vercel update feed");
+assert.ok(fs.existsSync(path.join(root, "updates-site/vercel.json")), "Apexline should include a Vercel static project for update metadata and app zips");
+assert.ok(fs.existsSync(path.join(root, "updates-site/package.json")), "Apexline Vercel site should declare function dependencies in the deployed folder");
+const updateSitePackage = fs.existsSync(path.join(root, "updates-site/package.json")) ? JSON.parse(fs.readFileSync(path.join(root, "updates-site/package.json"), "utf8")) : {};
+const updateSiteGitignore = fs.existsSync(path.join(root, "updates-site/.gitignore")) ? fs.readFileSync(path.join(root, "updates-site/.gitignore"), "utf8") : "";
+assert.ok(updateSitePackage.dependencies?.["@neondatabase/serverless"] || updateSitePackage.dependencies?.["@vercel/postgres"], "Apexline Vercel site should install a Neon/Postgres client for social API persistence");
+assert.match(updateSiteGitignore, /^\.env/m, "Apexline Vercel site should ignore pulled local env files");
+assert.ok(fs.existsSync(path.join(root, "updates-site/public/index.html")), "Apexline update host should include a landing and download page");
+assert.ok(fs.existsSync(path.join(root, "updates-site/api/social.cjs")), "Vercel site should expose social API endpoints for identity, friends, rooms, and chat history");
+assert.ok(fs.existsSync(path.join(root, "updates-site/public/favicon.svg")), "Apexline update host should include a website favicon");
+assert.ok(fs.existsSync(path.join(root, "updates-site/public/updates/darwin/arm64/releases.json")), "Apexline should include a seed macOS arm64 update feed");
+const updateSiteIndex = fs.existsSync(path.join(root, "updates-site/public/index.html")) ? fs.readFileSync(path.join(root, "updates-site/public/index.html"), "utf8") : "";
+const updateFeed = JSON.parse(fs.readFileSync(path.join(root, "updates-site/public/updates/darwin/arm64/releases.json"), "utf8"));
+assert.match(updateSiteIndex, /Apexline for macOS/, "Apexline landing page should identify the app clearly");
+assert.match(updateSiteIndex, /<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml">/, "Apexline landing page should link the website favicon");
+assert.match(updateSiteIndex, new RegExp(`Apexline-${packageJson.version.replace(/\./g, "\\.")}-mac-arm64\\.zip`), "Apexline landing page should download the current macOS artifact");
+assert.match(updateSiteIndex, /updates\/darwin\/arm64\/releases\.json/, "Apexline landing page should link the app update feed");
+assert.match(updateSiteIndex, /<div class="n">22<\/div><div class="l">Cars tracked live<\/div>/, "Apexline landing page should reflect the 22-car field");
+assert.match(updateSiteIndex, /active F1 TV subscription/, "Apexline landing page should be explicit that streams require the user's F1 TV subscription");
+assert.doesNotMatch(updateSiteIndex, /Live now|Free during beta|Apple Silicon &amp; Intel|menu bar live timing|24<\/div><div class="l">Grands Prix/, "Apexline landing page should not publish prototype-only or unsupported product claims");
+[
+  "apexline-screen-track-map.png",
+  "apexline-screen-ai-copilot-next-weekend.png",
+  "apexline-screen-analytics-ant-ham-monaco.png",
+  "apexline-screen-news.png",
+  "apexline-screen-drivers.png",
+  "apexline-screen-teams.png",
+  "apexline-screen-schedule.png",
+  "apexline-screen-leaderboards.png",
+  "apexline-screen-weekend.png",
+].forEach((asset) => {
+  const assetPath = path.join(root, "updates-site/public/assets", asset);
+  assert.match(updateSiteIndex, new RegExp(asset.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${asset} should be referenced by the landing page`);
+  const size = readPngSize(assetPath);
+  assert.ok(size.width >= 3000 && size.height >= 1800, `${asset} should be a high-resolution screenshot`);
+});
+assert.equal(updateFeed.releases?.[0]?.updateTo?.url, `https://apexline-app.vercel.app/updates/darwin/arm64/Apexline-${packageJson.version}-mac-arm64.zip`, "Update feed should point at the public Apexline Vercel domain");
+assert.match(pitwallIndex, /Drivers\.jsx/, "Apexline app should load the drivers page component");
+assert.match(pitwallIndex, /Teams\.jsx/, "Apexline app should load the teams page component");
+assert.match(pitwallIndex, /trackmap-circuits\.js[\s\S]*TrackMap\.jsx/, "Apexline app should load track map geometry before the Track Map component");
 assert.match(buildRendererSource, /"TrackMap"/, "Renderer build should compile the Track Map screen into packaged apps");
 assert.match(buildRendererSource, /trackmap-circuits\.js/, "Renderer build should copy Track Map circuit geometry into packaged apps");
+assert.match(buildRendererSource, /social\.js/, "Renderer build should copy the watch party social client into packaged apps");
+assert.match(mainProcess, /pitwall:updates:check/, "Electron should expose a narrow update-check IPC handler");
+assert.match(mainProcess, /pitwall:updates:install/, "Electron should expose a packaged-app update installer IPC handler");
+assert.match(mainProcess, /currentAppBundlePath/, "Update installer should locate the current macOS .app bundle before replacing it");
+assert.match(mainProcess, /downloadPitWallUpdate/, "Update installer should download the selected release inside the app instead of only opening a browser");
+assert.match(mainProcess, /"-x", "-k"/, "Update installer should extract the hosted zip with ditto before replacing the app");
+assert.match(mainProcess, /app\.quit\(\)/, "Update installer should quit the current app after scheduling replacement and relaunch");
+assert.match(mainProcess, /PITWALL_UPDATE_BASE_URL/, "Electron should read update feed hosting from the packaged app or environment");
+assert.doesNotMatch(mainProcess, /GITHUB_TOKEN|VERCEL_TOKEN/, "Update checks must not embed deployment or repository tokens");
+assert.match(preload, /updates:[\s\S]*check[\s\S]*install/, "Preload should expose update checking and installation through a narrow updates API");
+assert.match(preload, /social:[\s\S]*bootstrap[\s\S]*friends[\s\S]*roomCreate[\s\S]*roomJoin[\s\S]*ablyToken[\s\S]*chatHistory/, "Preload should expose narrow social IPC helpers for watch parties");
+assert.match(mainProcess, /pitwall:social:bootstrap/, "Electron main should expose social bootstrap IPC");
+assert.match(mainProcess, /pitwall:social:roomCreate/, "Electron main should expose watch party room creation IPC");
+assert.match(mainProcess, /pitwall:social:ablyToken/, "Electron main should mint Ably tokens through the hosted backend");
+assert.doesNotMatch(mainProcess, /F1TV_AUTH_KEY_PATTERN[\s\S]*pitwall:social/, "Social IPC must stay separate from F1 TV auth/token handling");
+assert.match(socialClientSource, /window\.PW_SOCIAL/, "Renderer social client should publish a browser-global watch party API");
+assert.match(socialClientSource, /Ably\.Realtime/, "Renderer social client should use Ably for realtime party traffic");
+assert.match(socialClientSource, /contentFingerprint/, "Renderer social client should gate host sync by loaded session fingerprint");
+assert.match(pitwallIndex, /social\.js[\s\S]*LiveRacing\.jsx/, "Apexline app should load the social client before Live Racing");
 assert.match(appShellSource, /id: "drivers"/, "PitWall sidebar should expose a Drivers route");
 assert.match(appShellSource, /id: "teams"/, "PitWall sidebar should expose a Teams route");
 assert.match(appShellSource, /id: "trackmap"/, "PitWall sidebar should expose a Track Map route");
@@ -252,8 +330,8 @@ assert.notEqual(handleSurfaceClickStart, -1, "Live Racing should define a video 
 assert.notEqual(handleSurfaceClickEnd, -1, "Live Racing should render after the video surface click handler");
 assert.doesNotMatch(liveRacingSource.slice(handleSurfaceClickStart, handleSurfaceClickEnd), /onAudioFocus/, "Video clicks should not toggle audio focus or mute");
 assert.doesNotMatch(liveRacingSource, /isPaneSurfaceClickTarget\(event\.target\)\) return;\s*onAudioFocus\?\.\(\);\s*onSurfaceToggle\?\.\(\);/, "Pane surface clicks should toggle playback without toggling audio focus or mute");
-assert.match(liveRacingSource, /const tickerRowLimit = [\s\S]*tickerCanFitTop10[\s\S]*10[\s\S]*5/, "Broadcast ticker should only expand from top 5 to top 10 when there is room");
-assert.match(liveRacingSource, /pane__ticker--top10[\s\S]*grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/, "Top 10 broadcast ticker should render as two compact five-wide rows");
+assert.match(liveRacingSource, /const tickerRowLimit = [\s\S]*tickerCanFitTop15[\s\S]*15[\s\S]*5/, "Broadcast ticker should only expand from top 5 to top 15 when there is room");
+assert.match(liveRacingSource, /pane__ticker--top15[\s\S]*grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)[\s\S]*grid-auto-rows: var\(--ticker-row-h, 34px\)/, "Top 15 broadcast ticker should render as three compact five-wide rows");
 assert.match(liveRacingSource, /\.tick__main[\s\S]*grid-template-columns: minmax\(0, auto\) minmax\(0, 1fr\)/, "Broadcast ticker cells should place the timing gap beside the driver code");
 assert.match(liveRacingSource, /\.tick__bar[\s\S]*align-self: stretch/, "Broadcast ticker team-color bars should stay visible beside each driver");
 assert.match(liveRacingSource, /--ticker-row-h[\s\S]*tickerRowHeight/, "Broadcast ticker row height should be measured from available pane space");
@@ -263,6 +341,31 @@ assert.match(liveRacingSource, /\.pane__replaybar \{[^}]*bottom: calc\(var\(--ti
 assert.match(liveRacingSource, /function formatTickerInterval[\s\S]*row\?\.interval[\s\S]*row\?\.gap/, "Broadcast ticker should prefer interval to the car ahead before falling back to leader gap");
 assert.match(liveRacingSource, /function tickerTyreLabel[\s\S]*tyreLetter[\s\S]*row\?\.age/, "Broadcast ticker should expose compact tyre compound and age context when timing data has it");
 assert.match(liveRacingSource, /tickerTyreLabel\(t\)[\s\S]*className="tick__tyre"/, "Broadcast ticker should render tyre context as a compact chip");
+assert.match(liveRacingSource, /Watch Party/, "Live Racing should expose a Watch Party control");
+assert.match(liveRacingSource, /party-tray/, "Live Racing should render a draggable non-modal party tray");
+assert.match(liveRacingSource, /partyTrayPosition/, "Live Racing should persist the draggable party tray position");
+assert.match(liveRacingSource, /partyTab[\s\S]*Engineer[\s\S]*Party/, "Live Racing tray should switch between Engineer and Party tabs");
+assert.match(liveRacingSource, /publishHostSync/, "Live Racing should publish host-authoritative watch party sync");
+assert.match(liveRacingSource, /applyRemotePartySync/, "Live Racing should apply matching remote watch party sync");
+assert.match(settingsSource, /Friends/, "Settings should expose a Friends section");
+assert.match(settingsSource, /friendCode/, "Settings should show the user's shareable friend code");
+assert.match(settingsSource, /friends-add-form[\s\S]*align-items:\s*end/, "Friends add-code controls should align the Add button with the input control");
+assert.match(settingsSource, /className="f1-login__fields friends-add-form"/, "Friends add-code row should use the centered form alignment");
+assert.match(settingsSource, /id: "account", label: "Account"/, "Settings should label the local profile and F1 TV section as Account");
+assert.match(settingsSource, /PROFILE_IMAGE_MAX_BYTES = 2 \* 1024 \* 1024/, "Profile photos should allow uploads up to 2 MB");
+assert.match(settingsSource, /PNG, JPG, GIF, WebP, or SVG under 2 MB\./, "Profile photo helper text should show the 2 MB limit");
+assert.match(settingsSource, /<div className="f1-login__status">\s*\{\(f1SignedIn \|\| f1BrowserSignedIn\)[\s\S]*Sign out[\s\S]*<Badge tone=\{f1BadgeTone\} dot>\{f1BadgeLabel\}<\/Badge>/, "F1 TV sign-out should sit beside the ready badge");
+assert.match(settingsSource, /\{!f1SignedIn && \(\s*<>\s*<div className="f1-login__fields">/, "F1 TV credential fields should be hidden once playback is ready");
+
+const syncSandbox = { window: {} };
+vm.createContext(syncSandbox);
+vm.runInContext(syncSource, syncSandbox, { filename: "ui_kits/pitwall/sync.js" });
+const partySync = syncSandbox.window.PW_SYNC.partySync;
+assert.equal(partySync.shouldApply({ sequence: 3, contentFingerprint: "race:1" }, { lastSequence: 2, contentFingerprint: "race:1" }), true, "Watch party sync should accept newer matching host state");
+assert.equal(partySync.shouldApply({ sequence: 2, contentFingerprint: "race:1" }, { lastSequence: 3, contentFingerprint: "race:1" }), false, "Watch party sync should ignore stale host state");
+assert.equal(partySync.shouldApply({ sequence: 4, contentFingerprint: "race:2" }, { lastSequence: 3, contentFingerprint: "race:1" }), false, "Watch party sync should reject mismatched content");
+assert.equal(partySync.replayDecision({ masterTime: 42, playing: false }, { contentFingerprint: "race:1" }).playing, false, "Watch party replay sync should preserve host pause state");
+assert.equal(partySync.liveDecision({ targetLatency: 8 }, { liveLatency: 9 }).playbackRate, 1.2, "Watch party live sync should reuse latency catch-up behavior");
 
 function extractNamedFunction(source, name) {
   let start = source.indexOf(`function ${name}`);
@@ -533,6 +636,11 @@ assert.ok(
   f1TvContentScoreSandbox.scoreF1TvContentCandidate("2026 Monaco GP Qualifying Replay", { raceName: "Monaco Grand Prix", sessionKind: "Qualifying" })
     > f1TvContentScoreSandbox.scoreF1TvContentCandidate("2026 Monaco Grand Prix Replay", { raceName: "Monaco Grand Prix", sessionKind: "Qualifying" }),
   "F1 TV replay resolver should prefer requested qualifying over the generic Grand Prix race"
+);
+assert.ok(
+  f1TvContentScoreSandbox.scoreF1TvContentCandidate("2026 Miami GP Sprint Replay", { raceName: "Miami Grand Prix", sessionKind: "Sprint" })
+    > f1TvContentScoreSandbox.scoreF1TvContentCandidate("2026 Miami GP Sprint Qualifying Replay", { raceName: "Miami Grand Prix", sessionKind: "Sprint" }),
+  "F1 TV replay resolver should prefer the requested sprint race over sprint qualifying"
 );
 
 const f1ApiStandingsSandbox = vm.runInNewContext(`(() => {
@@ -966,6 +1074,7 @@ const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
     "formatF1TimingDuration",
     "f1TimingQualifyingPart",
     "fillF1TimingQualifyingDeltas",
+    "timingSegmentTone",
     "f1TimingSegments",
     "f1TimingSectorTime",
     "f1TimingStints",
@@ -981,8 +1090,13 @@ const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
   function latestCarDataByDriverNumber() { return new Map(); }
   function formatLapDuration(seconds) { return String(seconds); }
   function f1TimingLapSeconds() { return null; }
-  return { parseF1TimingArchiveRows };
+  return { f1TimingSegments, parseF1TimingArchiveRows };
 })()`);
+assert.deepEqual(
+  f1TimingRaceControlSandbox.f1TimingSegments({ Segments: [{ Status: 0 }, { Status: 2048 }, { Status: 0 }] }),
+  ["off", "yellow"],
+  "F1 timing mini sectors should preserve leading off ticks so active segments do not shift left",
+);
 const raceControlSession = {
   driverListEntries: [],
   timingEntries: [],
@@ -1135,6 +1249,9 @@ assert.match(mainProcess, /F1TV_AUTH_URL = "https:\/\/api\.formula1\.com\/v2\/ac
 assert.match(mainProcess, /"f1tv-token"/, "F1 TV subscription token should be stored separately in Keychain");
 assert.match(mainProcess, /subscriptionToken/, "F1 TV credential sign-in should parse subscriptionToken from auth response when the legacy endpoint works");
 assert.match(mainProcess, /entitlement_token/, "F1 TV browser sign-in should detect the playback entitlement token cookie");
+assert.match(mainProcess, /f1TvPlaybackTokenFromBrowserAuthState/, "F1 TV browser sign-in should recover playback tokens from storage-backed auth sessions");
+assert.match(mainProcess, /setSecret\("f1tv-token", playbackToken\)/, "F1 TV browser sign-in should promote recovered playback tokens into Keychain");
+assert.doesNotMatch(mainProcess, /playbackTokenCandidate,/, "F1 TV status should not expose recovered playback token values to the renderer");
 assert.match(mainProcess, /entitlementToken/, "F1 TV playback requests should include the entitlement token header");
 assert.match(mainProcess, /ascendonToken/, "F1 TV playback requests should include the Ascendon token header used by the official web player");
 assert.match(mainProcess, /recentF1TvRequestHeader/, "F1 TV playback requests should reuse observed official web-player request headers in memory");
@@ -1216,8 +1333,10 @@ assert.match(mainProcess, /loadWeekendRecapDom[\s\S]*catch \(error\)[\s\S]*weeke
 assert.match(mainProcess, /diagnosticWindowRunActive[\s\S]*window-all-closed/, "Offscreen Weekend diagnostics should keep the static server alive while hidden windows cycle");
 assert.match(mainProcess, /PITWALL_ANALYTICS_SESSION_DIAG/, "Packaged app should expose an analytics-session diagnostic for production data verification");
 assert.match(mainProcess, /pitwall:f1tv:probeStatus/, "Electron main should expose a deep F1 TV auth probe for storage-backed sessions");
+assert.match(mainProcess, /credentialError/, "F1 TV credential sign-in should return sanitized direct-token errors when it falls back to browser login");
 assert.match(mainProcess, /storageAuthKeys/, "F1 TV auth status should include local/session/IndexedDB auth-key evidence without exposing values");
 assert.match(mainProcess, /IGNORED_F1TV_COOKIE_PATTERN/, "F1 TV auth should ignore analytics/consent cookies such as ABTastySession");
+assert.match(mainProcess, /(?:\^login\$|name === "login")/, "F1 TV auth should ignore the weak Formula 1 login cookie that appears before playback auth is ready");
 assert.match(mainProcess, /tokenLike/, "F1 TV storage auth detection should require token-like values, not just broad key names");
 assert.doesNotMatch(mainProcess, /browserAuthState\.indexedDbAuthKeys/, "F1 TV status should not treat IndexedDB store names as authentication proof");
 assert.match(mainProcess, /authenticated:\s*tokenReady,/, "F1 TV playback readiness should require a subscription token, not only a weak browser cookie");
@@ -1241,12 +1360,15 @@ assert.match(mainProcess, /installF1TvPlaybackPermissions/, "Electron should ins
 assert.match(mainProcess, /session\.defaultSession\.cookies/, "F1 TV login should persist browser cookies in Electron session");
 assert.match(mainProcess, /credentialTimer/, "F1 TV credential login should keep filling dynamic login forms until a session is detected");
 assert.match(mainProcess, /clickF1TvLoginStep/, "F1 TV credential login should auto-continue/submit the one-time email/password flow");
+assert.match(mainProcess, /input\[placeholder\*='email' i\]/, "F1 TV credential login should fill placeholder-only email fields");
+assert.match(mainProcess, /if \(emailFilled && passwordFilled\) return clickF1TvLoginStep/, "F1 TV credential login should not submit the final form when only the password field was filled");
 assert.match(mainProcess, /storages = \[[^\]]*"indexeddb"[^\]]*"localstorage"[\s\S]*clearStorageData/, "F1 TV logout should clear storage-backed auth state as well as cookies");
 assert.doesNotMatch(mainProcess, /f1tv-password/, "F1 TV password should not be stored by PitWall");
 assert.match(mainProcess, /pitwall:data:snapshot/, "Electron main should expose a live F1 data snapshot IPC");
 assert.match(mainProcess, /pitwall:ai:ask/, "Electron main should expose AI ask IPC");
-assert.match(mainProcess, /api\.openai\.com\/v1\/responses/, "AI layer should call OpenAI Responses API");
-assert.match(mainProcess, /api\.anthropic\.com\/v1\/messages/, "AI layer should call Anthropic Messages API");
+assert.match(mainProcess, /chatgpt\.com\/backend-api\/codex\/responses/, "AI layer should call the ChatGPT Codex backend");
+assert.match(mainProcess, /api\.x\.ai\/v1\/chat\/completions/, "AI layer should call the xAI chat completions API");
+assert.doesNotMatch(mainProcess, /api\.openai\.com\/v1\/responses|api\.anthropic\.com\/v1\/messages/, "AI layer should not expose removed API-key providers");
 assert.match(mainProcess, /COPILOT_INSIGHTS_FILE/, "Copilot daily insights should be stored in a file-backed cache");
 assert.match(mainProcess, /getDailyCopilotInsights/, "Live snapshots should attach daily prebuilt Copilot insights");
 assert.match(mainProcess, /attemptedOn/, "Daily Copilot insight generation should record one attempt per local day");
@@ -1717,11 +1839,16 @@ assert.match(source["LiveRacing.jsx"], /licensePathHint/, "Clean F1 TV player sh
 assert.doesNotMatch(source["Settings.jsx"], /onChange=\{\(\) => \{\}\}/, "Settings segmented controls should not be no-ops");
 assert.match(source["Settings.jsx"], /pw-settings/, "Settings should persist app preferences for Live defaults and appearance");
 assert.match(source["Settings.jsx"], /applyThemePreference/, "Settings should apply the selected theme through one token helper");
+assert.match(source["Settings.jsx"], /id: "updates"/, "Settings should expose update status");
+assert.match(source["Settings.jsx"], /window\.pitwall\?\.updates/, "Settings should use the Electron update IPC API");
+assert.match(source["Settings.jsx"], /installUpdateAndRestart/, "Settings update action should install and restart rather than only opening the update zip");
+assert.match(source["Settings.jsx"], /Install & Restart/, "Settings update button should set the right expectation for update behavior");
 assert.match(source["Settings.jsx"], /pitwall\.f1tv\.login/, "Settings should use the Electron F1 TV login flow");
 assert.match(source["Settings.jsx"], /f1-login/, "Settings should provide a MultiViewer-style F1 TV login panel");
 assert.doesNotMatch(source["Settings.jsx"], /f1-login__divider|Sign in using embedded browser|Sign in using Google Chrome|Refresh F1 TV session/, "Settings should not render the F1 TV alternatives block");
 assert.match(source["Settings.jsx"], /MultiViewer uses its own app profile/, "Settings should make clear that MultiViewer's F1 TV login does not carry into PitWall");
 assert.match(source["Settings.jsx"], /Browser signed in/, "Settings should show browser-only F1 TV login as connected-but-not-playback-ready");
+assert.match(source["Settings.jsx"], /credentialError/, "Settings should surface non-secret F1 TV credential-token errors instead of hiding them behind browser fallback state");
 assert.match(source["Settings.jsx"], /playback token is still missing/, "Settings should explain when a browser login is connected but cannot load streams yet");
 assert.doesNotMatch(source["Settings.jsx"], /f1tv-password|keyStore\(\)\.set\("f1tv/, "Settings should not store the F1 TV password");
 assert.match(source["AppShell.jsx"], /usePitWall/, "App shell should render user profile and counts from runtime state");
@@ -1732,6 +1859,11 @@ assert.match(source["Dashboard.jsx"], /profile\.favoriteDrivers/, "Dashboard fav
 assert.doesNotMatch(source["Dashboard.jsx"], /Finish setup|Still needed:/, "Home screen should not render the setup reminder banner");
 assert.match(source["DataProvider.jsx"], /pitwall\.profile\.get/, "DataProvider should load profile from persistent Electron storage");
 assert.match(source["DataProvider.jsx"], /pitwall\.profile\.set/, "DataProvider should save profile to persistent Electron storage");
+assert.match(source["DataProvider.jsx"], /profileImageUrl/, "Renderer profile should persist a user profile picture URL");
+assert.match(source["Settings.jsx"], /profile-image-input/, "Settings should let users choose a profile picture image file");
+assert.match(source["Settings.jsx"], /Clear photo/, "Settings should let users remove their profile picture");
+assert.match(source["AppShell.jsx"], /profile\.profileImageUrl/, "App shell should render the saved profile picture in the sidebar");
+assert.match(mainProcess, /profileImageUrl/, "Electron profile persistence should keep the user profile picture URL");
 assert.match(source["News.jsx"], /readerStory/, "News should keep story reading inside the app");
 assert.match(source["News.jsx"], /news-reader/, "News should render a comfortable in-app article reader");
 assert.match(source["News.jsx"], /\.news-reader\s*\{[^}]*place-items:\s*center[^}]*padding:\s*var\(--space-9\)/, "News reader should center the article panel in a full-screen backdrop");
@@ -1933,7 +2065,19 @@ assert.match(source["LiveRacing.jsx"], /Timing [-+]1m/, "Live mode should expose
   const headerSource = source["LiveRacing.jsx"].slice(headerStart, headerEnd);
   assert.doesNotMatch(headerSource, />Timing [-+]/, "Replay timing offset buttons should not consume title-bar space");
 }
-assert.match(source["LiveRacing.jsx"], /current\?\.timing\?\.length/, "Replay timing should retain the last populated timing rows instead of blanking the tower on an empty refresh");
+assert.match(source["LiveRacing.jsx"], /hasRealTimingRows\(current\?\.timing\)/, "Replay timing should retain the last populated real timing rows instead of blanking the tower on an empty refresh");
+{
+  const hasRealTimingRows = vm.runInNewContext(`(() => {
+    ${extractNamedFunction(liveRacingSource, "hasTimingValue")}
+    ${extractNamedFunction(liveRacingSource, "hasRealTimingRows")}
+    return hasRealTimingRows;
+  })()`);
+  assert.equal(hasRealTimingRows([]), false, "Empty timing payloads should be treated as still loading");
+  assert.equal(hasRealTimingRows([{ code: "", pos: "", last: "", best: "", gap: "", interval: "" }]), false, "Placeholder timing rows should be treated as still loading");
+  assert.equal(hasRealTimingRows([{ code: "VER", pos: 1 }]), true, "Positioned driver rows should count as real timing data");
+}
+assert.match(source["LiveRacing.jsx"], /const timingLoading = [\s\S]*!timingHasRealRows/, "Live timing should expose a loading state until real timing rows arrive");
+assert.match(source["LiveRacing.jsx"], /<TimingTowerStatus[\s\S]*"Loading timing"/, "Live timing sidebar should render a loading screen instead of a blank timing tower");
 assert.match(source["LiveRacing.jsx"], /const LIVE_TIMING_POLL_INTERVAL_MS = 500/, "Live timing poll cadence should stay conservative for live network streams");
 assert.match(source["LiveRacing.jsx"], /const REPLAY_TIMING_POLL_INTERVAL_MS = 250/, "Replay timing should poll the cached archive quickly without overdoing it");
 assert.match(source["LiveRacing.jsx"], /setInterval\(loadReplayTiming, REPLAY_TIMING_POLL_INTERVAL_MS\)/, "Replay timing should refresh quickly from the local F1 timing cache");
@@ -1948,7 +2092,8 @@ assert.match(source["LiveRacing.jsx"], /setInterval\(loadLiveTiming, LIVE_TIMING
 assert.match(source["LiveRacing.jsx"], /liveTimingRequestRef/, "Live timing polling should ignore stale overlapping responses");
 assert.match(source["LiveRacing.jsx"], /liveTimingInFlightRef/, "Live timing polling should not start overlapping snapshot requests");
 assert.match(source["Weekend.jsx"], /liveTimingRequestIdRef[\s\S]*liveTimingInFlightRef\.current === requestId/, "Weekend live timing polling should ignore stale overlapping responses");
-assert.match(source["LiveRacing.jsx"], /setLiveTimingData\(\(current\) => data\?\.timing\?\.length \? data : current\?\.timing\?\.length \? current : data \|\| null\)/, "Live timing should not let an empty late response overwrite populated rows");
+assert.match(source["LiveRacing.jsx"], /setLiveTimingData\(\(current\) => hasRealTimingRows\(data\?\.timing\) \? data : hasRealTimingRows\(current\?\.timing\) \? current : data \|\| null\)/, "Live timing should not let an empty late response overwrite populated rows");
+assert.doesNotMatch(source["LiveRacing.jsx"], /replaySync\.mode === "replay"[\s\S]*\? \(replayRows\.length \? replayRows : D\.timing\)[\s\S]*: \(liveRows\.length \? liveRows : D\.timing\)/, "Live Racing should not show stale dashboard timing rows when the selected live/replay timing source has no rows");
 assert.match(source["LiveRacing.jsx"], /pendingF1TvSelection/, "Choosing an F1 TV replay should pause unrelated live timing until playback resolves");
 assert.match(source["LiveRacing.jsx"], /if \(!resolvedF1TvContent\?\.contentId && !resolvedF1TvContent\?\.feeds\?\.length\) return undefined;/, "Replay timing should wait for the selected F1 TV session to resolve before polling timing");
 assert.match(source["LiveRacing.jsx"], /const CLOCK_TICK_INTERVAL_MS = 250/, "Session countdown should redraw smoothly between network timing snapshots");
@@ -2227,4 +2372,4 @@ for (const file of fs.readdirSync(kitDir).filter((name) => name.endsWith(".jsx")
   Babel.transform(code, { presets: ["react"], filename: file });
 }
 
-console.log("PitWall smoke checks passed");
+console.log("Apexline smoke checks passed");

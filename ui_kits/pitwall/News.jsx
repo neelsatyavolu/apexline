@@ -1,4 +1,4 @@
-/* PitWall News feed. window.PW.News */
+/* Apexline News feed. window.PW.News */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const { Card, Badge, Icon, Tag, Button, IconButton, Input } = NS;
@@ -284,7 +284,7 @@
                     <IconButton variant="ghost" size="sm" label="Bookmark" onClick={() => toggleBookmark(readerStory.id)}>
                       <Icon name="bookmark" size={16} style={{ color: bookmarks.includes(readerStory.id) ? "var(--accent)" : undefined }} />
                     </IconButton>
-                    <span className="news-reader__hint">Reading stays in PitWall. Use source only when you want the original page.</span>
+                    <span className="news-reader__hint">Reading stays in Apexline. Use source only when you want the original page.</span>
                   </div>
                 </div>
               </div>

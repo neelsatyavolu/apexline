@@ -6,7 +6,10 @@ const root = path.resolve(__dirname, "..");
 const electronApp = path.join(root, "node_modules/electron/dist/Electron.app");
 const appIcon = path.join(root, "assets/app-icon.icns");
 const outRoot = path.join(root, "dist");
-const baseOut = path.join(outRoot, "PitWall.app");
+const baseOut = path.join(outRoot, "Apexline.app");
+const rootPackage = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+const appVersion = String(rootPackage.version || "0.0.0");
+const updateBaseUrl = String(process.env.APEXLINE_UPDATE_BASE_URL || process.env.PITWALL_UPDATE_BASE_URL || rootPackage.apexline?.updateBaseUrl || rootPackage.pitwall?.updateBaseUrl || "").replace(/\/+$/, "");
 
 function ensure(condition, message) {
   if (!condition) throw new Error(message);
@@ -71,8 +74,8 @@ function signWithCastLabsVmp(appPath) {
   if (!castLabsVmpEnabled()) return;
   const python = process.env.PITWALL_EVS_PYTHON || "python3";
   const kind = castLabsVmpKind();
-  const signRoot = path.join(outRoot, `.pitwall-vmp-sign-${process.pid}`);
-  const stagedApp = path.join(signRoot, "PitWall.app");
+  const signRoot = path.join(outRoot, `.apexline-vmp-sign-${process.pid}`);
+  const stagedApp = path.join(signRoot, "Apexline.app");
 
   fs.rmSync(signRoot, { recursive: true, force: true });
   fs.mkdirSync(signRoot, { recursive: true });
@@ -96,7 +99,7 @@ ensure(fs.existsSync(path.join(root, "dist/pitwall/index.html")), "Renderer is n
 fs.mkdirSync(outRoot, { recursive: true });
 const stamp = buildStamp();
 const appPath = baseOut;
-const snapshotPath = path.join(outRoot, `PitWall-${stamp}.app`);
+const snapshotPath = path.join(outRoot, `Apexline-${stamp}.app`);
 fs.rmSync(appPath, { recursive: true, force: true });
 copyEntry(electronApp, appPath);
 repairMacFrameworkSymlinks(appPath);
@@ -121,17 +124,25 @@ for (const packageName of ["react", "react-dom", "hls.js", "shaka-player"]) {
 }
 
 fs.writeFileSync(path.join(appDir, "package.json"), JSON.stringify({
-  name: "pitwall",
-  version: "0.1.0",
+  name: "apexline",
+  version: appVersion,
   private: true,
   main: "electron/main.cjs",
+  apexline: {
+    updateBaseUrl,
+  },
+  pitwall: {
+    updateBaseUrl,
+  },
 }, null, 2));
 
 const plist = path.join(appPath, "Contents/Info.plist");
-plistSet(plist, "CFBundleDisplayName", "PitWall");
-plistSet(plist, "CFBundleName", "PitWall");
-plistSet(plist, "CFBundleIdentifier", "app.pitwall.local");
+plistSet(plist, "CFBundleDisplayName", "Apexline");
+plistSet(plist, "CFBundleName", "Apexline");
+plistSet(plist, "CFBundleIdentifier", "app.apexline.local");
 plistSet(plist, "CFBundleIconFile", "app-icon");
+plistSet(plist, "CFBundleShortVersionString", appVersion);
+plistSet(plist, "CFBundleVersion", appVersion);
 plistSet(plist, "LSApplicationCategoryType", "public.app-category.sports");
 plistDelete(plist, "ElectronAsarIntegrity");
 

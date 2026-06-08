@@ -1,7 +1,8 @@
-/* PitWall runtime data/profile provider. window.PW.DataProvider */
+/* Apexline runtime data/profile provider. window.PW.DataProvider */
 (function () {
   const DEFAULT_PROFILE = {
     name: "",
+    profileImageUrl: "",
     favoriteDrivers: [],
     favoriteTeams: [],
     livePanelSizes: null,
@@ -47,7 +48,7 @@
     "Loading race schedule",
     "Loading track weather",
     "Loading F1 news",
-    "Checking PitWall connections",
+    "Checking Apexline connections",
   ];
 
   function ensureLoadingStyles() {
@@ -81,9 +82,9 @@
     return (
       <div className="startup-load">
         <section className="startup-load__panel" aria-live="polite" aria-busy="true">
-          <div className="startup-load__kicker">PitWall is warming up</div>
+          <div className="startup-load__kicker">Apexline is warming up</div>
           <h1 className="startup-load__title">Fetching the live paddock picture.</h1>
-          <p className="startup-load__copy">Hang tight while PitWall pulls fresh F1 data before opening the dashboard.</p>
+          <p className="startup-load__copy">Hang tight while Apexline pulls fresh F1 data before opening the dashboard.</p>
           <div className="startup-load__bar"><span /></div>
           <div className="startup-load__steps">
             {LOADING_STEPS.map((step) => (
@@ -137,9 +138,19 @@
     };
   }
 
+  function normalizeProfileImageUrl(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    if (text.length > 750000) return "";
+    if (/^(https?:|file:)/i.test(text)) return text;
+    if (/^data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,/i.test(text)) return text;
+    return /^[./][^<>"]+\.(?:png|jpe?g|gif|webp|svg)(?:[?#].*)?$/i.test(text) ? text : "";
+  }
+
   function normalizeProfile(profile = {}) {
     return {
       name: String(profile.name || ""),
+      profileImageUrl: normalizeProfileImageUrl(profile.profileImageUrl),
       favoriteDrivers: Array.isArray(profile.favoriteDrivers) ? profile.favoriteDrivers : [],
       favoriteTeams: Array.isArray(profile.favoriteTeams) ? profile.favoriteTeams : [],
       livePanelSizes: normalizeLivePanelSizes(profile.livePanelSizes),
@@ -147,7 +158,7 @@
   }
 
   function profileHasContent(profile) {
-    return Boolean(profile?.name || profile?.favoriteDrivers?.length || profile?.favoriteTeams?.length || profile?.livePanelSizes);
+    return Boolean(profile?.name || profile?.profileImageUrl || profile?.favoriteDrivers?.length || profile?.favoriteTeams?.length || profile?.livePanelSizes);
   }
 
   function persistProfile(profile) {
@@ -284,14 +295,8 @@
     async function refreshConnections() {
       const next = { aiConfigured: false, f1tvConnected: false };
       try {
-        const keys = window.pitwall?.keys;
         const authStatus = await window.pitwall?.ai?.authStatus?.().catch(() => null);
-        if (keys) {
-          const [anthropic, openai] = await Promise.all([keys.get("anthropic"), keys.get("openai")]);
-          next.aiConfigured = Boolean(anthropic || openai || authStatus?.codexConnected || authStatus?.grokConnected);
-        } else {
-          next.aiConfigured = Boolean(authStatus?.codexConnected || authStatus?.grokConnected);
-        }
+        next.aiConfigured = Boolean(authStatus?.codexConnected || authStatus?.grokConnected);
       } catch {}
       try {
         const status = await (window.pitwall?.f1tv?.probeStatus?.({ timeoutMs: 1200 }) || window.pitwall?.f1tv?.status?.());

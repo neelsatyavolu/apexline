@@ -1,4 +1,4 @@
-/* PitWall AppShell — sidebar + topbar chrome for non-live screens.
+/* Apexline AppShell — sidebar + topbar chrome for non-live screens.
    Exposes window.PW.AppShell. Reads window.PitWallDesignSystem_698fe6. */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
@@ -104,7 +104,7 @@
       <aside className="pw-side">
         <div className="pw-side__brand">
           <img className="pw-side__mark" src="../../assets/logo-mark.svg" alt="" />
-          <div className="pw-side__wm">PIT<i>WALL</i></div>
+          <div className="pw-side__wm">APEX<i>LINE</i></div>
         </div>
         <nav className="pw-side__nav">
           {NAV.map((n, i) =>
@@ -122,7 +122,7 @@
           )}
         </nav>
         <div className="pw-side__foot">
-          <Avatar initials={initials} size="md" />
+          <Avatar initials={initials} src={profile.profileImageUrl || ""} size="md" />
           <div className="pw-side__user">
             <span className="pw-side__uname">{name || "Set up profile"}</span>
             <span className="pw-side__umeta">{meta}</span>
@@ -175,7 +175,7 @@
                   <span><span className="pw-searchpop__title">{r.title}</span><span className="pw-searchpop__meta">{r.meta}</span></span>
                   <Icon name="chevronRight" size={13} />
                 </div>
-              )) : <div className="pw-searchpop__empty">No matching PitWall results.</div>}
+              )) : <div className="pw-searchpop__empty">No matching Apexline results.</div>}
             </div>
           )}
         </div>

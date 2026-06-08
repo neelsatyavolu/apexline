@@ -1,4 +1,4 @@
-/* PitWall stream sync helpers. window.PW_SYNC */
+/* Apexline stream sync helpers. window.PW_SYNC */
 (function () {
   function finite(value, fallback) {
     const number = Number(value);
@@ -36,5 +36,35 @@
     return updates;
   }
 
-  window.PW_SYNC = { replaySync, liveSync, syncReplayPlayers };
+  const partySync = {
+    shouldApply(message = {}, state = {}) {
+      const sequence = finite(message.sequence, 0);
+      const lastSequence = finite(state.lastSequence, 0);
+      if (sequence <= lastSequence) return false;
+      const expected = String(state.contentFingerprint || "");
+      const incoming = String(message.contentFingerprint || "");
+      return !expected || !incoming || expected === incoming;
+    },
+    replayDecision(message = {}, state = {}) {
+      return {
+        mode: "replay",
+        masterTime: Math.max(0, finite(message.masterTime, finite(state.masterTime, 0))),
+        playing: message.playing !== false,
+        sequence: finite(message.sequence, 0),
+        sentAt: finite(message.sentAt, Date.now()),
+      };
+    },
+    liveDecision(message = {}, state = {}) {
+      const targetLatency = finite(message.targetLatency, finite(state.targetLatency, 8));
+      return {
+        mode: "live",
+        targetLatency,
+        sequence: finite(message.sequence, 0),
+        sentAt: finite(message.sentAt, Date.now()),
+        ...liveSync(finite(state.liveLatency, targetLatency), targetLatency),
+      };
+    },
+  };
+
+  window.PW_SYNC = { replaySync, liveSync, syncReplayPlayers, partySync };
 })();

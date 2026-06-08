@@ -1,5 +1,5 @@
 const { app, BrowserWindow, ipcMain, shell, session, Notification, components } = require("electron");
-const { execFile } = require("node:child_process");
+const { execFile, spawn } = require("node:child_process");
 const { createHash, randomBytes } = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -9,6 +9,11 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const vm = require("node:vm");
 const zlib = require("node:zlib");
+
+let appPackage = {};
+try {
+  appPackage = require("../package.json");
+} catch {}
 
 const MIME = {
   ".css": "text/css; charset=utf-8",
@@ -67,14 +72,22 @@ function startStaticServer(root) {
 
 let staticServer;
 let diagnosticWindowRunActive = false;
-app.setName("PitWall");
-const PITWALL_USER_DATA = path.join(app.getPath("appData"), "PitWall");
+app.setName("Apexline");
+const PITWALL_USER_DATA = path.join(app.getPath("appData"), "Apexline");
+const LEGACY_PITWALL_USER_DATA = path.join(app.getPath("appData"), "PitWall");
+if (!fs.existsSync(PITWALL_USER_DATA) && fs.existsSync(LEGACY_PITWALL_USER_DATA)) {
+  try {
+    fs.cpSync(LEGACY_PITWALL_USER_DATA, PITWALL_USER_DATA, { recursive: true });
+  } catch {}
+}
 app.setPath("userData", PITWALL_USER_DATA);
 
-const KEYCHAIN_SERVICE = "PitWall";
-const KEY_PROVIDERS = new Set(["anthropic", "openai", "codex", "grok", "f1tv-email", "f1tv-token"]);
-const DEFAULT_USER_PROFILE = { name: "", favoriteDrivers: [], favoriteTeams: [], livePanelSizes: null };
+const KEYCHAIN_SERVICE = "Apexline";
+const LEGACY_KEYCHAIN_SERVICE = "PitWall";
+const KEY_PROVIDERS = new Set(["codex", "grok", "f1tv-email", "f1tv-token"]);
+const DEFAULT_USER_PROFILE = { name: "", profileImageUrl: "", favoriteDrivers: [], favoriteTeams: [], livePanelSizes: null };
 const PROFILE_FILE = "pitwall-profile.json";
+const SOCIAL_FILE = "apexline-social.json";
 const COPILOT_INSIGHTS_FILE = "pitwall-copilot-insights.json";
 const COPILOT_INSIGHTS_SCHEMA_VERSION = 6;
 const DEBUG_LOG_FILE = "pitwall-debug.log";
@@ -83,6 +96,8 @@ const F1TV_LIBRARY_CACHE_FILE = "pitwall-f1tv-library-cache.json";
 const LIVE_SNAPSHOT_CACHE_FILE = "pitwall-live-snapshot-cache.json";
 const F1TV_LIBRARY_CACHE_VERSION = 2;
 const LIVE_SNAPSHOT_CACHE_VERSION = 2;
+const PITWALL_UPDATE_BASE_URL = String(process.env.APEXLINE_UPDATE_BASE_URL || process.env.PITWALL_UPDATE_BASE_URL || appPackage.apexline?.updateBaseUrl || appPackage.pitwall?.updateBaseUrl || "").replace(/\/+$/, "");
+const SOCIAL_API_BASE_URL = String(process.env.APEXLINE_SOCIAL_API_BASE_URL || PITWALL_UPDATE_BASE_URL || "https://apexline-app.vercel.app").replace(/\/+$/, "");
 const F1TV_HOME_URL = "https://f1tv.formula1.com/";
 const F1TV_LOGIN_URL = "https://account.formula1.com/#/en/login?redirect=https%3A%2F%2Ff1tv.formula1.com%2F";
 const F1TV_AUTH_URL = "https://api.formula1.com/v2/account/subscriber/authenticate/by-password";
@@ -91,8 +106,6 @@ const F1TV_HOSTS = new Set(["f1tv.formula1.com", "account.formula1.com", "formul
 const F1TV_MEDIA_CDN_HOSTS = new Set(["f1prodlive.akamaized.net"]);
 const DATA_CACHE_MS = 1000 * 60 * 3;
 const COPILOT_INSIGHT_RETRY_MS = 1000 * 60 * 10;
-const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
-const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback";
 const CODEX_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
@@ -337,11 +350,31 @@ function runSecurity(args) {
   });
 }
 
+function execFilePromise(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { timeout: 120000, ...options }, (error, stdout, stderr) => {
+      if (error) {
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
+
 async function getSecret(provider) {
   assertKeyProvider(provider);
   if (process.platform !== "darwin") return "";
   try {
     return (await runSecurity(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", provider, "-w"])).trim();
+  } catch (error) {
+    if (error.code !== 44) throw error;
+  }
+  try {
+    const legacy = (await runSecurity(["find-generic-password", "-s", LEGACY_KEYCHAIN_SERVICE, "-a", provider, "-w"])).trim();
+    if (legacy) await runSecurity(["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", provider, "-w", legacy]);
+    return legacy;
   } catch (error) {
     if (error.code === 44) return "";
     throw error;
@@ -365,6 +398,11 @@ async function deleteSecret(provider) {
   if (process.platform !== "darwin") return false;
   try {
     await runSecurity(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", provider]);
+  } catch (error) {
+    if (error.code !== 44) throw error;
+  }
+  try {
+    await runSecurity(["delete-generic-password", "-s", LEGACY_KEYCHAIN_SERVICE, "-a", provider]);
   } catch (error) {
     if (error.code !== 44) throw error;
   }
@@ -398,9 +436,19 @@ function normalizeLivePanelSizes(saved) {
   };
 }
 
+function normalizeProfileImageUrl(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length > 750000) return "";
+  if (/^(https?:|file:)/i.test(text)) return text;
+  if (/^data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,/i.test(text)) return text;
+  return /^[./][^<>"]+\.(?:png|jpe?g|gif|webp|svg)(?:[?#].*)?$/i.test(text) ? text : "";
+}
+
 function normalizeUserProfile(profile = {}) {
   return {
     name: String(profile.name || "").slice(0, 80),
+    profileImageUrl: normalizeProfileImageUrl(profile.profileImageUrl),
     favoriteDrivers: Array.isArray(profile.favoriteDrivers) ? profile.favoriteDrivers.map(String).slice(0, 8) : [],
     favoriteTeams: Array.isArray(profile.favoriteTeams) ? profile.favoriteTeams.map(String).slice(0, 8) : [],
     livePanelSizes: normalizeLivePanelSizes(profile.livePanelSizes),
@@ -409,6 +457,10 @@ function normalizeUserProfile(profile = {}) {
 
 function profileFilePath() {
   return path.join(app.getPath("userData"), PROFILE_FILE);
+}
+
+function socialFilePath() {
+  return path.join(app.getPath("userData"), SOCIAL_FILE);
 }
 
 function debugLogPath() {
@@ -523,24 +575,142 @@ async function setUserProfile(profile) {
   return next;
 }
 
+function sanitizeSocialText(value, limit = 160) {
+  return String(value || "").trim().replace(/[\u0000-\u001f]+/g, " ").slice(0, limit);
+}
+
+async function readSocialIdentity() {
+  try {
+    const raw = await fs.promises.readFile(socialFilePath(), "utf8");
+    const parsed = JSON.parse(raw);
+    return {
+      userId: sanitizeSocialText(parsed.userId, 100),
+      friendCode: sanitizeSocialText(parsed.friendCode, 24),
+      displayName: sanitizeSocialText(parsed.displayName, 80),
+    };
+  } catch {
+    return { userId: "", friendCode: "", displayName: "" };
+  }
+}
+
+async function writeSocialIdentity(identity = {}) {
+  const next = {
+    userId: sanitizeSocialText(identity.userId, 100),
+    friendCode: sanitizeSocialText(identity.friendCode, 24),
+    displayName: sanitizeSocialText(identity.displayName, 80),
+  };
+  await fs.promises.mkdir(path.dirname(socialFilePath()), { recursive: true });
+  await fs.promises.writeFile(socialFilePath(), JSON.stringify(next, null, 2), "utf8");
+  return next;
+}
+
+function localSocialIdentity(profile = {}, existing = {}) {
+  const userId = existing.userId || `local-${randomBytes(12).toString("hex")}`;
+  const friendCode = existing.friendCode || randomBytes(4).toString("hex").toUpperCase();
+  return {
+    userId,
+    friendCode,
+    displayName: sanitizeSocialText(profile.name || existing.displayName || "Apexline fan", 80) || "Apexline fan",
+    offline: true,
+  };
+}
+
+async function requestSocial(action, payload = {}) {
+  if (!SOCIAL_API_BASE_URL) throw new Error("Apexline social backend is not configured.");
+  return requestJsonPost(`${SOCIAL_API_BASE_URL}/api/social`, { action, ...payload }, {}, 12000);
+}
+
+async function bootstrapSocial(_event, options = {}) {
+  const existing = await readSocialIdentity();
+  const profile = normalizeUserProfile(options.profile || await getUserProfile());
+  try {
+    const identity = await requestSocial("bootstrap", { userId: existing.userId, profile });
+    return writeSocialIdentity({ ...identity, displayName: identity.displayName || profile.name });
+  } catch {
+    return writeSocialIdentity(localSocialIdentity(profile, existing));
+  }
+}
+
+async function socialFriends(_event, options = {}) {
+  const identity = await readSocialIdentity();
+  return requestSocial("friends", { userId: options.userId || identity.userId });
+}
+
+async function socialRoomCreate(_event, options = {}) {
+  const identity = await readSocialIdentity();
+  return requestSocial("roomCreate", {
+    userId: options.userId || identity.userId,
+    label: sanitizeSocialText(options.label || "Watch party", 80),
+    contentFingerprint: sanitizeSocialText(options.contentFingerprint, 220),
+  });
+}
+
+async function socialRoomJoin(_event, options = {}) {
+  const identity = await readSocialIdentity();
+  return requestSocial("roomJoin", { userId: options.userId || identity.userId, code: sanitizeSocialText(options.code, 24) });
+}
+
+async function socialAblyToken(_event, options = {}) {
+  const identity = await readSocialIdentity();
+  return requestSocial("ablyToken", { userId: options.userId || identity.userId, roomId: sanitizeSocialText(options.roomId, 120) });
+}
+
+async function socialChatHistory(_event, options = {}) {
+  const identity = await readSocialIdentity();
+  return requestSocial("chatHistory", { userId: options.userId || identity.userId, roomId: sanitizeSocialText(options.roomId, 120) });
+}
+
+async function socialChatSave(_event, options = {}) {
+  const identity = await readSocialIdentity();
+  return requestSocial("saveChat", {
+    roomId: sanitizeSocialText(options.roomId, 120),
+    id: sanitizeSocialText(options.id, 120),
+    userId: options.userId || identity.userId,
+    name: sanitizeSocialText(options.name, 80),
+    text: sanitizeSocialText(options.text, 500),
+    sentAt: Number(options.sentAt) || Date.now(),
+  });
+}
+
+async function socialAddFriend(_event, options = {}) {
+  const identity = await readSocialIdentity();
+  return requestSocial("addFriend", { userId: options.userId || identity.userId, friendCode: sanitizeSocialText(options.friendCode, 24) });
+}
+
 ipcMain.handle("pitwall:key:get", (_event, provider) => getSecret(provider));
 ipcMain.handle("pitwall:key:set", (_event, provider, value) => setSecret(provider, value));
 ipcMain.handle("pitwall:key:delete", (_event, provider) => deleteSecret(provider));
 ipcMain.handle("pitwall:profile:get", () => getUserProfile());
 ipcMain.handle("pitwall:profile:set", (_event, profile) => setUserProfile(profile));
+ipcMain.handle("pitwall:social:bootstrap", bootstrapSocial);
+ipcMain.handle("pitwall:social:friends", socialFriends);
+ipcMain.handle("pitwall:social:addFriend", socialAddFriend);
+ipcMain.handle("pitwall:social:roomCreate", socialRoomCreate);
+ipcMain.handle("pitwall:social:roomJoin", socialRoomJoin);
+ipcMain.handle("pitwall:social:ablyToken", socialAblyToken);
+ipcMain.handle("pitwall:social:chatHistory", socialChatHistory);
+ipcMain.handle("pitwall:social:chatSave", socialChatSave);
 ipcMain.handle("pitwall:external:open", (_event, targetUrl) => {
   const url = String(targetUrl || "");
   if (!/^https?:\/\//i.test(url)) return false;
   shell.openExternal(url);
   return true;
 });
+ipcMain.handle("pitwall:updates:check", () => checkPitWallUpdates());
+ipcMain.handle("pitwall:updates:open", (_event, targetUrl) => {
+  const url = String(targetUrl || "");
+  if (!isAllowedUpdateUrl(url)) return false;
+  shell.openExternal(url);
+  return true;
+});
+ipcMain.handle("pitwall:updates:install", (_event, targetUrl) => installPitWallUpdate(targetUrl));
 
 function requestText(targetUrl, timeout = 8500, headers = {}) {
   return new Promise((resolve, reject) => {
     const req = https.get(targetUrl, {
       headers: {
         "Accept": "application/json, application/rss+xml, application/xml, text/xml, */*",
-        "User-Agent": "PitWall/0.1 (+https://github.com/pitwall)",
+        "User-Agent": "Apexline/1.0 (+https://github.com/neelsatyavolu/apexline)",
         ...headers,
       },
       timeout,
@@ -570,6 +740,185 @@ function requestText(targetUrl, timeout = 8500, headers = {}) {
 
 async function requestJson(targetUrl, timeout = 8500, headers = {}) {
   return JSON.parse(await requestText(targetUrl, timeout, headers));
+}
+
+function appVersion() {
+  return String(app.getVersion?.() || appPackage.version || "0.0.0");
+}
+
+function compareVersions(left, right) {
+  const parse = (value) => String(value || "").replace(/^v/i, "").split(/[.+-]/).map((part) => {
+    const number = Number.parseInt(part, 10);
+    return Number.isFinite(number) ? number : 0;
+  });
+  const a = parse(left);
+  const b = parse(right);
+  for (let i = 0; i < Math.max(a.length, b.length, 3); i += 1) {
+    const delta = (a[i] || 0) - (b[i] || 0);
+    if (delta !== 0) return delta > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+function updateFeedUrl() {
+  if (!/^https:\/\//i.test(PITWALL_UPDATE_BASE_URL)) return "";
+  return `${PITWALL_UPDATE_BASE_URL}/updates/${process.platform}/${process.arch}/releases.json`;
+}
+
+function normalizeRelease(release) {
+  const updateTo = release?.updateTo && typeof release.updateTo === "object" ? release.updateTo : release;
+  const version = String(updateTo?.version || release?.version || "").trim();
+  const url = String(updateTo?.url || release?.url || "").trim();
+  if (!version || !/^https:\/\//i.test(url)) return null;
+  return {
+    version,
+    name: String(updateTo?.name || release?.name || version),
+    notes: String(updateTo?.notes || release?.notes || ""),
+    pubDate: String(updateTo?.pub_date || updateTo?.pubDate || release?.pub_date || release?.pubDate || ""),
+    url,
+  };
+}
+
+function isAllowedUpdateUrl(targetUrl) {
+  try {
+    const target = new URL(targetUrl);
+    const feed = new URL(PITWALL_UPDATE_BASE_URL);
+    return target.protocol === "https:" && target.host === feed.host && target.pathname.startsWith("/updates/");
+  } catch {
+    return false;
+  }
+}
+
+function currentAppBundlePath() {
+  if (process.platform !== "darwin") return "";
+  const marker = ".app/Contents/MacOS/";
+  const index = String(process.execPath || "").indexOf(marker);
+  return index === -1 ? "" : process.execPath.slice(0, index + 4);
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+async function downloadPitWallUpdate(targetUrl, destinationPath, redirectCount = 0) {
+  if (redirectCount > 4) throw new Error("Update download redirected too many times.");
+  await new Promise((resolve, reject) => {
+    const request = https.get(targetUrl, { timeout: 120000 }, (response) => {
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        response.resume();
+        const nextUrl = new URL(response.headers.location, targetUrl).toString();
+        downloadPitWallUpdate(nextUrl, destinationPath, redirectCount + 1).then(resolve, reject);
+        return;
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        response.resume();
+        reject(new Error(`Update download failed (${response.statusCode || 0}).`));
+        return;
+      }
+      const stream = fs.createWriteStream(destinationPath);
+      response.pipe(stream);
+      stream.on("finish", () => stream.close(resolve));
+      stream.on("error", reject);
+    });
+    request.on("timeout", () => request.destroy(new Error("Update download timed out.")));
+    request.on("error", reject);
+  });
+}
+
+function findExtractedApexlineApp(root) {
+  const direct = path.join(root, "Apexline.app");
+  if (fs.existsSync(path.join(direct, "Contents/Info.plist"))) return direct;
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const candidate = path.join(root, entry.name);
+    if (entry.name === "Apexline.app" && fs.existsSync(path.join(candidate, "Contents/Info.plist"))) return candidate;
+    if (!entry.name.endsWith(".app")) {
+      const nested = findExtractedApexlineApp(candidate);
+      if (nested) return nested;
+    }
+  }
+  return "";
+}
+
+async function validateApexlineAppBundle(appPath) {
+  const plist = path.join(appPath, "Contents/Info.plist");
+  const name = String(await execFilePromise("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleName", plist])).trim();
+  if (name !== "Apexline") throw new Error("Downloaded update is not an Apexline app.");
+  return true;
+}
+
+async function installPitWallUpdate(targetUrl) {
+  const url = String(targetUrl || "");
+  if (!isAllowedUpdateUrl(url)) throw new Error("Update URL is not trusted.");
+  if (process.platform !== "darwin") throw new Error("Automatic update install is currently macOS-only.");
+  const appPath = currentAppBundlePath();
+  if (!appPath || !fs.existsSync(path.join(appPath, "Contents/Info.plist"))) {
+    throw new Error("Install Apexline as a macOS app before using automatic updates.");
+  }
+
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "apexline-update-"));
+  const zipPath = path.join(tempRoot, "update.zip");
+  const extractPath = path.join(tempRoot, "extract");
+  await fs.promises.mkdir(extractPath, { recursive: true });
+  await downloadPitWallUpdate(url, zipPath);
+  await execFilePromise("/usr/bin/ditto", ["-x", "-k", zipPath, extractPath], { timeout: 180000 });
+  const newAppPath = findExtractedApexlineApp(extractPath);
+  if (!newAppPath) throw new Error("Downloaded update did not contain Apexline.app.");
+  await validateApexlineAppBundle(newAppPath);
+
+  const scriptPath = path.join(tempRoot, "install-update.sh");
+  const backupPath = path.join(tempRoot, "previous-Apexline.app");
+  const script = `#!/bin/zsh
+set -e
+APP_PATH=${shellQuote(appPath)}
+NEW_APP=${shellQuote(newAppPath)}
+BACKUP_PATH=${shellQuote(backupPath)}
+TEMP_ROOT=${shellQuote(tempRoot)}
+APP_PID=${process.pid}
+for i in {1..80}; do
+  if ! kill -0 "$APP_PID" 2>/dev/null; then
+    break
+  fi
+  sleep 0.25
+done
+rm -rf "$BACKUP_PATH"
+if [ -d "$APP_PATH" ]; then
+  mv "$APP_PATH" "$BACKUP_PATH"
+fi
+/usr/bin/ditto "$NEW_APP" "$APP_PATH"
+/usr/bin/open "$APP_PATH"
+rm -rf "$BACKUP_PATH"
+rm -rf "$TEMP_ROOT"
+`;
+  await fs.promises.writeFile(scriptPath, script, "utf8");
+  await fs.promises.chmod(scriptPath, 0o700);
+  const child = spawn("/bin/zsh", [scriptPath], { detached: true, stdio: "ignore" });
+  child.unref();
+  setTimeout(() => app.quit(), 250);
+  return { installing: true, message: "Installing update and restarting Apexline." };
+}
+
+async function checkPitWallUpdates() {
+  const currentVersion = appVersion();
+  const feedUrl = updateFeedUrl();
+  if (!feedUrl) {
+    return { currentVersion, feedUrl: "", update: null, status: "unconfigured", message: "Update feed is not configured." };
+  }
+  if (process.platform !== "darwin") {
+    return { currentVersion, feedUrl, update: null, status: "unsupported", message: "Apexline update feed is currently macOS-only." };
+  }
+  const feed = await requestJson(feedUrl, 8500, { "Cache-Control": "no-cache" });
+  const releases = Array.isArray(feed?.releases) ? feed.releases.map(normalizeRelease).filter(Boolean) : [];
+  const update = releases
+    .filter((release) => compareVersions(release.version, currentVersion) > 0)
+    .sort((a, b) => compareVersions(b.version, a.version))[0] || null;
+  return {
+    currentVersion,
+    feedUrl,
+    update,
+    status: update ? "available" : "current",
+    message: update ? `Apexline ${update.version} is available.` : "Apexline is up to date.",
+  };
 }
 
 function readDotEnvValues() {
@@ -616,7 +965,7 @@ function requestFormJson(targetUrl, body, timeout = 12000) {
         "Accept": "application/json",
         "Content-Type": "application/x-www-form-urlencoded",
         "Content-Length": Buffer.byteLength(payload),
-        "User-Agent": "PitWall/0.1 (+https://github.com/pitwall)",
+        "User-Agent": "Apexline/1.0 (+https://github.com/neelsatyavolu/apexline)",
       },
       timeout,
     }, (res) => {
@@ -747,7 +1096,7 @@ function requestJsonPost(targetUrl, body, headers = {}, timeout = 20000) {
         "Accept": "application/json",
         "Content-Type": "application/json",
         "Content-Length": Buffer.byteLength(payload),
-        "User-Agent": "PitWall/0.1 (+https://github.com/pitwall)",
+        "User-Agent": "Apexline/1.0 (+https://github.com/neelsatyavolu/apexline)",
         ...headers,
       },
       timeout,
@@ -788,7 +1137,7 @@ function requestTextPost(targetUrl, body, headers = {}, timeout = 20000) {
         "Accept": "application/json",
         "Content-Type": "application/json",
         "Content-Length": Buffer.byteLength(payload),
-        "User-Agent": "PitWall/0.1 (+https://github.com/pitwall)",
+        "User-Agent": "Apexline/1.0 (+https://github.com/neelsatyavolu/apexline)",
         ...headers,
       },
       timeout,
@@ -826,7 +1175,7 @@ function requestFormPost(targetUrl, params, headers = {}, timeout = 20000) {
         "Accept": "application/json",
         "Content-Type": "application/x-www-form-urlencoded",
         "Content-Length": Buffer.byteLength(payload),
-        "User-Agent": "PitWall/0.1 (+https://github.com/pitwall)",
+        "User-Agent": "Apexline/1.0 (+https://github.com/neelsatyavolu/apexline)",
         ...headers,
       },
       timeout,
@@ -1005,16 +1354,16 @@ function waitForOAuthCallback(redirectUri, expectedState) {
       const state = url.searchParams.get("state");
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       if (error) {
-        res.end("<h1>PitWall sign-in failed</h1><p>You can close this tab.</p>");
+        res.end("<h1>Apexline sign-in failed</h1><p>You can close this tab.</p>");
         finish(new Error(`OAuth failed: ${error}`));
         return;
       }
       if (!code || state !== expectedState) {
-        res.end("<h1>PitWall sign-in failed</h1><p>State mismatch. You can close this tab.</p>");
+        res.end("<h1>Apexline sign-in failed</h1><p>State mismatch. You can close this tab.</p>");
         finish(new Error("OAuth state mismatch."));
         return;
       }
-      res.end("<h1>PitWall sign-in complete</h1><p>You can close this tab and return to PitWall.</p>");
+      res.end("<h1>Apexline sign-in complete</h1><p>You can close this tab and return to Apexline.</p>");
       finish(null, code);
     });
     const timer = setTimeout(() => finish(new Error("OAuth sign-in timed out.")), 5 * 60 * 1000);
@@ -2659,7 +3008,9 @@ function fillF1TimingQualifyingDeltas(rows) {
 function f1TimingSegments(sector) {
   const raw = sector?.Segments || [];
   const values = Array.isArray(raw) ? raw : Object.values(raw);
-  return values.map((segment) => timingSegmentTone(segment?.Status ?? segment?.status ?? segment)).filter((tone) => tone !== "off");
+  const tones = values.map((segment) => timingSegmentTone(segment?.Status ?? segment?.status ?? segment));
+  while (tones.at(-1) === "off") tones.pop();
+  return tones;
 }
 
 function f1TimingSectorTime(sector) {
@@ -3484,7 +3835,7 @@ function buildStrategyContext({ race, seasonSummary, drivers, standings, constru
     ...(row.stints || []).map((stint) => stint.compound),
   ]).filter(Boolean)));
   return {
-    source: "OpenF1 latest session plus PitWall live feeds",
+    source: "OpenF1 latest session plus Apexline live feeds",
     generatedAt: new Date().toISOString(),
     race: {
       name: race?.name || "",
@@ -3911,13 +4262,11 @@ function fallbackCopilotInsightPages(data, summary) {
 
 async function hasConfiguredAiProvider() {
   try {
-    const [grok, codex, anthropic, openai] = await Promise.all([
+    const [grok, codex] = await Promise.all([
       getActiveOAuthSession("grok"),
       getActiveOAuthSession("codex"),
-      getSecret("anthropic"),
-      getSecret("openai"),
     ]);
-    return Boolean(grok || codex || anthropic || openai);
+    return Boolean(grok || codex);
   } catch {
     return false;
   }
@@ -3925,7 +4274,7 @@ async function hasConfiguredAiProvider() {
 
 function dailyInsightPrompt(page) {
   const instructions = [
-    `Build the daily precomputed PitWall Copilot page for: ${page.title}.`,
+    `Build the daily precomputed Apexline Copilot page for: ${page.title}.`,
     "Use only the provided snapshot. Do not invent tyre data, session results, weather, or factual claims not present in the snapshot.",
     "If the snapshot lacks enough data for a claim, say what is missing.",
     "Return concise race-engineer language with alerts only for real risks or uncertainties in the supplied data.",
@@ -4494,7 +4843,7 @@ function installF1TvPlaybackPermissions() {
 }
 
 const F1TV_AUTH_KEY_PATTERN = /auth|token|identity|login|jwt|access|refresh|subscriber|entitlement|oauth|oidc|auth0|firebase/i;
-const IGNORED_F1TV_COOKIE_PATTERN = /abtasty|analytics|consent|stripe|evergage|_ga|_gcl|_fbp|_rdt|tfpsi|reese/i;
+const IGNORED_F1TV_COOKIE_PATTERN = /^login$|abtasty|analytics|consent|stripe|evergage|_ga|_gcl|_fbp|_rdt|tfpsi|reese/i;
 
 function isLikelyAuthCookie(cookie) {
   const name = String(cookie.name || "");
@@ -4504,6 +4853,10 @@ function isLikelyAuthCookie(cookie) {
 function f1TvEntitlementTokenFromCookies(cookies = []) {
   const cookie = cookies.find((item) => String(item.name || "").toLowerCase() === "entitlement_token");
   return String(cookie && cookie.value || "").trim();
+}
+
+function f1TvPlaybackTokenFromBrowserAuthState(browserAuthState = {}) {
+  return String(browserAuthState.playbackToken || browserAuthState.playbackTokenCandidate || "").trim();
 }
 
 async function getF1TvPlaybackToken(cookies = null) {
@@ -4535,6 +4888,30 @@ function f1TvBrowserAuthStateScript() {
     (async () => {
       const rx = new RegExp(${JSON.stringify(F1TV_AUTH_KEY_PATTERN.source)}, "i");
       const tokenRx = /(^eyJ[a-zA-Z0-9_-]+\\.)|access[_-]?token|refresh[_-]?token|id[_-]?token|authorization|bearer/i;
+      const playbackKeyRx = /entitlement|subscription|ascendon|access[_-]?token|id[_-]?token/i;
+      const preferredPlaybackKeyRx = /entitlement|subscription|ascendon/i;
+      const tokenValueRx = /(^eyJ[a-zA-Z0-9_-]+\\.)|^[a-zA-Z0-9._~-]{40,}$/;
+      const tokenCandidates = [];
+      const addTokenCandidate = (value, keyHint = "") => {
+        const text = String(value || "").trim().replace(/^Bearer\\s+/i, "");
+        if (text.length < 32 || text.length > 4096) return;
+        if (!tokenValueRx.test(text)) return;
+        tokenCandidates.push({ text, priority: preferredPlaybackKeyRx.test(keyHint) ? 0 : 1 });
+      };
+      const collectTokenCandidates = (value, keyHint = "", depth = 0) => {
+        if (depth > 4 || tokenCandidates.length > 8) return;
+        if (typeof value === "string" || typeof value === "number") {
+          const text = String(value || "");
+          if (playbackKeyRx.test(keyHint) || tokenValueRx.test(text)) addTokenCandidate(text, keyHint);
+          try {
+            const parsed = JSON.parse(text);
+            collectTokenCandidates(parsed, keyHint, depth + 1);
+          } catch {}
+          return;
+        }
+        if (!value || typeof value !== "object") return;
+        Object.entries(value).forEach(([key, item]) => collectTokenCandidates(item, keyHint ? keyHint + "." + key : key, depth + 1));
+      };
       const safeKeys = (storage, prefix) => {
         try {
           return Array.from({ length: storage.length }, (_, index) => storage.key(index))
@@ -4543,6 +4920,7 @@ function f1TvBrowserAuthStateScript() {
               let value = "";
               try { value = String(storage.getItem(key) || ""); } catch {}
               const tokenLike = tokenRx.test(key) || tokenRx.test(value);
+              if (tokenLike || playbackKeyRx.test(key)) collectTokenCandidates(value, key);
               return tokenLike;
             })
             .map((key) => prefix + ":" + key);
@@ -4586,6 +4964,7 @@ function f1TvBrowserAuthStateScript() {
         sessionStorageAuthKeys: safeKeys(sessionStorage, "sessionStorage"),
         indexedDbAuthKeys,
         cookieAuthNames,
+        playbackTokenCandidate: (tokenCandidates.sort((a, b) => a.priority - b.priority)[0] || {}).text || "",
         signedInSignal: /sign out|log out|my account|account settings|manage subscription/i.test(pageText),
         loginSignal: /sign in|log in|email address|password/i.test(pageText),
       };
@@ -4641,7 +5020,9 @@ async function getF1TvStatus() {
 
 async function getF1TvStatusWithBrowserState(browserAuthState = {}) {
   const cookies = await getF1TvCookies();
-  return mergeF1TvStatus(cookies, browserAuthState, await getF1TvPlaybackToken(cookies));
+  const playbackToken = f1TvPlaybackTokenFromBrowserAuthState(browserAuthState);
+  if (playbackToken) await setSecret("f1tv-token", playbackToken).catch(() => {});
+  return mergeF1TvStatus(cookies, browserAuthState, playbackToken || await getF1TvPlaybackToken(cookies));
 }
 
 async function probeF1TvStoredAuth(options = {}) {
@@ -4650,7 +5031,7 @@ async function probeF1TvStoredAuth(options = {}) {
     width: 960,
     height: 640,
     show: false,
-    title: "PitWall F1 TV Auth Probe",
+    title: "Apexline F1 TV Auth Probe",
     backgroundColor: "#000000",
     webPreferences: {
       offscreen: true,
@@ -4721,10 +5102,10 @@ async function injectF1Credentials(win, credentials) {
         button.click();
         return true;
       };
-      const emailFilled = setValue(["input[type='email']", "input[name='email']", "input[name='username']", "input[autocomplete='username']", "#email", "#username"], ${JSON.stringify(email)});
+      const emailFilled = setValue(["input[type='email']", "input[name='email']", "input[name='username']", "input[autocomplete='username']", "input[placeholder*='email' i]", "input[aria-label*='email' i]", "#email", "#username"], ${JSON.stringify(email)});
       const passwordFilled = setValue(["input[type='password']", "input[name='password']", "input[autocomplete='current-password']", "#password"], ${JSON.stringify(password)});
       if (${JSON.stringify(autoSubmit)}) {
-        if (passwordFilled) return clickF1TvLoginStep(/sign\\s*in|log\\s*in|continue|submit/i);
+        if (emailFilled && passwordFilled) return clickF1TvLoginStep(/sign\\s*in|log\\s*in|continue|submit/i);
         if (emailFilled) return clickF1TvLoginStep(/continue|next|sign\\s*in|log\\s*in/i);
       }
       return false;
@@ -4783,7 +5164,9 @@ function openF1TvLoginWindow(event, credentials, options = {}) {
       settled = true;
       if (pollTimer) clearInterval(pollTimer);
       if (credentialTimer) clearInterval(credentialTimer);
-      resolve(lastStatus || await getF1TvStatus());
+      const status = lastStatus || await getF1TvStatus();
+      const credentialError = String(credentials.directError || "").slice(0, 240);
+      resolve(credentialError && !status.authenticated ? { ...status, credentialError } : status);
     }
 
     loginWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
@@ -5154,15 +5537,29 @@ async function findF1TvContentIdInPage(webContents, options = {}) {
 function scoreF1TvContentCandidate(value, options) {
   options = options || {};
   const normalize = (text) => String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const sessionType = (text) => {
+    const normalized = normalize(text);
+    if (/sprint qualifying|sprint shootout|shootout/.test(normalized)) return "sprint qualifying";
+    if (/practice 1|free practice 1|fp1/.test(normalized)) return "practice 1";
+    if (/practice 2|free practice 2|fp2/.test(normalized)) return "practice 2";
+    if (/practice 3|free practice 3|fp3/.test(normalized)) return "practice 3";
+    if (/\bqualifying\b|\bquali\b/.test(normalized)) return "qualifying";
+    if (/\bsprint\b/.test(normalized)) return "sprint";
+    if (/\brace\b|grand prix/.test(normalized)) return "race";
+    return "";
+  };
   const text = normalize(value);
   const raceNeedle = normalize(options.raceName || "");
   const sessionNeedle = normalize(options.sessionKind || "");
+  const requestedSession = sessionType(sessionNeedle);
+  const candidateSession = sessionType(text);
   const raceWords = raceNeedle.split(" ").filter((word) => word.length > 3 && !["grand", "prix", "race"].includes(word));
   let score = 0;
   if (raceNeedle && text.includes(raceNeedle)) score += 3;
   if (raceWords.length) score += Math.min(3, raceWords.filter((word) => text.includes(word)).length);
-  const hasRequestedSession = Boolean(sessionNeedle && text.includes(sessionNeedle));
+  const hasRequestedSession = Boolean(sessionNeedle && (candidateSession && requestedSession ? candidateSession === requestedSession : text.includes(sessionNeedle)));
   if (hasRequestedSession) score += 6;
+  if (candidateSession && requestedSession && candidateSession !== requestedSession) score -= 6;
   if (sessionNeedle && sessionNeedle !== "race" && !hasRequestedSession) score -= 4;
   if (/\b(formula 1|f1)\b/.test(text)) score += 8;
   if (/\bgrand prix\b/.test(text)) score += 2;
@@ -5495,7 +5892,7 @@ async function resolveF1TvContent(_event, options = {}) {
     width: 1280,
     height: 720,
     show: false,
-    title: "PitWall F1 TV Resolver",
+    title: "Apexline F1 TV Resolver",
     backgroundColor: "#000000",
     webPreferences: {
       offscreen: true,
@@ -5637,7 +6034,7 @@ async function resolveF1TvContent(_event, options = {}) {
         ? "No playable stream was discovered for the selected F1 TV result. Try pasting the exact F1 TV detail URL."
         : status.browserSession
           ? "F1 TV browser cookies exist, but the playback token is missing. Sign in with email and password in Settings, then retry."
-        : "F1 TV is not connected in this PitWall app profile. MultiViewer login is separate. Connect F1 TV, then load the session again.",
+        : "F1 TV is not connected in this Apexline app profile. MultiViewer login is separate. Connect F1 TV, then load the session again.",
   };
   writePitWallDebugLog("f1tv.resolve.result", {
     ok: result.ok,
@@ -6389,7 +6786,7 @@ const AI_RESPONSE_SCHEMA = {
 };
 
 const AI_SYSTEM_PROMPT = [
-  "You are PitWall's F1 race strategist.",
+  "You are Apexline's F1 race strategist.",
   "Use only the provided JSON snapshot.",
   "The app computes exact gaps, standings, weather, tyre stints, pit counts, lap samples, and battle candidates before calling you.",
   "Explain strategy, risks, and what to watch in concise race-engineer language.",
@@ -6540,13 +6937,6 @@ async function requestCodexResponsesStream(targetUrl, body, headers = {}) {
   return parseCodexResponsesStream(text);
 }
 
-async function askOpenAI(options = {}) {
-  const key = await getSecret("openai");
-  if (!key) throw new Error("Add an OpenAI API key in Settings first.");
-  const raw = await requestJsonPost(OPENAI_RESPONSES_URL, responsesBody(options.model || "gpt-4o-mini", options), { Authorization: `Bearer ${key}` });
-  return normalizeAiResult("openai", openAiText(raw), raw);
-}
-
 async function askCodex(options = {}) {
   const tokens = await getActiveOAuthSession("codex");
   if (!tokens) throw new Error("Connect ChatGPT (Codex) in Settings first.");
@@ -6560,27 +6950,6 @@ async function askCodex(options = {}) {
   if (tokens.accountId) headers["chatgpt-account-id"] = tokens.accountId;
   const raw = await requestCodexResponsesStream(CODEX_BACKEND_RESPONSES_URL, codexResponsesBody(model, options), headers);
   return normalizeAiResult("codex", openAiText(raw), raw);
-}
-
-function anthropicText(raw) {
-  return (raw.content || []).map((part) => part.text || "").filter(Boolean).join("\n");
-}
-
-async function askAnthropic(options = {}) {
-  const key = await getSecret("anthropic");
-  if (!key) throw new Error("Add an Anthropic API key in Settings first.");
-  const raw = await requestJsonPost(ANTHROPIC_MESSAGES_URL, {
-    model: options.model || "claude-sonnet-4-20250514",
-    max_tokens: 900,
-    system: AI_SYSTEM_PROMPT,
-    messages: [
-      { role: "user", content: JSON.stringify(aiPayload(options)) },
-    ],
-  }, {
-    "x-api-key": key,
-    "anthropic-version": "2023-06-01",
-  });
-  return normalizeAiResult("anthropic", anthropicText(raw), raw);
 }
 
 async function askGrok(options = {}) {
@@ -6603,13 +6972,9 @@ async function askConfiguredAi(options = {}) {
   const preferred = String(options.provider || "").toLowerCase();
   if (preferred === "codex") return askCodex(options);
   if (preferred === "grok") return askGrok(options);
-  if (preferred === "openai") return askOpenAI(options);
-  if (preferred === "anthropic") return askAnthropic(options);
   if (await getActiveOAuthSession("grok")) return askGrok(options);
   if (await getActiveOAuthSession("codex")) return askCodex(options);
-  if (await getSecret("anthropic")) return askAnthropic(options);
-  if (await getSecret("openai")) return askOpenAI(options);
-  throw new Error("Connect ChatGPT, connect Grok, or add an OpenAI/Anthropic API key in Settings first.");
+  throw new Error("Connect ChatGPT or Grok in Settings first.");
 }
 
 function openF1AnalyticsUrl(endpoint, params = {}) {
@@ -7309,7 +7674,7 @@ async function queryHistory(options = {}) {
 
 function scheduleReminder(options = {}) {
   const id = String(options.id || `reminder-${Date.now()}`);
-  const title = String(options.title || "PitWall reminder");
+  const title = String(options.title || "Apexline reminder");
   const body = String(options.body || "An F1 session is coming up.");
   const at = Date.parse(options.at || "");
   const delay = Number.isFinite(at) ? Math.max(0, at - Date.now()) : 0;
@@ -7384,7 +7749,7 @@ async function createWindow() {
     minWidth: 1120,
     minHeight: 720,
     backgroundColor: "#07090d",
-    title: "PitWall",
+    title: "Apexline",
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 16, y: 16 },
     webPreferences: {

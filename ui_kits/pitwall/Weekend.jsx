@@ -1,4 +1,4 @@
-/* PitWall Weekend screen - live timing when a session is running,
+/* Apexline Weekend screen - live timing when a session is running,
    weekend recap between sessions. window.PW.Weekend */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
@@ -420,7 +420,7 @@
                 </div>
               </div>
               <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.42, marginTop: "var(--space-6)", textWrap: "pretty" }}>
-                {battlePair?.body || "PitWall will highlight a pair when adjacent cars are within the configured battle window."}
+                {battlePair?.body || "Apexline will highlight a pair when adjacent cars are within the configured battle window."}
               </div>
             </Card>
 

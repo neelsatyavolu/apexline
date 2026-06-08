@@ -1,4 +1,4 @@
-/* PitWall theme tokens. window.PW_THEME */
+/* Apexline theme tokens. window.PW_THEME */
 (function () {
   const THEME_OPTIONS = [
     { value: "dark", label: "Default" },

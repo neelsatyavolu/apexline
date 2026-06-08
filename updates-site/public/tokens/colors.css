@@ -1,0 +1,139 @@
+/* ==========================================================================
+   Apexline — Color tokens  (canonical)
+   Dark-first "race-engineer cockpit". A raw blue-black ladder + semantic
+   aliases. Components consume the SEMANTIC names; the raw ladders
+   (--bg-N, --text-N, --ink-N) exist for specimens and fine control.
+   ========================================================================== */
+
+:root {
+  /* ====== RAW: cool blue-black surface ladder ====== */
+  --bg-0: #08090c;   /* app void / deepest */
+  --bg-1: #0b0d12;   /* base content bg */
+  --bg-2: #13161d;   /* default card */
+  --bg-3: #1d222d;   /* raised card / header */
+  --bg-4: #242a36;   /* hover surface */
+  --bg-5: #2e3441;   /* active / pressed */
+
+  /* ====== RAW: neutral ink ramp (charcoal -> white) ====== */
+  --ink-950: #08090c;
+  --ink-900: #0b0d12;
+  --ink-850: #0e1117;
+  --ink-800: #13161d;
+  --ink-700: #1d222d;
+  --ink-600: #2c3340;
+  --ink-500: #3a4252;
+  --ink-400: #596173;
+  --ink-300: #6f7889;
+  --ink-200: #9aa2b3;
+  --ink-100: #c4cad6;
+  --ink-050: #e7eaf1;
+  --white:   #f6f8fc;
+
+  /* ====== RAW: text ladder ====== */
+  --text-1: #f4f6fb;
+  --text-2: #aeb6c6;
+  --text-3: #7c8597;
+  --text-4: #565e6f;
+
+  /* ====== RAW: blue ramp ====== */
+  --blue-50:  #e9f1ff;
+  --blue-100: #cfe1ff;
+  --blue-200: #a6c6ff;
+  --blue-300: #74a4ff;
+  --blue-400: #4d92ff;
+  --blue-500: #2d7bff;   /* primary */
+  --blue-600: #1f63db;
+  --blue-700: #194fb0;
+  --blue-900: #0e2a63;
+
+  /* ====== SEMANTIC: surfaces ====== */
+  --bg-app:         var(--bg-0);
+  --bg-base:        var(--bg-1);
+  --bg-sunken:      #0a0c11;          /* inputs, wells, recessed panels */
+  --surface-card:   var(--bg-2);
+  --surface-raised: var(--bg-3);
+  --surface-hover:  var(--bg-4);
+  --surface-active: #2a3140;
+  --surface-overlay:#1b202a;          /* popovers/menus over blur */
+  --scrim:          rgba(5, 6, 9, 0.66);
+
+  /* ====== SEMANTIC: borders / hairlines ====== */
+  --line-1: rgba(255, 255, 255, 0.06);
+  --line-2: rgba(255, 255, 255, 0.10);
+  --line-3: rgba(255, 255, 255, 0.16);
+  --border-subtle:  var(--line-1);
+  --border-default: var(--line-2);
+  --border-strong:  var(--line-3);
+  --line-glow:      rgba(45, 123, 255, 0.45);
+
+  /* ====== SEMANTIC: text ====== */
+  --text-primary:   var(--text-1);
+  --text-secondary: var(--text-2);
+  --text-tertiary:  var(--text-3);
+  --text-strong:    #ffffff;
+  --text-inverse:   #ffffff;          /* on accent / on light */
+  --text-disabled:  #444b59;
+  --text-accent:    var(--accent);
+  --text-link:      var(--accent);
+
+  /* ====== SEMANTIC: signature accent (electric blue) ====== */
+  --accent:             var(--blue-500);
+  --accent-hover:       var(--blue-400);
+  --accent-press:       var(--blue-600);
+  --accent-quiet:       rgba(45, 123, 255, 0.14);   /* soft tint / focus halo */
+  --accent-quiet-hover: rgba(45, 123, 255, 0.22);
+  --accent-soft:        rgba(45, 123, 255, 0.09);
+  --accent-border:      rgba(45, 123, 255, 0.40);
+  --blue-glow:          rgba(45, 123, 255, 0.55);
+  --focus-ring:         var(--accent);
+
+  /* ====== Live / broadcast red ====== */
+  --live:      #ff3b3b;
+  --live-weak: rgba(255, 59, 59, 0.16);
+  --live-glow: rgba(255, 59, 59, 0.55);
+
+  /* ====== Semantic status ====== */
+  --success:       #2bd07a;
+  --success-quiet: rgba(43, 208, 122, 0.15);
+  --warning:       #ffb020;
+  --warning-quiet: rgba(255, 176, 32, 0.15);
+  --danger:        #ff4d4d;
+  --danger-quiet:  rgba(255, 77, 77, 0.15);
+  --info:          #59b0ff;
+  --info-quiet:    rgba(89, 176, 255, 0.15);
+
+  /* ====== F1 timing convention ====== */
+  --t-fastest:  #b15cff;   /* session best (purple)  */
+  --t-personal: #2bd07a;   /* personal best (green)  */
+  --t-slower:   #ffd23d;   /* off the pace (yellow)  */
+  --t-pit:      #59d0ff;   /* in pit / out lap (cyan)*/
+  --t-fastest-quiet:  rgba(177, 92, 255, 0.16);
+  --t-personal-quiet: rgba(43, 208, 122, 0.16);
+
+  /* ====== Race-control flags ====== */
+  --flag-green:         #2bd07a;
+  --flag-yellow:        #ffd23d;
+  --flag-double-yellow: #ffb020;
+  --flag-red:           #ff3b3b;
+  --flag-sc:            #ffb020;
+  --flag-vsc:           #ffd23d;
+  --flag-blue:          #2d7bff;
+  --flag-chequered:     #f6f8fc;
+
+  /* ====== Tyre compounds ====== */
+  --tyre-soft:   #ff3a3a;
+  --tyre-medium: #ffd23d;
+  --tyre-hard:   #eef1f6;
+  --tyre-inter:  #43c463;
+  --tyre-wet:    #2d7bff;
+
+  /* ====== DRS / telemetry overlay ====== */
+  --drs-open:   #2bd07a;
+  --drs-detect: #59d0ff;
+  --throttle:   #2bd07a;
+  --brake:      #ff3b3b;
+
+  /* ====== Decorative gradients (sparingly) ====== */
+  --grad-hero:   radial-gradient(120% 90% at 12% -20%, rgba(45,123,255,0.16), transparent 60%); /* @kind other */
+  --grad-carbon: repeating-linear-gradient(45deg, rgba(255,255,255,0.016) 0 2px, transparent 2px 7px); /* @kind other */
+}

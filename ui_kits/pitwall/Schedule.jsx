@@ -1,4 +1,4 @@
-/* PitWall Schedule & Calendar. window.PW.Schedule */
+/* Apexline Schedule & Calendar. window.PW.Schedule */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const { Card, Badge, Icon, Countdown, Button, DriverTag, FlagStatus } = NS;
@@ -56,7 +56,7 @@
           if (startsAt) {
             window.pitwall.notifications.schedule({
               id: `race-${round}`,
-              title: "PitWall race reminder",
+              title: "Apexline race reminder",
               body: `${race.name || "Formula 1"}${firstUpcoming?.kind ? " - " + firstUpcoming.kind : ""} starts soon.`,
               at: startsAt,
             }).catch(() => {});

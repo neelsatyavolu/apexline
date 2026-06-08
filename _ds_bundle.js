@@ -87,7 +87,7 @@ Object.assign(__ds_scope, { Button });
 // components/core/Icon.jsx
 try { (() => {
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
-/* PitWall icon set — Lucide-derived (ISC/MIT) 24×24 stroke geometry,
+/* Apexline icon set — Lucide-derived (ISC/MIT) 24×24 stroke geometry,
    curated for the cockpit. 1.75 default stroke, round caps/joins.
    Add new glyphs to PATHS keyed by name. */
 
@@ -1614,7 +1614,7 @@ Object.assign(__ds_scope, { Tabs });
 
 // ui_kits/pitwall/Analytics.jsx
 try { (() => {
-/* PitWall Analytics & Deep Dives. window.PW.Analytics */
+/* Apexline Analytics & Deep Dives. window.PW.Analytics */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const {
@@ -2061,7 +2061,7 @@ try { (() => {
 
 // ui_kits/pitwall/AppShell.jsx
 try { (() => {
-/* PitWall AppShell — sidebar + topbar chrome for non-live screens.
+/* Apexline AppShell — sidebar + topbar chrome for non-live screens.
    Exposes window.PW.AppShell. Reads window.PitWallDesignSystem_698fe6. */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
@@ -2291,7 +2291,7 @@ try { (() => {
 
 // ui_kits/pitwall/Copilot.jsx
 try { (() => {
-/* PitWall AI Copilot — race-weekend AI analysis + chatbot. window.PW.Copilot */
+/* Apexline AI Copilot — race-weekend AI analysis + chatbot. window.PW.Copilot */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const {
@@ -2645,7 +2645,7 @@ try { (() => {
 
 // ui_kits/pitwall/Dashboard.jsx
 try { (() => {
-/* PitWall Dashboard screen. window.PW.Dashboard */
+/* Apexline Dashboard screen. window.PW.Dashboard */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const {
@@ -2980,7 +2980,7 @@ try { (() => {
 
 // ui_kits/pitwall/Leaderboards.jsx
 try { (() => {
-/* PitWall Leaderboards & Standings. window.PW.Leaderboards */
+/* Apexline Leaderboards & Standings. window.PW.Leaderboards */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const {
@@ -3240,7 +3240,7 @@ try { (() => {
 // ui_kits/pitwall/LiveRacing.jsx
 try { (() => {
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
-/* PitWall Live Racing — single unified window. window.PW.LiveRacing */
+/* Apexline Live Racing — single unified window. window.PW.LiveRacing */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const {
@@ -3903,7 +3903,7 @@ function _extends() { return _extends = Object.assign ? Object.assign.bind() : f
 
 // ui_kits/pitwall/News.jsx
 try { (() => {
-/* PitWall News feed. window.PW.News */
+/* Apexline News feed. window.PW.News */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const {
@@ -4093,7 +4093,7 @@ try { (() => {
 
 // ui_kits/pitwall/Schedule.jsx
 try { (() => {
-/* PitWall Schedule & Calendar. window.PW.Schedule */
+/* Apexline Schedule & Calendar. window.PW.Schedule */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const {
@@ -4264,7 +4264,7 @@ try { (() => {
 
 // ui_kits/pitwall/Settings.jsx
 try { (() => {
-/* PitWall Settings / API keys. window.PW.Settings */
+/* Apexline Settings. window.PW.Settings */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const {
@@ -4299,8 +4299,6 @@ try { (() => {
     .row__txt { flex: 1; min-width: 0; }
     .row__t { font-size: var(--text-md); font-weight: 500; color: var(--text-primary); }
     .row__s { font-size: var(--text-sm); color: var(--text-tertiary); margin-top: 2px; line-height: 1.4; }
-    .keyrow { display: flex; align-items: flex-end; gap: var(--space-6); }
-    .keyrow .pw-field { flex: 1; }
     .provider { display: flex; align-items: center; gap: var(--space-6); padding: var(--space-7); border-radius: var(--radius-md); border: 1px solid var(--border-subtle); background: var(--surface-raised); }
     .provider__logo { width: 38px; height: 38px; border-radius: var(--radius-sm); display: grid; place-items: center; flex: none; font-family: var(--font-display); font-weight: 800; color: #fff; }
     .ai-flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-5); }
@@ -4339,7 +4337,7 @@ try { (() => {
   }
   const SECTIONS = [{
     id: "ai",
-    label: "AI & API keys",
+    label: "AI providers",
     icon: "sparkles"
   }, {
     id: "favorites",
@@ -4416,7 +4414,7 @@ try { (() => {
   }
   function Settings() {
     const [sec, setSec] = React.useState("ai");
-    const [model, setModel] = React.useState("claude");
+    const [model, setModel] = React.useState("codex");
     const [favDrivers, setFavDrivers] = React.useState(["NOR", "VER", "LEC"]);
     const [favTeams, setFavTeams] = React.useState(["MCL", "FER"]);
     function move(list, setList) {
@@ -4446,7 +4444,7 @@ try { (() => {
       className: "set__col"
     }, sec === "ai" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(Card, {
       title: "AI provider",
-      subtitle: "PitWall uses your own API keys \u2014 no baked-in costs or limits. Keys are stored in the macOS Keychain, on-device."
+      subtitle: "Apexline uses your own accounts. OAuth sessions stay in the macOS Keychain."
     }, /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
@@ -4458,44 +4456,39 @@ try { (() => {
     }, /*#__PURE__*/React.createElement("span", {
       className: "provider__logo",
       style: {
-        background: "linear-gradient(135deg, #d97757, #c15f3c)"
+        background: "#fff",
+        color: "#0f172a"
       }
-    }, "A"), /*#__PURE__*/React.createElement("div", {
+    }, "C"), /*#__PURE__*/React.createElement("div", {
       style: {
         flex: 1
       }
     }, /*#__PURE__*/React.createElement("div", {
       className: "row__t"
-    }, "Anthropic \xB7 Claude"), /*#__PURE__*/React.createElement("div", {
+    }, "ChatGPT (Codex)"), /*#__PURE__*/React.createElement("div", {
       className: "row__s"
-    }, "Connected \xB7 Claude 4 Sonnet")), /*#__PURE__*/React.createElement(Badge, {
-      tone: "success",
+    }, "Not connected")), /*#__PURE__*/React.createElement(Badge, {
+      tone: "neutral",
       dot: true
-    }, "Active")), /*#__PURE__*/React.createElement("div", {
-      className: "keyrow"
-    }, /*#__PURE__*/React.createElement(Input, {
-      label: "Anthropic API key",
-      mono: true,
-      defaultValue: "sk-ant-\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u20224f2a",
-      suffix: /*#__PURE__*/React.createElement(Icon, {
-        name: "key",
-        size: 15
-      })
-    }), /*#__PURE__*/React.createElement(Button, {
-      variant: "secondary"
-    }, "Update")), /*#__PURE__*/React.createElement("div", {
-      className: "keyrow"
-    }, /*#__PURE__*/React.createElement(Input, {
-      label: "OpenAI API key",
-      mono: true,
-      placeholder: "sk-\u2022\u2022\u2022\u2022 (optional fallback)",
-      suffix: /*#__PURE__*/React.createElement(Icon, {
-        name: "key",
-        size: 15
-      })
-    }), /*#__PURE__*/React.createElement(Button, {
-      variant: "ghost"
-    }, "Add")))), /*#__PURE__*/React.createElement(Card, {
+    }, "OAuth")), /*#__PURE__*/React.createElement("div", {
+      className: "provider"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "provider__logo",
+      style: {
+        background: "#050505"
+      }
+    }, "G"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "row__t"
+    }, "Grok"), /*#__PURE__*/React.createElement("div", {
+      className: "row__s"
+    }, "Not connected")), /*#__PURE__*/React.createElement(Badge, {
+      tone: "neutral",
+      dot: true
+    }, "OAuth")))), /*#__PURE__*/React.createElement(Card, {
       title: "Preferred model",
       subtitle: "Used for battle detection, strategy & projections"
     }, /*#__PURE__*/React.createElement("div", {
@@ -4510,11 +4503,11 @@ try { (() => {
       onChange: setModel,
       accent: true,
       options: [{
-        value: "claude",
-        label: "Claude 4"
+        value: "codex",
+        label: "GPT-5.4 mini"
       }, {
-        value: "gpt",
-        label: "GPT-4o"
+        value: "grok",
+        label: "Grok 4.3"
       }, {
         value: "local",
         label: "Local MLX"
@@ -4525,7 +4518,7 @@ try { (() => {
         color: "var(--text-tertiary)"
       }
     }, model === "local" ? "Lightweight on-device fallback — basic detection only, no key needed." : "Structured JSON output mode · teaching system prompt enabled."))), /*#__PURE__*/React.createElement(Card, {
-      title: "How PitWall's AI works",
+      title: "How Apexline's AI works",
       subtitle: "Hybrid: the app computes the precise numbers, the model reasons about strategy"
     }, /*#__PURE__*/React.createElement("div", {
       className: "ai-flow"
@@ -4712,7 +4705,7 @@ try { (() => {
       className: "row__t"
     }, "Unofficial companion app"), /*#__PURE__*/React.createElement("div", {
       className: "row__s"
-    }, "PitWall requires an active F1 TV subscription. Not affiliated with Formula 1.")))), sec === "appearance" && /*#__PURE__*/React.createElement(Card, {
+    }, "Apexline requires an active F1 TV subscription. Not affiliated with Formula 1.")))), sec === "appearance" && /*#__PURE__*/React.createElement(Card, {
       title: "Appearance",
       subtitle: "Theme & display"
     }, /*#__PURE__*/React.createElement("div", {
@@ -4766,7 +4759,7 @@ try { (() => {
       className: "row__s"
     }, "Minimize pulses and transitions.")), /*#__PURE__*/React.createElement(Switch, null))), sec === "notifications" && /*#__PURE__*/React.createElement(Card, {
       title: "Notifications",
-      subtitle: "What PitWall pings you about"
+      subtitle: "What Apexline pings you about"
     }, [["Lights out", "5 minutes before every race start", true], ["Battle alerts", "When the AI detects a close fight", true], ["Pit windows", "Strategy & undercut opportunities", true], ["Breaking news", "Major paddock stories", false], ["Qualifying results", "When a session ends", true]].map((r, i) => /*#__PURE__*/React.createElement("div", {
       className: "row",
       key: i
@@ -4828,7 +4821,7 @@ try { (() => {
 
 // ui_kits/pitwall/data.js
 try { (() => {
-/* Shared fake F1 data for the PitWall UI kit — 2026 season flavour.
+/* Shared fake F1 data for the Apexline UI kit — 2026 season flavour.
    Exposed on window.PW_DATA. Not real telemetry; illustrative only. */
 (function () {
   const T = {
@@ -5540,7 +5533,7 @@ try { (() => {
     team: "ferrari",
     color: T.ferrari,
     title: "Ferrari gamble on undercut pays off as Leclerc jumps Norris in Montréal",
-    source: "PitWall Wire",
+    source: "Apexline Wire",
     time: "12m",
     lead: "A bold lap-38 stop vaulted the Monégasque ahead of the McLaren in clean air."
   }, {

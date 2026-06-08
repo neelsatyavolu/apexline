@@ -1,4 +1,4 @@
-/* PitWall Live Racing — single unified window. window.PW.LiveRacing */
+/* Apexline Live Racing — single unified window. window.PW.LiveRacing */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const { Icon, Badge, Button, IconButton, SegmentedControl, FlagStatus, TimingRow, TimingRowHeader,
@@ -72,6 +72,12 @@
     .timing-config { position: absolute; right: var(--space-6); top: 54px; z-index: 60; width: min(360px, calc(100vw - 28px)); max-height: min(520px, calc(100vh - 120px)); overflow: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); padding: var(--space-5); border-radius: var(--radius-md); border: 1px solid var(--border-default); background: var(--surface-overlay); box-shadow: var(--shadow-lg); }
     .timing-config__item { appearance: none; -webkit-appearance: none; display: flex; align-items: center; justify-content: flex-start; gap: var(--space-3); min-height: 28px; padding: 0 var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text-secondary); font-family: var(--font-sans); font-size: var(--text-xs); cursor: pointer; min-width: 0; }
     .timing-config__item[data-active="true"] { color: var(--text-primary); border-color: var(--accent-border); background: var(--accent-quiet); }
+    .timing-status { min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-5); padding: var(--space-8); color: var(--text-secondary); text-align: center; }
+    .timing-status__icon { display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--border-default); color: var(--accent); background: var(--bg-sunken); }
+    .timing-status[data-tone="loading"] .timing-status__icon { animation: pw-pulse-live 1.4s var(--ease-in-out) infinite; }
+    .timing-status[data-tone="error"] .timing-status__icon { color: var(--danger); animation: none; }
+    .timing-status__title { color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-lg); font-weight: 800; line-height: 1; }
+    .timing-status__body { max-width: 260px; color: var(--text-tertiary); font-size: var(--text-sm); line-height: 1.4; }
     .timing-tower { min-width: 640px; }
     .timing-tower__head, .timing-tower__row { display: grid; align-items: center; column-gap: var(--space-3); padding: 0 var(--space-2); }
     .timing-tower__head { position: sticky; top: 0; z-index: 4; height: 32px; background: var(--bg-base); border-bottom: 1px solid var(--border-default); color: var(--text-tertiary); font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: var(--tracking-caps); }
@@ -324,11 +330,11 @@
     .pane__bcbug-lap i { color: var(--text-tertiary); font-style: normal; }
     .pane__feedlabel--bc { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); }
     .pane__ticker { position: relative; z-index: 2; display: flex; flex: none; gap: 0; height: var(--ticker-total-h, 46px); background: linear-gradient(0deg, rgba(6,9,14,0.96), rgba(6,9,14,0.82)); border-top: 1px solid var(--border-default); box-sizing: border-box; }
-    .pane__ticker--top10 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); grid-auto-rows: var(--ticker-row-h, 38px); }
+    .pane__ticker--top15 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); grid-auto-rows: var(--ticker-row-h, 34px); }
     .tick { flex: 1; display: flex; align-items: center; gap: var(--space-5); height: var(--ticker-row-h, 46px); padding: 0 var(--space-6); border-right: 1px solid var(--border-subtle); min-width: 0; box-sizing: border-box; }
-    .pane__ticker--top10 .tick { height: var(--ticker-row-h, 38px); border-bottom: 1px solid var(--border-subtle); }
-    .pane__ticker--top10 .tick:nth-child(5n) { border-right: 0; }
-    .pane__ticker--top10 .tick:nth-last-child(-n + 5) { border-bottom: 0; }
+    .pane__ticker--top15 .tick { height: var(--ticker-row-h, 34px); border-bottom: 1px solid var(--border-subtle); }
+    .pane__ticker--top15 .tick:nth-child(5n) { border-right: 0; }
+    .pane__ticker--top15 .tick:nth-last-child(-n + 5) { border-bottom: 0; }
     .tick:last-child { border-right: 0; }
     .tick__bar { width: 3px; align-self: stretch; min-height: 18px; margin: 7px 0; border-radius: var(--radius-pill); flex: none; }
     .tick__main { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); align-items: baseline; column-gap: var(--space-4); min-width: 0; width: 100%; }
@@ -399,6 +405,26 @@
     .ai-popup { position: absolute; inset: 0; z-index: 90; display: grid; place-items: center; background: rgba(3,5,8,0.58); backdrop-filter: blur(8px); }
     .ai-popup__panel { position: relative; }
     .ai-popup__close { position: absolute; top: 8px; right: 8px; z-index: 4; }
+    .party-tray { position: absolute; z-index: 88; width: min(430px, calc(100vw - 48px)); height: min(560px, calc(100vh - 96px)); display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; border-radius: var(--radius-md); border: 1px solid var(--border-default); background: color-mix(in srgb, var(--surface-overlay) 94%, transparent); box-shadow: var(--shadow-lg); overflow: hidden; backdrop-filter: blur(12px); }
+    .party-tray[data-minimized="true"] { height: auto; grid-template-rows: auto; }
+    .party-tray__head { display: flex; align-items: center; gap: var(--space-5); min-height: 48px; padding: 0 var(--space-6); border-bottom: 1px solid var(--border-subtle); cursor: grab; user-select: none; }
+    .party-tray__title { font-size: var(--text-sm); font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: var(--space-4); }
+    .party-tray__meta { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--text-tertiary); }
+    .party-tray__tabs { display: flex; gap: var(--space-3); padding: var(--space-5) var(--space-6); border-bottom: 1px solid var(--border-subtle); }
+    .party-tray__tab { height: 28px; padding: 0 var(--space-5); border-radius: var(--radius-pill); border: 1px solid var(--border-default); background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--text-xs); cursor: pointer; }
+    .party-tray__tab[data-active="true"] { border-color: var(--accent-border); background: var(--accent-quiet); color: var(--text-primary); }
+    .party-tray__body { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+    .party-panel { min-height: 0; overflow-y: auto; padding: var(--space-6); display: flex; flex-direction: column; gap: var(--space-5); }
+    .party-card { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6); border-radius: var(--radius-sm); background: var(--surface-card); border: 1px solid var(--border-subtle); }
+    .party-card__title { font-size: var(--text-sm); font-weight: 700; color: var(--text-primary); }
+    .party-card__copy { font-size: var(--text-xs); color: var(--text-tertiary); line-height: 1.4; }
+    .party-row { display: flex; gap: var(--space-4); align-items: center; }
+    .party-input { flex: 1; min-width: 0; height: 32px; border-radius: var(--radius-sm); border: 1px solid var(--border-default); background: var(--bg-sunken); color: var(--text-primary); padding: 0 var(--space-5); font: inherit; font-size: var(--text-sm); outline: 0; }
+    .party-chat { flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-4); }
+    .party-msg { max-width: 92%; align-self: flex-start; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); background: var(--surface-card); padding: var(--space-4) var(--space-5); font-size: var(--text-sm); color: var(--text-secondary); }
+    .party-msg[data-me="true"] { align-self: flex-end; border-color: var(--accent-border); background: var(--accent-quiet); color: var(--text-primary); }
+    .party-msg__name { display: block; margin-bottom: 2px; font-size: var(--text-2xs); color: var(--text-tertiary); font-family: var(--font-mono); }
+    .party-tray .ins__chat { min-height: 0; height: 100%; }
 
     /* Battle toast */
     .toast { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); z-index: 40; display: flex; align-items: center; gap: var(--space-6); padding: var(--space-6) var(--space-7); border-radius: var(--radius-md); background: var(--surface-overlay); border: 1px solid var(--accent-border); box-shadow: var(--shadow-lg), var(--glow-accent); backdrop-filter: blur(var(--blur-md, 14px)); animation: pw-toast-in var(--dur-base) var(--ease-out); }
@@ -488,15 +514,28 @@
     return name === "Driver Focus" ? "Intelligent" : name;
   }
   const LAYOUTS = {
-    "Intelligent": "focus", "Pit Wall Classic": "quad", "Battle Mode": "battle",
+    "Intelligent": "focus", "Apexline Classic": "quad", "Pit Wall Classic": "quad", "Battle Mode": "battle",
     "Data Overload": "data", "Minimal Clean": "focus",
   };
   const SYNC_STORAGE_KEY = "pw-sync-settings";
   const TIMING_OFFSET_STORAGE_KEY = "pw-replay-timing-offset-v2";
+  const PARTY_TRAY_STORAGE_KEY = "pw-party-tray-position";
   const DEFAULT_REPLAY_TIMING_OFFSET = -8;
   const DEFAULT_WORLD_SYNC_TARGET = 36;
   const DEFAULT_NON_WORLD_SYNC_OFFSET = 4;
   const SYNC_EPSILON = 0.075;
+
+  function readPartyTrayPosition() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PARTY_TRAY_STORAGE_KEY) || "{}");
+      return {
+        x: clampPanelSize(saved.x == null ? window.innerWidth - 472 : saved.x, 16, Math.max(16, window.innerWidth - 448)),
+        y: clampPanelSize(saved.y == null ? 72 : saved.y, 56, Math.max(56, window.innerHeight - 240)),
+      };
+    } catch {
+      return { x: Math.max(16, window.innerWidth - 472), y: 72 };
+    }
+  }
 
   function sessionFlagFromClock(clock, fallback) {
     const fallbackFlag = fallback || { status: "green", label: "Session" };
@@ -741,7 +780,7 @@
     ]).filter(Boolean)));
     return {
       ...baseContext,
-      source: sourceLabel || baseContext.source || "PitWall active session timing",
+      source: sourceLabel || baseContext.source || "Apexline active session timing",
       mode,
       generatedAt: new Date().toISOString(),
       race: { ...(baseContext.race || {}), ...(baseData.race || {}), weather },
@@ -1112,6 +1151,35 @@
     if (text.includes("wet")) return "var(--tyre-wet)";
     return "var(--border-default)";
   }
+  function hasTimingValue(value) {
+    if (Array.isArray(value)) return value.some(hasTimingValue);
+    if (value && typeof value === "object") return Object.values(value).some(hasTimingValue);
+    if (typeof value === "number") return Number.isFinite(value);
+    if (typeof value === "string") {
+      const text = value.trim();
+      return Boolean(text && text !== "—");
+    }
+    return value != null;
+  }
+  function hasRealTimingRows(rows) {
+    return Array.isArray(rows) && rows.some((row) => {
+      if (!row || typeof row !== "object") return false;
+      const code = String(row.code || "").trim();
+      if (!code) return false;
+      return [
+        row.pos,
+        row.last,
+        row.best,
+        row.gap,
+        row.interval,
+        row.comp,
+        row.age,
+        row.sectors,
+        row.sectorTimes,
+        row.telemetry,
+      ].some(hasTimingValue);
+    });
+  }
   function TimingColumnMenu({ columns, onToggle }) {
     return (
       <div className="timing-config">
@@ -1163,6 +1231,15 @@
     };
     return <button ref={setRowRef} type="button" className="timing-tower__row" data-selected={selected} data-elimination={elimination ? "true" : "false"} data-moving={moving ? "true" : "false"} style={timingGridStyle(columns, sectorCounts)} onClick={onClick}>{columns.map((id) => <span key={id}>{cells[id]}</span>)}</button>;
   }
+  function TimingTowerStatus({ tone = "loading", title, body }) {
+    return (
+      <div className="timing-status" data-tone={tone} role={tone === "error" ? "status" : "progressbar"} aria-label={title}>
+        <span className="timing-status__icon"><Icon name={tone === "error" ? "alert" : "timer"} size={18} /></span>
+        <div className="timing-status__title">{title}</div>
+        {body && <div className="timing-status__body">{body}</div>}
+      </div>
+    );
+  }
   function RaceControlMessages({ messages }) {
     const visible = Array.isArray(messages) ? messages.slice(-4).reverse() : [];
     if (!visible.length) return null;
@@ -1193,6 +1270,7 @@
 	    const selected = localStorage.getItem("pw-ai-model") || "";
 	    if (!selected || selected === "local") return payload;
 	    const [provider, ...modelParts] = selected.split(":");
+	    if (provider !== "codex" && provider !== "grok") return payload;
 	    const model = modelParts.join(":");
 	    return provider && model ? { ...payload, provider, model } : payload;
 	  }
@@ -1421,7 +1499,8 @@
       headers: payload.headers ? Object.keys(payload.headers) : undefined,
     };
     console.debug("[pitwall]", area, safe);
-    window.pitwall?.debug?.log?.(area, safe).catch?.(() => {});
+    const result = window.pitwall?.debug?.log?.(area, safe);
+    result?.catch?.(() => {});
   }
   function installPitWallF1TvShakaNetworking() {
     if (window.__pitwallF1TvShakaNetworkingInstalled || !window.shaka?.net?.NetworkingEngine || !window.pitwall?.f1tv?.mediaFetch) return;
@@ -1476,14 +1555,14 @@
     NetworkingEngine.registerScheme("https", plugin, priority, false);
     logPitWallDebug("player.media-fetch-installed", { scheme: "https" });
   }
-  function playerErrorMessage(error, fallback = "PitWall could not load this F1 TV stream.") {
+  function playerErrorMessage(error, fallback = "Apexline could not load this F1 TV stream.") {
     const detail = error?.detail || error;
     if (detail?.code) {
       const dataItems = Array.isArray(detail.data) ? detail.data.map((item) => String(item || "")) : [];
       const licenseHint = dataItems.find((item) => /F1 TV license rejected|ACN_|KeyOS|Licence Acquisition/i.test(item));
       if (licenseHint) {
         const cause = /ACN_4002|371000005/i.test(licenseHint)
-          ? " PitWall reached the stream, but F1 TV's production Widevine server rejected this Electron build/license request. A production VMP-signed build is required for clean playback."
+          ? " Apexline reached the stream, but F1 TV's production Widevine server rejected this Electron build/license request. A production VMP-signed build is required for clean playback."
           : "";
         return `${licenseHint}${cause}`;
       }
@@ -1929,7 +2008,7 @@
     replaySync, onReplayToggle, onReplaySeek, onSurfaceToggle, onSyncAll, onPlayerReady, streamStatus, resolving,
     syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset, timingRows, sessionKind }) {
     const paneRef = React.useRef(null);
-    const [tickerCanFitTop10, setTickerCanFitTop10] = React.useState(false);
+    const [tickerCanFitTop15, setTickerCanFitTop15] = React.useState(false);
     const [tickerRowHeight, setTickerRowHeight] = React.useState(46);
     const [tickerCodeSize, setTickerCodeSize] = React.useState(14);
     const descriptor = streamDescriptor(streamUrl);
@@ -1939,10 +2018,10 @@
       if (!node || typeof ResizeObserver === "undefined") return undefined;
       const update = () => {
         const rect = node.getBoundingClientRect();
-        const canFitTop10 = rect.width >= 920 && rect.height >= 390 && sourceRows.length >= 10;
-        const rowCount = canFitTop10 ? 2 : 1;
-        const rowHeight = clampPanelSize((rect.height - 300) / rowCount, canFitTop10 ? 38 : 46, canFitTop10 ? 64 : 74);
-        setTickerCanFitTop10(canFitTop10);
+        const canFitTop15 = rect.width >= 920 && rect.height >= 390 && sourceRows.length >= 15;
+        const rowCount = canFitTop15 ? 3 : 1;
+        const rowHeight = clampPanelSize((rect.height - 300) / rowCount, canFitTop15 ? 30 : 46, canFitTop15 ? 42 : 74);
+        setTickerCanFitTop15(canFitTop15);
         setTickerRowHeight(rowHeight);
         setTickerCodeSize(clampPanelSize(rowHeight * 0.34, 14, 18));
       };
@@ -1951,8 +2030,8 @@
       observer.observe(node);
       return () => observer.disconnect();
     }, [sourceRows.length]);
-    const tickerRowLimit = tickerCanFitTop10 && sourceRows.length >= 10 ? 10 : 5;
-    const tickerRowCount = tickerRowLimit === 10 ? 2 : 1;
+    const tickerRowLimit = tickerCanFitTop15 && sourceRows.length >= 15 ? 15 : 5;
+    const tickerRowCount = tickerRowLimit === 15 ? 3 : 1;
     const tickerTotalHeight = tickerRowHeight * tickerRowCount;
     const top = sourceRows.slice(0, tickerRowLimit);
     const paneStyle = { ...(style || {}), "--ticker-row-h": `${tickerRowHeight}px`, "--ticker-total-h": `${tickerTotalHeight}px`, "--ticker-code-size": `${tickerCodeSize}px`, "--ticker-meta-size": `${clampPanelSize(tickerCodeSize * 0.68, 10, 12)}px` };
@@ -2003,7 +2082,7 @@
             <div className="replay-empty">
               <span className="replay-empty__eyebrow"><Icon name="timer" size={13} /> {hasCurrentLiveSession ? "F1 TV feed not loaded" : "No current live session"}</span>
               <div className="replay-empty__title">{hasCurrentLiveSession ? "Choose the live F1 TV feed" : "Load a past session"}</div>
-              <div className="replay-empty__body">{hasCurrentLiveSession ? "Load the current session and PitWall will resolve the clean F1 TV player directly into this pane." : "Pick any race, qualifying, or practice replay and PitWall will load it into the main F1 TV pane. MultiViewer login is separate from PitWall, so connect F1 TV here once if prompted."}</div>
+              <div className="replay-empty__body">{hasCurrentLiveSession ? "Load the current session and Apexline will resolve the clean F1 TV player directly into this pane." : "Pick any race, qualifying, or practice replay and Apexline will load it into the main F1 TV pane. MultiViewer login is separate from Apexline, so connect F1 TV here once if prompted."}</div>
               {streamStatus && <div className="stream-modal__hint">{streamStatus}</div>}
               {replayControls}
               <div className="replay-picker__actions">
@@ -2015,7 +2094,7 @@
           )}
         </div>
         {/* broadcast lower-third timing ticker */}
-        <div className={`pane__ticker ${tickerRowLimit === 10 ? "pane__ticker--top10" : ""}`}>
+        <div className={`pane__ticker ${tickerRowLimit === 15 ? "pane__ticker--top15" : ""}`}>
           {top.map((t) => {
             const d = D.byCode[t.code] || {};
             const tyreLabel = tickerTyreLabel(t);
@@ -2175,6 +2254,19 @@
     const [onboardOverrides, setOnboardOverrides] = React.useState({});
     const [retainedPanes, setRetainedPanes] = React.useState([]);
     const [aiPopupOpen, setAiPopupOpen] = React.useState(false);
+    const [partyTrayOpen, setPartyTrayOpen] = React.useState(false);
+    const [partyTrayMinimized, setPartyTrayMinimized] = React.useState(false);
+    const [partyTrayPosition, setPartyTrayPosition] = React.useState(readPartyTrayPosition);
+    const [partyTab, setPartyTab] = React.useState("Party");
+    const [partyIdentity, setPartyIdentity] = React.useState(null);
+    const [partyRoom, setPartyRoom] = React.useState(null);
+    const [partyMembers, setPartyMembers] = React.useState([]);
+    const [partyMessages, setPartyMessages] = React.useState([]);
+    const [partyDraft, setPartyDraft] = React.useState("");
+    const [partyJoinCode, setPartyJoinCode] = React.useState("");
+    const [partyStatus, setPartyStatus] = React.useState("Watch Party ready");
+    const [partySyncRole, setPartySyncRole] = React.useState("host");
+    const [partyLastSequence, setPartyLastSequence] = React.useState(0);
     const [sessionLibraryOpen, setSessionLibraryOpen] = React.useState(false);
     const bodyRef = React.useRef(null);
     const centerRef = React.useRef(null);
@@ -2186,6 +2278,7 @@
     const replayTimingRequestRef = React.useRef(0);
     const liveTimingRequestRef = React.useRef(0);
     const liveTimingInFlightRef = React.useRef(false);
+    const partyDragRef = React.useRef(null);
     const intelligentCodesRef = React.useRef([]);
     const debugAutoF1TvLoaded = React.useRef(false);
     const [replaySync, setReplaySync] = React.useState({ mode: "live", playing: true, masterTime: 0, duration: 0, masterKey: "WORLD" });
@@ -2204,6 +2297,22 @@
     const telemetryDefault = livePrefs.telemetryDefault !== false;
     const currentSeason = String(D.seasonSummary?.season || new Date().getFullYear());
     const selectableSeasons = Array.from(new Set([currentSeason, String(new Date().getFullYear()), String(new Date().getFullYear() - 1), String(new Date().getFullYear() - 2), "2024", "2023", "2022", "2021", "2020", "2019", "2018"])).filter(Boolean);
+    const f1TvSessionLibrary = f1TvLibrary || localF1TvLibrary();
+    const f1TvRaces = f1TvSessionLibrary.races || [];
+    const currentF1TvWeekendIndex = (() => {
+      const index = f1TvRaces.findIndex((race) => race.status === "live" || race.status === "upcoming");
+      return index >= 0 ? index : Math.max(0, f1TvRaces.length - 1);
+    })();
+    const visibleF1TvRaces = f1TvRaces.length ? f1TvRaces.slice(0, currentF1TvWeekendIndex + 1) : [];
+    const selectedF1TvRace = f1TvRaces.find((race) => raceLibraryId(race) === f1TvRaceId) || visibleF1TvRaces.at(-1) || f1TvRaces[0] || null;
+    const standardF1TvSessions = ["Practice 1", "Practice 2", "Practice 3", "Sprint Qualifying", "Sprint", "Qualifying", "Race"];
+    const selectedRaceSessions = selectedF1TvRace?.sessions?.length ? orderedF1TvSessions(selectedF1TvRace.sessions).map((session) => session.kind) : standardF1TvSessions;
+    const f1TvSessionOptions = standardF1TvSessions.filter((kind) => selectedRaceSessions.includes(kind)).concat(selectedRaceSessions.filter((kind) => !standardF1TvSessions.includes(kind)));
+    const sessionLibrarySessions = selectedF1TvRace?.sessions?.length
+      ? orderedF1TvSessions(selectedF1TvRace.sessions)
+      : f1TvSessionOptions.map((kind) => ({ kind, status: "unknown" }));
+    const selectedF1TvSessionMeta = sessionLibrarySessions.find((session) => session.kind === f1TvSessionKind) || { kind: f1TvSessionKind, status: "unknown" };
+    const canResolveSelectedF1TvSession = canLoadF1TvSession(selectedF1TvRace, selectedF1TvSessionMeta);
 
     React.useEffect(() => {
       const t = setTimeout(() => setShowToast(false), 6500);
@@ -2221,6 +2330,9 @@
     React.useEffect(() => {
       localStorage.setItem(TIMING_OFFSET_STORAGE_KEY, String(clampReplayTimingOffset(replayTimingOffset)));
     }, [replayTimingOffset]);
+    React.useEffect(() => {
+      localStorage.setItem(PARTY_TRAY_STORAGE_KEY, JSON.stringify(partyTrayPosition));
+    }, [partyTrayPosition]);
     React.useEffect(() => {
       const normalized = normalizeLivePanelSizes(panelSizes);
       const serialized = JSON.stringify(normalized);
@@ -2245,6 +2357,37 @@
       const timer = setInterval(() => setClockTick(Date.now()), CLOCK_TICK_INTERVAL_MS);
       return () => clearInterval(timer);
     }, []);
+
+    React.useEffect(() => {
+      if (!window.PW_SOCIAL?.bootstrap) return undefined;
+      let cancelled = false;
+      window.PW_SOCIAL.bootstrap(profile)
+        .then((identity) => {
+          if (!cancelled) {
+            setPartyIdentity(identity);
+            setPartyStatus(identity?.offline ? "Watch Party offline until backend is reachable" : "Watch Party ready");
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) setPartyStatus(cleanPitWallError(error, "Watch Party unavailable"));
+        });
+      return () => { cancelled = true; };
+    }, [profile.name, profile.profileImageUrl]);
+
+    React.useEffect(() => {
+      if (!window.PW_SOCIAL?.on) return undefined;
+      return window.PW_SOCIAL.on((event) => {
+        if (event.type === "identity") setPartyIdentity(event.identity);
+        if (event.type === "room") {
+          setPartyRoom(event.room);
+          if (event.room) setPartyStatus(`Room ${event.room.code || event.room.id} ready`);
+        }
+        if (event.type === "presence") setPartyMembers(event.members || []);
+        if (event.type === "chat") setPartyMessages((messages) => [...messages.slice(-79), event.message]);
+        if (event.type === "sync") applyRemotePartySync(event.message);
+        if (event.type === "status") setPartyStatus(event.status || "Watch Party status updated");
+      });
+    }, [replaySync.mode, replaySync.masterKey, resolvedF1TvContent?.contentId, selectedF1TvRace?.meetingKey, f1TvSessionKind, syncSettings]);
 
     function configureStream(key, label) {
       setStreamTarget({ key, label });
@@ -2289,6 +2432,130 @@
       window.PW_SYNC?.syncReplayPlayers?.(players, masterTime, { seekThreshold: 0.5, rateThreshold: 0.075 });
     }
 
+    function currentPartyContext() {
+      return {
+        mode: replaySync.mode,
+        raceName: activeRaceName,
+        meetingKey: selectedF1TvRace?.meetingKey,
+        sessionKind: activeSessionKind,
+        contentId: resolvedF1TvContent?.contentId,
+      };
+    }
+
+    function partyContentFingerprint() {
+      return window.PW_SOCIAL?.contentFingerprint?.(currentPartyContext()) || [replaySync.mode, selectedF1TvRace?.meetingKey || activeRaceName, activeSessionKind, resolvedF1TvContent?.contentId].filter(Boolean).join(":");
+    }
+
+    async function createWatchParty() {
+      setPartyTrayOpen(true);
+      setPartyTab("Party");
+      setPartySyncRole("host");
+      try {
+        const room = await window.PW_SOCIAL?.createRoom?.(currentPartyContext());
+        setPartyRoom(room || null);
+        setPartyStatus(room?.code ? `Invite code ${room.code}` : "Watch Party room created");
+        publishHostSync();
+      } catch (error) {
+        setPartyStatus(cleanPitWallError(error, "Could not create Watch Party"));
+      }
+    }
+
+    async function joinWatchParty() {
+      const code = partyJoinCode.trim();
+      if (!code) return;
+      setPartyTrayOpen(true);
+      setPartyTab("Party");
+      setPartySyncRole("guest");
+      try {
+        const room = await window.PW_SOCIAL?.joinRoom?.(code);
+        setPartyRoom(room || null);
+        setPartyStatus(room?.code ? `Joined room ${room.code}` : "Joined Watch Party");
+      } catch (error) {
+        setPartyStatus(cleanPitWallError(error, "Could not join Watch Party"));
+      }
+    }
+
+    function sendPartyChat() {
+      const text = partyDraft.trim();
+      if (!text) return;
+      const sent = window.PW_SOCIAL?.sendChat?.(text);
+      if (sent) setPartyDraft("");
+      else setPartyStatus("Join a Watch Party before sending chat.");
+    }
+
+    function publishHostSync() {
+      if (partySyncRole !== "host") return null;
+      const master = playerRefs.current[replaySync.masterKey || "WORLD"];
+      const masterTime = replaySync.mode === "replay"
+        ? Math.max(0, Number.isFinite(master?.currentTime) ? master.currentTime : replayClockRef.current || replaySync.masterTime || 0)
+        : 0;
+      const message = window.PW_SOCIAL?.publishHostSync?.({
+        mode: replaySync.mode,
+        contentFingerprint: partyContentFingerprint(),
+        masterTime,
+        playing: replaySync.playing !== false,
+        targetLatency: syncTargetFor("WORLD"),
+      });
+      if (message?.sequence) {
+        setPartyLastSequence(message.sequence);
+        setPartyStatus("Host sync sent");
+      }
+      return message;
+    }
+
+    function applyRemotePartySync(message = {}) {
+      if (partySyncRole === "host") return;
+      const expected = partyContentFingerprint();
+      const state = { lastSequence: partyLastSequence, contentFingerprint: expected, targetLatency: syncTargetFor("WORLD") };
+      if (!window.PW_SYNC?.partySync?.shouldApply?.(message, state)) {
+        if (message.contentFingerprint && expected && message.contentFingerprint !== expected) {
+          setPartyStatus("Load the same session to sync with this Watch Party.");
+        }
+        return;
+      }
+      setPartyLastSequence(Number(message.sequence || partyLastSequence));
+      if (message.mode === "replay") {
+        const decision = window.PW_SYNC.partySync.replayDecision(message, { masterTime: replaySync.masterTime });
+        seekReplayPlayers(decision.masterTime);
+        setReplaySync((sync) => ({ ...sync, mode: "replay", playing: decision.playing, masterTime: decision.masterTime }));
+        Object.values(playerRefs.current).forEach((video) => {
+          if (decision.playing) video.play().catch(() => {});
+          else video.pause();
+        });
+        setPartyStatus("Synced to host replay");
+        return;
+      }
+      const decision = window.PW_SYNC.partySync.liveDecision(message, { liveLatency: syncMetrics.WORLD?.liveLatency, targetLatency: syncTargetFor("WORLD") });
+      setSyncSettings((settings) => ({ ...settings, worldTarget: clampSyncLatency(decision.targetLatency) }));
+      setPartyStatus("Synced to host live latency");
+    }
+
+    function startPartyTrayDrag(event) {
+      if (event.button != null && event.button !== 0) return;
+      const start = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        left: partyTrayPosition.x,
+        top: partyTrayPosition.y,
+      };
+      partyDragRef.current = start;
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    }
+
+    function movePartyTray(event) {
+      const drag = partyDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const nextX = clampPanelSize(drag.left + event.clientX - drag.x, 12, Math.max(12, window.innerWidth - 448));
+      const nextY = clampPanelSize(drag.top + event.clientY - drag.y, 56, Math.max(56, window.innerHeight - 180));
+      setPartyTrayPosition({ x: nextX, y: nextY });
+    }
+
+    function stopPartyTrayDrag(event) {
+      if (partyDragRef.current?.pointerId === event.pointerId) partyDragRef.current = null;
+    }
+
     function seekReplayPlayers(time) {
       const nextTime = Math.max(0, Number(time || 0));
       const masterKey = replaySync.masterKey || "WORLD";
@@ -2298,6 +2565,15 @@
       });
       setReplaySync((state) => ({ ...state, masterTime: nextTime }));
       syncReplayPlayers(nextTime);
+      if (partyRoom && partySyncRole === "host") {
+        window.PW_SOCIAL?.publishHostSync?.({
+          mode: "replay",
+          contentFingerprint: partyContentFingerprint(),
+          masterTime: nextTime,
+          playing: replaySync.playing !== false,
+          targetLatency: syncTargetFor("WORLD"),
+        });
+      }
     }
 
     function toggleReplayPlayback() {
@@ -2307,6 +2583,15 @@
           if (playing) video.play().catch(() => {});
           else video.pause();
         });
+        if (partyRoom && partySyncRole === "host") {
+          window.PW_SOCIAL?.publishHostSync?.({
+            mode: "replay",
+            contentFingerprint: partyContentFingerprint(),
+            masterTime: replayClockRef.current || state.masterTime || 0,
+            playing,
+            targetLatency: syncTargetFor("WORLD"),
+          });
+        }
         return { ...state, playing };
       });
     }
@@ -2587,7 +2872,7 @@
       setStreamStatus("Checking F1 TV session...");
       const status = await window.pitwall.f1tv.probeStatus({ timeoutMs: 1600 });
       if (status?.authenticated) return true;
-      setStreamStatus(status?.browserSession ? "F1 TV browser cookies exist, but the playback token is missing. Sign in with email and password in Settings, then retry." : "F1 TV is not connected in this PitWall app profile. MultiViewer login is separate. Connect F1 TV, then load the session again.");
+      setStreamStatus(status?.browserSession ? "F1 TV browser cookies exist, but the playback token is missing. Sign in with email and password in Settings, then retry." : "F1 TV is not connected in this Apexline app profile. MultiViewer login is separate. Connect F1 TV, then load the session again.");
       return false;
     }
 
@@ -2797,9 +3082,10 @@
     function activeTimingRows() {
       const replayRows = Array.isArray(replayTimingData?.timing) ? replayTimingData.timing : [];
       const liveRows = Array.isArray(liveTimingData?.timing) ? liveTimingData.timing : [];
-      return replaySync.mode === "replay"
-        ? (replayRows.length ? replayRows : D.timing)
-        : (liveRows.length ? liveRows : D.timing);
+      const hasWorldSource = Boolean(streamDescriptor(streamSources.WORLD || preferredMainF1TvFeed(resolvedF1TvContent?.feeds || [])));
+      if (replaySync.mode === "replay") return replayRows;
+      if (hasWorldSource || liveTimingData) return liveRows;
+      return D.timing;
     }
 
     function activeAiSnapshot() {
@@ -2856,23 +3142,8 @@
       return liveOnboardCodeForSlot(slot, fallback, onboardOverrides, D.byCode);
     }
 
-    const f1TvSessionLibrary = f1TvLibrary || localF1TvLibrary();
-    const f1TvRaces = f1TvSessionLibrary.races || [];
-    const currentF1TvWeekendIndex = (() => {
-      const index = f1TvRaces.findIndex((race) => race.status === "live" || race.status === "upcoming");
-      return index >= 0 ? index : Math.max(0, f1TvRaces.length - 1);
-    })();
-    const visibleF1TvRaces = f1TvRaces.length ? f1TvRaces.slice(0, currentF1TvWeekendIndex + 1) : [];
-    const selectedF1TvRace = f1TvRaces.find((race) => raceLibraryId(race) === f1TvRaceId) || visibleF1TvRaces.at(-1) || f1TvRaces[0] || null;
-    const standardF1TvSessions = ["Practice 1", "Practice 2", "Practice 3", "Sprint Qualifying", "Sprint", "Qualifying", "Race"];
-    const selectedRaceSessions = selectedF1TvRace?.sessions?.length ? orderedF1TvSessions(selectedF1TvRace.sessions).map((session) => session.kind) : standardF1TvSessions;
-    const f1TvSessionOptions = standardF1TvSessions.filter((kind) => selectedRaceSessions.includes(kind)).concat(selectedRaceSessions.filter((kind) => !standardF1TvSessions.includes(kind)));
-    const sessionLibrarySessions = selectedF1TvRace?.sessions?.length
-      ? orderedF1TvSessions(selectedF1TvRace.sessions)
-      : f1TvSessionOptions.map((kind) => ({ kind, status: "unknown" }));
-    const selectedF1TvSessionMeta = sessionLibrarySessions.find((session) => session.kind === f1TvSessionKind) || { kind: f1TvSessionKind, status: "unknown" };
-    const canResolveSelectedF1TvSession = canLoadF1TvSession(selectedF1TvRace, selectedF1TvSessionMeta);
     const timingRows = activeTimingRows();
+    const timingHasRealRows = hasRealTimingRows(timingRows);
     const timingMiniSectorCounts = React.useMemo(() => timingSectorCounts(timingRows), [timingRows]);
     const { registerTimingRow, movingRows } = useTimingRowMotion(timingRows);
     const selectedCode = selected || timingRows[0]?.code || D.standings[0]?.code || D.drivers[0]?.code || "";
@@ -2889,6 +3160,12 @@
       ? (replayTimingData?.sessionKind || f1TvSessionKind)
       : liveSessionKind;
     const sessionClock = replaySync.mode === "replay" ? replayTimingData?.sessionClock : liveTimingData?.sessionClock;
+    const activeTimingData = replaySync.mode === "replay" ? replayTimingData : liveTimingData;
+    const timingUnavailable = !timingHasRealRows && activeTimingData?.ok === false;
+    const timingLoading = !timingHasRealRows && !timingUnavailable && !pendingF1TvSelection;
+    const timingStatusBody = timingUnavailable
+      ? (activeTimingData?.message || activeTimingData?.sourceLabel || "Timing is unavailable.")
+      : (replaySync.mode === "replay" ? "Replay timing is syncing with the selected session." : "Live timing is warming up for the current feed.");
     const qualifyingPhase = qualifyingPhaseFromSession({ sessionKind: activeSessionKind, sessionClock, rowCount: timingRows.length });
     const focusCodes = intelligentOnboardCodes({
       timingRows,
@@ -3016,7 +3293,7 @@
         try {
           const data = await window.pitwall.data.liveTiming({ targetLatencySeconds: syncTargetFor("WORLD") });
           if (cancelled || requestId !== liveTimingRequestRef.current) return;
-          setLiveTimingData((current) => data?.timing?.length ? data : current?.timing?.length ? current : data || null);
+          setLiveTimingData((current) => hasRealTimingRows(data?.timing) ? data : hasRealTimingRows(current?.timing) ? current : data || null);
           logPitWallDebug("live.timing", {
             rowCount: data?.timing?.length || 0,
             ok: Boolean(data?.ok),
@@ -3064,7 +3341,7 @@
         try {
           const data = await window.pitwall.data.replayTiming({ meetingKey, sessionKind: f1TvSessionKind, elapsedSeconds: timingElapsedSeconds, videoStartUtc, videoStartArchiveSeconds });
           if (cancelled || requestId !== replayTimingRequestRef.current) return;
-          setReplayTimingData((current) => data?.timing?.length ? data : current?.timing?.length ? current : data || null);
+          setReplayTimingData((current) => hasRealTimingRows(data?.timing) ? data : hasRealTimingRows(current?.timing) ? current : data || null);
           logPitWallDebug("replay.timing", {
             meetingKey,
             sessionKind: f1TvSessionKind,
@@ -3170,6 +3447,85 @@
     const parkedPanes = retainedPanes.filter((pane) => !activePaneMap.has(pane.paneId)).map((pane) => ({ ...pane, visible: false }));
     const panesToRender = activePanes.concat(parkedPanes);
 
+    function renderEngineerChat() {
+      return (
+        <div className="ins__chat">
+          <div className="ins__msgs" aria-busy={chatThinking ? "true" : "false"}>
+            {chatMessages.map((msg, i) => <AiMessage message={msg} key={i} />)}
+            {chatThinking && <AiMessage message={{ who: "ai", text: "Engineer is thinking", thinking: true }} />}
+          </div>
+          <div className="ins__compose">
+            <input className="ins__input" placeholder="Ask about strategy, gaps, projections..." value={chatDraft}
+              onChange={(e) => setChatDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendChat(); }} />
+            <IconButton variant="accent" label="Send" onClick={sendChat}><Icon name="chevronRight" size={16} /></IconButton>
+          </div>
+        </div>
+      );
+    }
+
+    function renderPartyPanel() {
+      const identityName = partyIdentity?.displayName || profile.name || "Apexline fan";
+      const inviteCode = partyRoom?.code || "";
+      return (
+        <div className="party-panel">
+          <div className="party-card">
+            <div className="party-card__title">Watch Party</div>
+            <div className="party-card__copy">{partyStatus}</div>
+            <div className="party-row">
+              <Button variant="primary" size="sm" onClick={createWatchParty} iconLeft={<Icon name="radio" size={14} />}>Create</Button>
+              <Button variant="secondary" size="sm" onClick={publishHostSync} disabled={!partyRoom || partySyncRole !== "host"} iconLeft={<Icon name="timer" size={14} />}>Resync</Button>
+              <Button variant="ghost" size="sm" onClick={() => { window.PW_SOCIAL?.leaveRoom?.(); setPartyRoom(null); setPartyMembers([]); }}>Leave</Button>
+            </div>
+            <div className="party-row">
+              <input className="party-input" value={partyJoinCode} placeholder="Room code" onChange={(e) => setPartyJoinCode(e.target.value.toUpperCase())} onKeyDown={(e) => { if (e.key === "Enter") joinWatchParty(); }} />
+              <Button variant="secondary" size="sm" onClick={joinWatchParty}>Join</Button>
+            </div>
+            {inviteCode && <div className="party-card__copy">Invite code: <b>{inviteCode}</b></div>}
+            <div className="party-card__copy">You: {identityName} · Friend code: {partyIdentity?.friendCode || "pending"}</div>
+            <div className="party-card__copy">Role: {partySyncRole === "host" ? "Host sync" : "Guest sync"} · Members: {Math.max(1, partyMembers.length || (partyRoom ? 1 : 0))}</div>
+          </div>
+          <div className="party-chat">
+            {partyMessages.length ? partyMessages.map((message) => (
+              <div className="party-msg" data-me={String(message.userId === partyIdentity?.userId)} key={message.id || `${message.sentAt}:${message.text}`}>
+                <span className="party-msg__name">{message.name || "Apexline fan"}</span>
+                {message.text}
+              </div>
+            )) : <div className="party-card__copy">Party chat will appear here once the room is connected.</div>}
+          </div>
+          <div className="party-row">
+            <input className="party-input" value={partyDraft} placeholder="Chat with the party..." onChange={(e) => setPartyDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendPartyChat(); }} />
+            <IconButton variant="accent" label="Send party chat" onClick={sendPartyChat}><Icon name="chevronRight" size={16} /></IconButton>
+          </div>
+        </div>
+      );
+    }
+
+    function renderPartyTray() {
+      if (!partyTrayOpen) return null;
+      return (
+        <div className="party-tray" data-minimized={String(partyTrayMinimized)} style={{ left: partyTrayPosition.x, top: partyTrayPosition.y }}>
+          <div className="party-tray__head" onPointerDown={startPartyTrayDrag} onPointerMove={movePartyTray} onPointerUp={stopPartyTrayDrag} onPointerCancel={stopPartyTrayDrag}>
+            <span className="party-tray__title"><Icon name={partyTab === "Engineer" ? "sparkles" : "radio"} size={14} /> {partyTab}</span>
+            <span className="party-tray__meta">{partyRoom?.code || partyIdentity?.friendCode || "offline"}</span>
+            <IconButton variant="ghost" size="sm" label="Minimize Watch Party" onClick={(event) => { event.stopPropagation(); setPartyTrayMinimized((value) => !value); }}><Icon name="minus" size={14} /></IconButton>
+            <IconButton variant="ghost" size="sm" label="Close Watch Party" onClick={(event) => { event.stopPropagation(); setPartyTrayOpen(false); }}><Icon name="close" size={14} /></IconButton>
+          </div>
+          {!partyTrayMinimized && (
+            <>
+              <div className="party-tray__tabs">
+                {["Engineer", "Party"].map((tab) => (
+                  <button className="party-tray__tab" type="button" data-active={String(partyTab === tab)} key={tab} onClick={() => setPartyTab(tab)}>{tab}</button>
+                ))}
+              </div>
+              <div className="party-tray__body">
+                {partyTab === "Engineer" ? renderEngineerChat() : renderPartyPanel()}
+              </div>
+            </>
+          )}
+        </div>
+      );
+    }
+
     function renderInsightsPane(popup = false) {
       return (
         <div className={"live__insights" + (popup ? " live__insights--popup" : "")}>
@@ -3201,15 +3557,7 @@
           </div>
           <div className="ins__chat">
             <div className="ins__hd"><h3><Icon name="radio" size={14} /> Ask the engineer</h3><span className="ins__model" style={{ marginLeft: "auto" }}>What-if ⌥W</span></div>
-            <div className="ins__msgs" aria-busy={chatThinking ? "true" : "false"}>
-              {chatMessages.map((msg, i) => <AiMessage message={msg} key={i} />)}
-              {chatThinking && <AiMessage message={{ who: "ai", text: "Engineer is thinking", thinking: true }} />}
-            </div>
-            <div className="ins__compose">
-              <input className="ins__input" placeholder="Ask about strategy, gaps, projections…" value={chatDraft}
-                onChange={(e) => setChatDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendChat(); }} />
-              <IconButton variant="accent" label="Send" onClick={sendChat}><Icon name="chevronRight" size={16} /></IconButton>
-            </div>
+            {renderEngineerChat()}
           </div>
         </div>
       );
@@ -3297,7 +3645,7 @@
         <div className="live__bar">
           <div className="live__barleft">
             <div className="live__traffic"><span style={{ background: "#ff5f57" }} onClick={onExit} /><span style={{ background: "#febc2e" }} /><span style={{ background: "#28c840" }} /></div>
-            <span className="live__brand">PIT<i>WALL</i></span>
+            <span className="live__brand">APEX<i>LINE</i></span>
             <div className="live__race">
               <Badge tone={hasCurrentLiveSession ? "live" : "neutral"}>{hasCurrentLiveSession ? "LIVE" : "REPLAY"}</Badge>
               <span className="live__race-name">{activeRaceName}</span>
@@ -3317,6 +3665,7 @@
           <div className="live__barright">
             {layout === "focus" && <Button variant="secondary" size="sm" onClick={() => setAiPopupOpen(true)} iconLeft={<Icon name="sparkles" size={14} />}>AI</Button>}
             <Button variant="primary" size="sm" onClick={openSessionLibrary} iconLeft={<Icon name="play" size={14} />}>Load past session</Button>
+            <Button variant={partyTrayOpen ? "secondary" : "ghost"} size="sm" onClick={() => { setPartyTrayOpen(true); setPartyTab("Party"); }} iconLeft={<Icon name="radio" size={14} />}>Watch Party</Button>
             <span className="live__syncwrap">
               <Button variant={syncMenuOpen ? "secondary" : "ghost"} size="sm" onClick={() => setSyncMenuOpen((open) => !open)} iconLeft={<Icon name="timer" size={14} />}>Sync</Button>
               <SyncMenu
@@ -3357,18 +3706,24 @@
             </div>
             {timingConfigOpen && <TimingColumnMenu columns={timingColumns} onToggle={toggleTimingColumn} />}
             <div className="live__timingscroll">
-              <div className="timing-tower">
-                <TimingTowerHeader columns={timingColumns} sectorCounts={timingMiniSectorCounts} />
-                {timingRows.map((t) => {
-                  const d = D.byCode[t.code] || {};
-                  return (
-                    <TimingTowerRow key={t.code} row={t} driver={d} columns={timingColumns} sectorCounts={timingMiniSectorCounts}
-                      selected={selectedCode === t.code} moving={Boolean(movingRows[t.code])} elimination={showQualifyingElimination && isQualifyingEliminationRow(t, { qualifyingPhase, rowCount: timingRows.length })} registerRow={registerTimingRow}
-                      onClick={() => { setSelected(t.code); setPreset("Intelligent"); setExpandedPane(null); }} />
-                  );
-                })}
-              </div>
-              <RaceControlMessages messages={activeRaceControlMessages} />
+              {timingLoading || timingUnavailable ? (
+                <TimingTowerStatus tone={timingUnavailable ? "error" : "loading"} title={timingUnavailable ? "Timing unavailable" : "Loading timing"} body={timingStatusBody} />
+              ) : (
+                <>
+                  <div className="timing-tower">
+                    <TimingTowerHeader columns={timingColumns} sectorCounts={timingMiniSectorCounts} />
+                    {timingRows.map((t) => {
+                      const d = D.byCode[t.code] || {};
+                      return (
+                        <TimingTowerRow key={t.code} row={t} driver={d} columns={timingColumns} sectorCounts={timingMiniSectorCounts}
+                          selected={selectedCode === t.code} moving={Boolean(movingRows[t.code])} elimination={showQualifyingElimination && isQualifyingEliminationRow(t, { qualifyingPhase, rowCount: timingRows.length })} registerRow={registerTimingRow}
+                          onClick={() => { setSelected(t.code); setPreset("Intelligent"); setExpandedPane(null); }} />
+                      );
+                    })}
+                  </div>
+                  <RaceControlMessages messages={activeRaceControlMessages} />
+                </>
+              )}
             </div>
             <div className="live__weather">
               <span className="live__wx"><Icon name="thermometer" size={14} /> Air <b>{wx.air != null && wx.air !== "" ? wx.air + "°" : "—"}</b></span>
@@ -3462,6 +3817,7 @@
             {renderSessionLibrary({ inline: true })}
           </div>
         )}
+        {renderPartyTray()}
         {layout === "focus" && aiPopupOpen && (
           <div className="ai-popup" role="dialog" aria-modal="true">
             <div className="ai-popup__panel">
@@ -3505,7 +3861,7 @@
                     onChange={(e) => { markF1TvSelectionPending(); setF1TvDetailUrl(e.target.value); }} />
                   <div className="f1tv-picker__meta">
                     <Icon name="calendar" size={13} />
-                    <span>PitWall resolves the selected session or pasted detail URL in the background, then loads the clean video stream here.</span>
+                    <span>Apexline resolves the selected session or pasted detail URL in the background, then loads the clean video stream here.</span>
                   </div>
                   <div className="f1tv-picker__meta" data-ready={drmStatus ? String(Boolean(drmStatus.widevine)) : undefined}>
                     <Icon name="key" size={13} />
@@ -3533,7 +3889,7 @@
                     </button>
                   )) : <div className="stream-modal__hint">{streamStatus || "No diagnostic captures yet. Use this only if clean resolve fails."}</div>}
                 </div>
-                <div className="stream-modal__hint">Resolved F1 TV streams use your authenticated PitWall session and local Widevine support. MultiViewer login is separate. PitWall does not store F1 TV credentials here or extract DRM keys.</div>
+                <div className="stream-modal__hint">Resolved F1 TV streams use your authenticated Apexline session and local Widevine support. MultiViewer login is separate. Apexline does not store F1 TV credentials here or extract DRM keys.</div>
               </div>
               <div className="stream-modal__actions">
                 <Button variant="ghost" onClick={closeStreamModal}>Cancel</Button>

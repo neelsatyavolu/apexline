@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<title>Apexline — F1 race command for macOS</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :root { color-scheme: dark only; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg-app);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--text-md);
+    line-height: var(--lh-normal);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  a { color: inherit; text-decoration: none; }
+  ::selection { background: var(--accent-quiet); }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    letter-spacing: var(--tracking-caps);
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    font-weight: var(--fw-medium);
+  }
+  .wrap { width: 100%; max-width: 1200px; margin: 0 auto; padding: 0 32px; }
+
+  /* ===== Top bar ===== */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    height: var(--topbar-h);
+    display: flex; align-items: center;
+    background: rgba(8,9,12,0.72);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .topbar .wrap { display: flex; align-items: center; justify-content: space-between; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand svg { display: block; height: 26px; width: auto; }
+  .brand-word {
+    font-family: var(--font-display);
+    font-weight: var(--fw-bold);
+    font-size: 20px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .brand-word b { color: var(--accent); font-weight: var(--fw-bold); }
+  .nav { display: flex; align-items: center; gap: 28px; }
+  .nav a.navlink {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    transition: color var(--dur-fast, .14s) ease;
+  }
+  .nav a.navlink:hover { color: var(--text-primary); }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+    font-family: var(--font-sans);
+    font-weight: var(--fw-semibold);
+    font-size: var(--text-sm);
+    border-radius: var(--radius-sm);
+    height: var(--size-control-md, 34px);
+    padding: 0 16px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background .14s ease, border-color .14s ease, transform .14s ease;
+    white-space: nowrap;
+  }
+  .btn-primary { background: var(--accent); color: var(--text-inverse); box-shadow: 0 0 0 1px rgba(45,123,255,.25), 0 8px 24px -10px var(--blue-glow); }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary:active { background: var(--accent-press); }
+  .btn-ghost { background: var(--surface-card); color: var(--text-primary); border-color: var(--border-default); }
+  .btn-ghost:hover { background: var(--surface-hover); border-color: var(--border-strong); }
+  .btn svg { width: 16px; height: 16px; display: block; }
+  .btn-lg { height: 46px; padding: 0 24px; font-size: var(--text-md); border-radius: var(--radius-md); }
+  .btn-lg svg { width: 19px; height: 19px; }
+
+  /* ===== Hero ===== */
+  .hero {
+    position: relative;
+    padding: 92px 0 40px;
+    text-align: center;
+    background: var(--grad-hero), var(--bg-app);
+  }
+  .hero::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: var(--grad-carbon); opacity: .5;
+  }
+  .hero .wrap { position: relative; z-index: 1; }
+  .badge-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 5px 12px 5px 10px;
+    border: 1px solid var(--border-default);
+    background: var(--surface-card);
+    border-radius: var(--radius-pill);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    letter-spacing: var(--tracking-caps);
+    text-transform: uppercase;
+    color: var(--text-secondary);
+  }
+  .badge-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 3px var(--live-weak); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+  h1.title {
+    font-family: var(--font-display);
+    font-weight: var(--fw-black);
+    font-size: clamp(44px, 7vw, 88px);
+    line-height: 0.96;
+    letter-spacing: var(--tracking-tighter);
+    margin: 22px auto 0;
+    max-width: 14ch;
+    text-wrap: balance;
+  }
+  h1.title em { font-style: normal; color: var(--accent); }
+  .sub {
+    margin: 22px auto 0;
+    max-width: 56ch;
+    color: var(--text-secondary);
+    font-size: clamp(15px, 1.7vw, 18px);
+    line-height: var(--lh-relaxed);
+    text-wrap: pretty;
+  }
+  .cta-row { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 32px; flex-wrap: wrap; }
+  .meta {
+    margin-top: 16px;
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap;
+  }
+  .meta .sep { color: var(--text-disabled); }
+
+  /* ===== Real app screenshot ===== */
+  .showcase { position: relative; padding: 40px 0 96px; }
+  .window {
+    position: relative; z-index: 2;
+    max-width: 1080px; margin: 0 auto;
+    background: var(--bg-base);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-xl, 0 40px 120px -30px rgba(0,0,0,.8)), 0 0 0 1px rgba(255,255,255,.03) inset, 0 1px 0 rgba(255,255,255,.05) inset;
+  }
+  .app-shot { display: block; width: 100%; height: auto; background: var(--bg-base); }
+  .win-glow { position: absolute; left: 50%; top: 30px; transform: translateX(-50%); width: 70%; height: 320px; background: radial-gradient(60% 80% at 50% 0%, rgba(45,123,255,.20), transparent 70%); filter: blur(20px); z-index: 1; pointer-events: none; }
+
+  /* ===== Screen tour ===== */
+  .screen-tour { padding: 0 0 96px; }
+  .screen-tour .wrap { max-width: 1480px; }
+  .screen-tour__head { max-width: 720px; margin: 0 auto 18px; text-align: center; }
+  .screen-tour__head h2 {
+    margin: 14px 0 0;
+    font-family: var(--font-display);
+    font-weight: var(--fw-black);
+    font-size: clamp(32px, 5vw, 58px);
+    line-height: 1;
+    letter-spacing: var(--tracking-tight);
+    text-wrap: balance;
+  }
+  .screen-tour__head p {
+    margin: 16px auto 0;
+    max-width: 58ch;
+    color: var(--text-secondary);
+    font-size: var(--text-lg);
+    line-height: var(--lh-relaxed);
+    text-wrap: pretty;
+  }
+  .screen-story {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    align-items: stretch;
+    padding: 68px 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .screen-story:first-of-type { border-top: 0; }
+  .screen-copy { max-width: 820px; }
+  .screen-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    color: var(--accent);
+    letter-spacing: var(--tracking-caps);
+    text-transform: uppercase;
+    font-weight: var(--fw-semibold);
+  }
+  .screen-kicker::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 14px var(--blue-glow);
+  }
+  .screen-copy h3 {
+    margin: 13px 0 0;
+    font-family: var(--font-display);
+    font-size: clamp(26px, 3.1vw, 38px);
+    line-height: 1.04;
+    letter-spacing: var(--tracking-tight);
+  }
+  .screen-copy p {
+    margin: 15px 0 0;
+    color: var(--text-secondary);
+    font-size: var(--text-md);
+    line-height: var(--lh-relaxed);
+  }
+  .screen-points { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+  .screen-points span {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-pill);
+    background: var(--surface-card);
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-3xs);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: 6px 9px;
+  }
+  .screen-window {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    background: var(--bg-base);
+    box-shadow: var(--shadow-xl, 0 40px 120px -30px rgba(0,0,0,.8)), 0 0 0 1px rgba(255,255,255,.03) inset;
+  }
+  .screen-shot { display: block; width: 100%; height: auto; background: var(--bg-base); }
+
+  .titlebar {
+    height: var(--topbar-h);
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 16px;
+    background: var(--surface-raised);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .lights { display: flex; gap: 8px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .lights i:nth-child(1){ background:#ff5f57; } .lights i:nth-child(2){ background:#febc2e; } .lights i:nth-child(3){ background:#28c840; }
+  .title-center { display: flex; align-items: center; gap: 10px; margin: 0 auto; }
+  .title-center .race { font-family: var(--font-display); font-weight: var(--fw-bold); font-size: var(--text-md); letter-spacing: .01em; }
+  .title-center .lap { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-tertiary); }
+  .live-badge { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: var(--text-3xs); letter-spacing: .12em; text-transform: uppercase; color: var(--live); border: 1px solid var(--live-weak); background: var(--live-weak); padding: 3px 8px; border-radius: var(--radius-xs); }
+  .live-badge .d { width: 6px; height: 6px; border-radius: 50%; background: var(--live); box-shadow: 0 0 8px var(--live-glow); animation: pulse 1.6s infinite; }
+
+  .win-body { display: grid; grid-template-columns: 268px 1fr; min-height: 430px; }
+
+  /* timing tower */
+  .tower { border-right: 1px solid var(--border-subtle); background: var(--bg-base); padding: 6px 0; }
+  .tower-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px 10px; }
+  .tower-head .lbl { font-family: var(--font-mono); font-size: var(--text-3xs); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); }
+  .trow { display: grid; grid-template-columns: 26px 4px 1fr auto 18px; align-items: center; gap: 9px; padding: 7px 14px; position: relative; transition: background .14s; }
+  .trow:hover { background: var(--surface-hover); }
+  .trow + .trow { border-top: 1px solid var(--border-subtle); }
+  .trow .pos { font-family: var(--font-mono); font-size: var(--text-sm); font-weight: var(--fw-bold); color: var(--text-secondary); text-align: right; }
+  .trow .spine { width: 4px; height: 18px; border-radius: 2px; }
+  .trow .code { font-family: var(--font-display); font-weight: var(--fw-bold); font-size: var(--text-md); letter-spacing: .03em; }
+  .trow .gap { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-secondary); }
+  .trow .gap.leader { color: var(--accent); }
+  .trow .tyre { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-family: var(--font-mono); font-weight: var(--fw-bold); font-size: 9px; border: 1.5px solid currentColor; }
+  .tyre.soft { color: var(--tyre-soft); } .tyre.medium { color: var(--tyre-medium); } .tyre.hard { color: var(--tyre-hard); }
+  .trow.p1 .pos { color: var(--text-strong); }
+  .trow.fastest .gap { color: var(--t-fastest); }
+
+  /* feed pane */
+  .feed { position: relative; background: linear-gradient(180deg, #0c0f15, #0a0c11); display: flex; flex-direction: column; }
+  .feed-canvas { position: relative; flex: 1; overflow: hidden; }
+  .feed-canvas::before { content: ""; position: absolute; inset: 0; background: var(--grad-carbon), radial-gradient(90% 70% at 70% 20%, rgba(45,123,255,.10), transparent 60%); }
+  .pw-grid { position: absolute; inset: 0; background-image: linear-gradient(var(--border-subtle) 1px, transparent 1px), linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px); background-size: 38px 38px; mask-image: radial-gradient(120% 100% at 50% 30%, #000 30%, transparent 80%); }
+  .track-tag { position: absolute; top: 16px; right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .track-tag .nm { font-family: var(--font-display); font-weight: var(--fw-bold); font-size: var(--text-lg); }
+  .track-tag .co { font-family: var(--font-mono); font-size: var(--text-3xs); letter-spacing: var(--tracking-caps); color: var(--text-tertiary); text-transform: uppercase; }
+
+  /* AI insight chip floating */
+  .insight {
+    position: absolute; left: 22px; top: 22px; max-width: 280px;
+    background: var(--surface-overlay); border: 1px solid var(--accent-border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-md); padding: 11px 13px;
+    box-shadow: var(--shadow-lg, 0 18px 50px -16px rgba(0,0,0,.7));
+    backdrop-filter: blur(6px);
+  }
+  .insight .ai-lbl { font-family: var(--font-mono); font-size: var(--text-3xs); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--accent); display: flex; align-items: center; gap: 6px; }
+  .insight p { margin: 7px 0 0; font-size: var(--text-sm); line-height: var(--lh-snug); color: var(--text-primary); }
+
+  /* onboard mini tile */
+  .onboard { position: absolute; right: 16px; bottom: 72px; width: 188px; background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); overflow: hidden; box-shadow: var(--shadow-md, 0 12px 36px -14px rgba(0,0,0,.7)); }
+  .onboard .ob-feed { height: 96px; background: var(--grad-carbon), linear-gradient(135deg, #11151d, #0b0e14); position: relative; }
+  .onboard .ob-feed::after { content: ""; position: absolute; inset: 0; background: radial-gradient(70% 90% at 40% 30%, rgba(255,255,255,.05), transparent); }
+  .ob-strip { display: flex; align-items: center; gap: 8px; padding: 8px 9px; border-top: 1px solid var(--border-subtle); }
+  .ob-pos { background: var(--accent); color: var(--text-inverse); font-family: var(--font-mono); font-weight: var(--fw-bold); font-size: var(--text-xs); padding: 2px 7px; border-radius: var(--radius-xs); }
+  .ob-code { font-family: var(--font-display); font-weight: var(--fw-bold); font-size: var(--text-md); }
+  .ob-data { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--text-tertiary); text-align: right; }
+  .ob-data b { color: var(--text-primary); font-weight: var(--fw-semibold); }
+
+  /* lower third */
+  .lower-third { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border-subtle); background: rgba(8,9,12,.85); }
+  .lt { padding: 9px 14px; border-left: 1px solid var(--border-subtle); }
+  .lt:first-child { border-left: 0; }
+  .lt .p { font-family: var(--font-mono); font-size: var(--text-3xs); color: var(--text-tertiary); letter-spacing: .08em; }
+  .lt .nm { font-family: var(--font-display); font-weight: var(--fw-bold); font-size: var(--text-md); display: flex; align-items: center; gap: 7px; }
+  .lt .nm i { width: 3px; height: 13px; border-radius: 2px; }
+  .lt .g { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--text-secondary); }
+
+  /* ===== Features ===== */
+  .features { padding: 24px 0 100px; }
+  .sec-head { text-align: center; max-width: 56ch; margin: 0 auto 52px; }
+  .sec-head h2 { font-family: var(--font-display); font-weight: var(--fw-black); font-size: clamp(30px, 4.6vw, 48px); letter-spacing: var(--tracking-tight); line-height: 1.02; margin: 14px 0 0; text-wrap: balance; }
+  .sec-head p { color: var(--text-secondary); margin: 16px 0 0; font-size: var(--text-lg); line-height: var(--lh-relaxed); text-wrap: pretty; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .card {
+    background: var(--surface-card); border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg); padding: 24px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+    transition: border-color .18s ease, transform .18s ease, background .18s ease;
+  }
+  .card:hover { border-color: var(--border-strong); transform: translateY(-3px); background: var(--surface-card); }
+  .card .ico { width: 42px; height: 42px; border-radius: var(--radius-md); display: grid; place-items: center; background: var(--accent-soft); border: 1px solid var(--accent-border); color: var(--accent); margin-bottom: 18px; }
+  .card .ico svg { width: 21px; height: 21px; }
+  .card h3 { font-family: var(--font-display); font-weight: var(--fw-bold); font-size: var(--text-xl); margin: 0 0 8px; letter-spacing: .01em; }
+  .card p { margin: 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--lh-relaxed); }
+  .card.wide { grid-column: span 3; }
+
+  /* stat strip */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); overflow: hidden; margin-top: 16px; }
+  .stat { background: var(--bg-base); padding: 26px 24px; }
+  .stat .n { font-family: var(--font-mono); font-weight: var(--fw-bold); font-size: var(--text-4xl); letter-spacing: -.02em; color: var(--text-strong); line-height: 1; }
+  .stat .n em { font-style: normal; color: var(--accent); }
+  .stat .l { font-family: var(--font-mono); font-size: var(--text-2xs); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); margin-top: 10px; }
+
+  /* ===== Download CTA ===== */
+  .download { padding: 0 0 110px; }
+  .dl-card {
+    position: relative; overflow: hidden;
+    background: linear-gradient(180deg, var(--surface-card), var(--bg-base));
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-xl);
+    padding: 64px 48px;
+    text-align: center;
+  }
+  .dl-card::before { content: ""; position: absolute; inset: 0; background: var(--grad-hero); pointer-events: none; }
+  .dl-card::after { content: ""; position: absolute; inset: 0; background: var(--grad-carbon); opacity: .4; pointer-events: none; }
+  .dl-card > * { position: relative; z-index: 1; }
+  .dl-card h2 { font-family: var(--font-display); font-weight: var(--fw-black); font-size: clamp(34px, 5vw, 60px); letter-spacing: var(--tracking-tight); margin: 14px 0 0; line-height: 1; text-wrap: balance; }
+  .dl-card p { color: var(--text-secondary); margin: 18px auto 0; max-width: 48ch; font-size: var(--text-lg); line-height: var(--lh-relaxed); }
+  .dl-card .cta-row { margin-top: 34px; }
+  .reqs { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; margin-top: 28px; padding-top: 26px; border-top: 1px solid var(--border-subtle); }
+  .req { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+  .req .rk { font-family: var(--font-mono); font-size: var(--text-3xs); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); }
+  .req .rv { font-family: var(--font-sans); font-size: var(--text-sm); font-weight: var(--fw-medium); color: var(--text-primary); }
+
+  /* ===== Footer ===== */
+  footer { border-top: 1px solid var(--border-subtle); padding: 34px 0 48px; }
+  footer .wrap { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+  footer .fl { display: flex; align-items: center; gap: 12px; }
+  footer .copy { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--text-tertiary); letter-spacing: .04em; }
+  footer .fnav { display: flex; gap: 22px; }
+  footer .fnav a { font-size: var(--text-sm); color: var(--text-tertiary); transition: color .14s; }
+  footer .fnav a:hover { color: var(--text-primary); }
+  .disclaim { margin-top: 22px; text-align: center; font-family: var(--font-mono); font-size: var(--text-3xs); color: var(--text-disabled); letter-spacing: .04em; line-height: 1.7; }
+
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr 1fr; }
+    .card.wide { grid-column: span 2; }
+    .stats { grid-template-columns: 1fr 1fr; }
+    .win-body { grid-template-columns: 200px 1fr; }
+    .screen-story { grid-template-columns: 1fr; gap: 22px; padding: 42px 0; }
+    .screen-copy { max-width: 640px; }
+  }
+  @media (max-width: 680px) {
+    .wrap { padding: 0 20px; }
+    .nav .navlink { display: none; }
+    .grid, .card.wide { grid-template-columns: 1fr; grid-column: auto; }
+    .stats { grid-template-columns: 1fr 1fr; }
+    .win-body { grid-template-columns: 1fr; }
+    .tower { display: none; }
+    .lower-third { grid-template-columns: 1fr 1fr; }
+    .lt:nth-child(3), .lt:nth-child(4) { border-top: 1px solid var(--border-subtle); }
+    .insight { max-width: 200px; }
+    .onboard { display: none; }
+    .reqs { gap: 16px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+</head>
+<body>
+
+  <!-- ===== Top bar ===== -->
+  <header class="topbar">
+    <div class="wrap">
+      <a class="brand" href="#top">
+        <svg viewBox="0 0 124 124" fill="none" aria-hidden="true"><rect x="2" y="2" width="120" height="120" rx="28" fill="#13161d" stroke="#2c3340"></rect><rect x="34" y="28" width="14" height="68" rx="5" fill="#f4f6fb"></rect><rect x="56" y="34" width="40" height="13" rx="4" fill="#2d7bff"></rect><circle cx="104" cy="40.5" r="4.5" fill="#2d7bff"></circle><rect x="56" y="55.5" width="50" height="13" rx="4" fill="#f4f6fb"></rect><rect x="56" y="77" width="32" height="13" rx="4" fill="#7c8597"></rect></svg>
+        <span class="brand-word">APEX<b>LINE</b></span>
+      </a>
+      <nav class="nav">
+        <a class="navlink" href="#features">Features</a>
+        <a class="navlink" href="#screens">Screens</a>
+        <a class="navlink" href="#live">Live Racing</a>
+        <a class="navlink" href="#download">Download</a>
+        <a class="btn btn-primary" href="/updates/darwin/arm64/Apexline-1.0.5-mac-arm64.zip" download>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.5 1.5c.1 1-.3 2-1 2.8-.7.8-1.8 1.4-2.8 1.3-.1-1 .4-2 1-2.7.7-.8 1.9-1.4 2.8-1.4ZM19.6 17.2c-.5 1.2-.8 1.7-1.5 2.7-.9 1.4-2.3 3.2-3.9 3.2-1.5 0-1.8-1-3.8-1-1.9 0-2.3 1-3.8 1-1.6 0-2.8-1.6-3.8-3C-.2 16.5-.5 11 1.5 8.2 2.8 6.3 4.9 5.2 6.9 5.2c2 0 3.2 1.1 4.8 1.1 1.5 0 2.5-1.1 4.8-1.1 1.7 0 3.6.9 4.9 2.5-4.3 2.4-3.6 8.5-1.8 9.5Z"></path></svg>
+          Download
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ===== Hero ===== -->
+  <section class="hero" id="top">
+    <div class="wrap">
+      <span class="badge-pill"><span class="dot"></span>Version 1.0.5</span>
+      <h1 class="title">Apexline for <em>every race.</em></h1>
+      <p class="sub">A native macOS cockpit for serious Formula&nbsp;1 fans — live timing, multi-view onboards, AI race insights, schedules and standings, all in one broadcast-grade window.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary btn-lg" href="/updates/darwin/arm64/Apexline-1.0.5-mac-arm64.zip" download>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.5 1.5c.1 1-.3 2-1 2.8-.7.8-1.8 1.4-2.8 1.3-.1-1 .4-2 1-2.7.7-.8 1.9-1.4 2.8-1.4ZM19.6 17.2c-.5 1.2-.8 1.7-1.5 2.7-.9 1.4-2.3 3.2-3.9 3.2-1.5 0-1.8-1-3.8-1-1.9 0-2.3 1-3.8 1-1.6 0-2.8-1.6-3.8-3C-.2 16.5-.5 11 1.5 8.2 2.8 6.3 4.9 5.2 6.9 5.2c2 0 3.2 1.1 4.8 1.1 1.5 0 2.5-1.1 4.8-1.1 1.7 0 3.6.9 4.9 2.5-4.3 2.4-3.6 8.5-1.8 9.5Z"></path></svg>
+          Download for macOS
+        </a>
+        <a class="btn btn-ghost btn-lg" href="#screens">
+          See what's inside
+        </a>
+      </div>
+      <div class="meta">
+        <span>Manual macOS install</span><span class="sep">·</span>
+        <span>macOS 13+</span><span class="sep">·</span>
+        <span>Apple Silicon</span><span class="sep">·</span>
+        <span>v1.0.5 · 134 MB</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== App window showcase ===== -->
+  <section class="showcase" id="live">
+    <div class="win-glow"></div>
+    <div class="wrap">
+      <div class="window">
+        <img class="app-shot" src="./assets/apexline-app-screenshot.png" alt="Apexline Dashboard showing the next race, championship standings, track conditions, news, and favorites" width="3224" height="2222">
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Screen tour ===== -->
+  <section class="screen-tour" id="screens">
+    <div class="wrap">
+      <div class="screen-tour__head">
+        <span class="eyebrow">Apexline screens</span>
+        <h2>Every race view gets its own station.</h2>
+        <p>Real app screens captured at 3600px wide, using deterministic Apexline data so the landing page stays sharp, accurate, and private-repo safe.</p>
+      </div>
+
+      <article class="screen-story">
+        <div class="screen-copy">
+          <span class="screen-kicker">Track Map</span>
+          <h3>See the circuit and timing rail together.</h3>
+          <p>Track Map pairs real circuit geometry with a live-style timing rail, tyre compounds, gaps, battles, DRS markers, sector labels, and circuit facts.</p>
+          <div class="screen-points"><span>Circuit geometry</span><span>Timing rail</span><span>Battle context</span></div>
+        </div>
+        <div class="screen-window">
+          <img class="screen-shot" src="./assets/apexline-screen-track-map.png" alt="Apexline Track Map screen showing Circuit de Barcelona-Catalunya with timing rail and circuit facts" width="3600" height="2196">
+        </div>
+      </article>
+
+      <article class="screen-story">
+        <div class="screen-copy">
+          <span class="screen-kicker">AI Copilot</span>
+          <h3>Next-weekend prep without leaving the app.</h3>
+          <p>The Copilot next-weekend tab turns the loaded schedule, standings, timing, and news snapshot into a compact race preview with prediction boards and watch points.</p>
+          <div class="screen-points"><span>Next weekend</span><span>Projection board</span><span>Watchlist</span></div>
+        </div>
+        <div class="screen-window">
+          <img class="screen-shot" src="./assets/apexline-screen-ai-copilot-next-weekend.png" alt="Apexline AI Copilot next weekend screen showing a Spanish Grand Prix preview and projection board" width="3600" height="2196">
+        </div>
+      </article>
+
+      <article class="screen-story">
+        <div class="screen-copy">
+          <span class="screen-kicker">Analytics</span>
+          <h3>Compare ANT vs HAM from the Monaco Race.</h3>
+          <p>Analytics loads a Monaco Race comparison with ANT and HAM selected, then breaks down sector pace, fastest lap, average pace, tyre degradation, top speed, and head-to-head deltas.</p>
+          <div class="screen-points"><span>ANT vs HAM</span><span>Monaco Race</span><span>Sector deltas</span></div>
+        </div>
+        <div class="screen-window">
+          <img class="screen-shot" src="./assets/apexline-screen-analytics-ant-ham-monaco.png" alt="Apexline Analytics screen comparing ANT and HAM for the Monaco Race" width="3600" height="2196">
+        </div>
+      </article>
+
+      <article class="screen-story">
+        <div class="screen-copy">
+          <span class="screen-kicker">News</span>
+          <h3>Paddock reading in the same cockpit.</h3>
+          <p>News keeps a dense feed of F1 stories, trend cards, saved items, source labels, and an in-app reader so the race workspace stays focused.</p>
+          <div class="screen-points"><span>Headlines</span><span>Saved items</span><span>Reader</span></div>
+        </div>
+        <div class="screen-window">
+          <img class="screen-shot" src="./assets/apexline-screen-news.png" alt="Apexline News screen showing lead stories, news cards, trending stories, and saved items" width="3600" height="2196">
+        </div>
+      </article>
+
+      <article class="screen-story">
+        <div class="screen-copy">
+          <span class="screen-kicker">Drivers</span>
+          <h3>The 22-car grid, browsable by profile.</h3>
+          <p>Drivers combines championship position, points, team identity, career stats, recent form, profile details, and teammate links in one fast roster view.</p>
+          <div class="screen-points"><span>22 drivers</span><span>Profile stats</span><span>Recent form</span></div>
+        </div>
+        <div class="screen-window">
+          <img class="screen-shot" src="./assets/apexline-screen-drivers.png" alt="Apexline Drivers screen showing the 22-driver roster and selected driver profile details" width="3600" height="2196">
+        </div>
+      </article>
+
+      <article class="screen-story">
+        <div class="screen-copy">
+          <span class="screen-kicker">Teams</span>
+          <h3>Constructor context with driver pairings.</h3>
+          <p>Teams turns the constructor table into a detail view with season points, base, leadership, power unit, chassis, history, and the current driver pairing.</p>
+          <div class="screen-points"><span>Constructors</span><span>Driver pairing</span><span>Team data</span></div>
+        </div>
+        <div class="screen-window">
+          <img class="screen-shot" src="./assets/apexline-screen-teams.png" alt="Apexline Teams screen showing constructor standings and selected team details" width="3600" height="2196">
+        </div>
+      </article>
+
+      <article class="screen-story">
+        <div class="screen-copy">
+          <span class="screen-kicker">Schedule</span>
+          <h3>The season calendar in your race window.</h3>
+          <p>Schedule shows upcoming and completed race weekends, session rows, local timing context, countdowns, and quick navigation into the Weekend view.</p>
+          <div class="screen-points"><span>Season calendar</span><span>Session times</span><span>Countdowns</span></div>
+        </div>
+        <div class="screen-window">
+          <img class="screen-shot" src="./assets/apexline-screen-schedule.png" alt="Apexline Schedule screen showing race weekends and session timing details" width="3600" height="2196">
+        </div>
+      </article>
+
+      <article class="screen-story">
+        <div class="screen-copy">
+          <span class="screen-kicker">Leaderboards</span>
+          <h3>Driver and constructor tables at a glance.</h3>
+          <p>Leaderboards keeps the championship picture compact: driver points, wins, movement, constructor points, team colors, and filters for quick comparison.</p>
+          <div class="screen-points"><span>Driver table</span><span>Constructor table</span><span>Filters</span></div>
+        </div>
+        <div class="screen-window">
+          <img class="screen-shot" src="./assets/apexline-screen-leaderboards.png" alt="Apexline Leaderboards screen showing driver and constructor championship standings" width="3600" height="2196">
+        </div>
+      </article>
+
+      <article class="screen-story">
+        <div class="screen-copy">
+          <span class="screen-kicker">Weekend</span>
+          <h3>Race-weekend status from sessions to recap.</h3>
+          <p>Weekend gathers the selected Grand Prix, session steps, countdown, weather, race-control context, and recap-ready timing data into the working race page.</p>
+          <div class="screen-points"><span>Session steps</span><span>Weekend weather</span><span>Recap data</span></div>
+        </div>
+        <div class="screen-window">
+          <img class="screen-shot" src="./assets/apexline-screen-weekend.png" alt="Apexline Weekend screen showing session steps, countdown, weather, and weekend data" width="3600" height="2196">
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===== Features ===== -->
+  <section class="features" id="features">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">One window · everything F1</span>
+        <h2>Built like a race engineer's screen.</h2>
+        <p>Quiet until it matters, then it lights up. Apexline pulls every feed, timing line and data point into a single dense, calm cockpit.</p>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"></path><path d="m13.4 12.6 3.6-3.6"></path><path d="M3.3 16a9 9 0 1 1 17.4 0"></path></svg></div>
+          <h3>Live Timing</h3>
+          <p>The full 22-car tower with gaps, intervals, sector splits and tyre compounds — purple for session best, green for personal best, exactly like the broadcast.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5"></rect><rect x="13" y="3" width="8" height="8" rx="1.5"></rect><rect x="3" y="13" width="8" height="8" rx="1.5"></rect><rect x="13" y="13" width="8" height="8" rx="1.5"></rect></svg></div>
+          <h3>Multi-view onboards</h3>
+          <p>Pair any combination of onboard cameras and the world feed in one resizable window. Intelligent pairing surfaces the battle worth watching.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3Z"></path><path d="M19 15v4"></path><path d="M5 5v3"></path><path d="M17.5 17h3"></path><path d="M3.5 6.5h3"></path></svg></div>
+          <h3>AI race insights</h3>
+          <p>Undercut windows, battle alerts and strategy calls — surfaced as analysis, not noise. Confident, terse, actionable. Never breathless.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2"></rect><path d="M3 9h18M8 2.5v4M16 2.5v4"></path></svg></div>
+          <h3>Schedule &amp; standings</h3>
+          <p>Every session in your timezone with a lights-out countdown, plus live driver and constructor standings the moment the flag drops.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V4a1 1 0 0 1 1-1h0a1 1 0 0 1 1 1v17"></path><path d="M6 4c3-1.5 6 1.5 9 0v8c-3 1.5-6-1.5-9 0"></path></svg></div>
+          <h3>News &amp; analytics</h3>
+          <p>Headlines from the paddock and deep post-session analytics — pace deltas, stint comparisons, tyre degradation — without leaving the app.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4"></path><circle cx="12" cy="12" r="4"></circle></svg></div>
+          <h3>Native &amp; fast</h3>
+          <p>A real macOS app, not a browser tab. Native windows, system notifications, and a racing workspace that scales to your display.</p>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><div class="n">22</div><div class="l">Cars tracked live</div></div>
+        <div class="stat"><div class="n">F1</div><div class="l">Calendar, news, timing</div></div>
+        <div class="stat"><div class="n"><em>0</em></div><div class="l">Browser tabs needed</div></div>
+        <div class="stat"><div class="n">1</div><div class="l">Window, full cockpit</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Download ===== -->
+  <section class="download" id="download">
+    <div class="wrap">
+      <div class="dl-card">
+        <span class="eyebrow">Lights out</span>
+        <h2>Get Apexline for macOS.</h2>
+        <p>Download Version 1.0.5 for macOS. Streams require your own active F1 TV subscription. Apexline checks the public Vercel feed for future releases without exposing the private source repo.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary btn-lg" href="/updates/darwin/arm64/Apexline-1.0.5-mac-arm64.zip" download>
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.5 1.5c.1 1-.3 2-1 2.8-.7.8-1.8 1.4-2.8 1.3-.1-1 .4-2 1-2.7.7-.8 1.9-1.4 2.8-1.4ZM19.6 17.2c-.5 1.2-.8 1.7-1.5 2.7-.9 1.4-2.3 3.2-3.9 3.2-1.5 0-1.8-1-3.8-1-1.9 0-2.3 1-3.8 1-1.6 0-2.8-1.6-3.8-3C-.2 16.5-.5 11 1.5 8.2 2.8 6.3 4.9 5.2 6.9 5.2c2 0 3.2 1.1 4.8 1.1 1.5 0 2.5-1.1 4.8-1.1 1.7 0 3.6.9 4.9 2.5-4.3 2.4-3.6 8.5-1.8 9.5Z"></path></svg>
+            Download for macOS
+          </a>
+        </div>
+        <div class="reqs">
+          <div class="req"><span class="rk">Version</span><span class="rv">1.0.5</span></div>
+          <div class="req"><span class="rk">Requires</span><span class="rv">macOS on Apple Silicon</span></div>
+          <div class="req"><span class="rk">Chip</span><span class="rv">Apple Silicon</span></div>
+          <div class="req"><span class="rk">Size</span><span class="rv">134 MB</span></div>
+          <div class="req"><span class="rk">Feed</span><span class="rv"><a href="/updates/darwin/arm64/releases.json">releases.json</a></span></div>
+        </div>
+      </div>
+      <p class="disclaim">Apexline is an unofficial companion app and is not affiliated with, endorsed by, or associated with Formula 1, the FIA, or any constructor.<br>Driver, team and timing data shown is illustrative.</p>
+    </div>
+  </section>
+
+  <!-- ===== Footer ===== -->
+  <footer>
+    <div class="wrap">
+      <div class="fl">
+        <svg viewBox="0 0 124 124" width="22" height="22" fill="none" aria-hidden="true"><rect x="2" y="2" width="120" height="120" rx="28" fill="#13161d" stroke="#2c3340"></rect><rect x="34" y="28" width="14" height="68" rx="5" fill="#f4f6fb"></rect><rect x="56" y="34" width="40" height="13" rx="4" fill="#2d7bff"></rect><circle cx="104" cy="40.5" r="4.5" fill="#2d7bff"></circle><rect x="56" y="55.5" width="50" height="13" rx="4" fill="#f4f6fb"></rect><rect x="56" y="77" width="32" height="13" rx="4" fill="#7c8597"></rect></svg>
+        <span class="copy">© 2026 Apexline · F1 race command for macOS.</span>
+      </div>
+      <nav class="fnav">
+        <a href="#features">Features</a>
+        <a href="#live">Live Racing</a>
+        <a href="#download">Download</a>
+        <a href="/updates/darwin/arm64/releases.json">Update feed</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

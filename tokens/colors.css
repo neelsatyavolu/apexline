@@ -1,5 +1,5 @@
 /* ==========================================================================
-   PitWall — Color tokens  (canonical)
+   Apexline — Color tokens  (canonical)
    Dark-first "race-engineer cockpit". A raw blue-black ladder + semantic
    aliases. Components consume the SEMANTIC names; the raw ladders
    (--bg-N, --text-N, --ink-N) exist for specimens and fine control.

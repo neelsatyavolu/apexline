@@ -1,0 +1,15 @@
+{
+  "currentRelease": "1.0.5",
+  "releases": [
+    {
+      "version": "1.0.5",
+      "updateTo": {
+        "version": "1.0.5",
+        "pub_date": "2026-06-08T08:35:38.150Z",
+        "notes": "Apexline 1.0.5",
+        "name": "Apexline 1.0.5",
+        "url": "https://apexline-app.vercel.app/updates/darwin/arm64/Apexline-1.0.5-mac-arm64.zip"
+      }
+    }
+  ]
+}

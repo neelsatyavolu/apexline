@@ -1,4 +1,4 @@
-/* PitWall AI Copilot — race-weekend AI analysis + chatbot. window.PW.Copilot */
+/* Apexline AI Copilot — race-weekend AI analysis + chatbot. window.PW.Copilot */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
   const { Card, Badge, Icon, Button, IconButton, Avatar, DriverTag, GapDelta, StatTile, Tag } = NS;
@@ -185,6 +185,7 @@
 	    const selected = localStorage.getItem("pw-ai-model") || "";
 	    if (!selected || selected === "local") return payload;
 	    const [provider, ...modelParts] = selected.split(":");
+	    if (provider !== "codex" && provider !== "grok") return payload;
 	    const model = modelParts.join(":");
 	    return provider && model ? { ...payload, provider, model } : payload;
 	  }

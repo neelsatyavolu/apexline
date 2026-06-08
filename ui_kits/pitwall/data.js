@@ -1,4 +1,4 @@
-/* PitWall seed data.
+/* Apexline seed data.
    Runtime standings, schedule, timing, weather, and news are fetched by Electron. */
 (function () {
   const T = {
@@ -23,17 +23,17 @@
     AUD: "audi", HAS: "haas", CAD: "cadillac",
   };
   const LOGO = {
-    redbull: "https://media.formula1.com/image/upload/c_fit%2Ch_64/q_auto/v1740000001/common/f1/2025/redbullracing/2025redbullracinglogowhite.webp",
-    ferrari: "https://media.formula1.com/image/upload/c_fit%2Ch_64/q_auto/v1740000001/common/f1/2025/ferrari/2025ferrarilogolight.webp",
-    mercedes: "https://media.formula1.com/image/upload/c_fit%2Ch_64/q_auto/v1740000001/common/f1/2025/mercedes/2025mercedeslogowhite.webp",
-    mclaren: "https://media.formula1.com/image/upload/c_fit%2Ch_64/q_auto/v1740000001/common/f1/2025/mclaren/2025mclarenlogowhite.webp",
-    aston: "https://media.formula1.com/image/upload/c_fit%2Ch_64/q_auto/v1740000001/common/f1/2025/astonmartin/2025astonmartinlogowhite.webp",
-    alpine: "https://media.formula1.com/image/upload/c_fit%2Ch_64/q_auto/v1740000001/common/f1/2025/alpine/2025alpinelogowhite.webp",
-    williams: "https://media.formula1.com/image/upload/c_fit%2Ch_64/q_auto/v1740000001/common/f1/2025/williams/2025williamslogowhite.webp",
-    rb: "https://media.formula1.com/image/upload/c_fit%2Ch_64/q_auto/v1740000001/common/f1/2025/racingbulls/2025racingbullslogowhite.webp",
-    audi: "https://media.formula1.com/image/upload/c_fit%2Ch_64/q_auto/v1740000001/common/f1/2026/audi/2026audilogowhite.webp",
-    haas: "https://media.formula1.com/image/upload/c_fit%2Ch_64/q_auto/v1740000001/common/f1/2025/haas/2025haaslogowhite.webp",
-    cadillac: "https://media.formula1.com/image/upload/c_fit%2Ch_64/q_auto/v1740000001/common/f1/2026/cadillac/2026cadillaclogowhite.webp",
+    redbull: "https://media.formula1.com/image/upload/c_fit%2Ch_256/q_auto/v1740000001/common/f1/2025/redbullracing/2025redbullracinglogowhite.webp",
+    ferrari: "https://media.formula1.com/image/upload/c_fit%2Ch_256/q_auto/v1740000001/common/f1/2025/ferrari/2025ferrarilogolight.webp",
+    mercedes: "https://media.formula1.com/image/upload/c_fit%2Ch_256/q_auto/v1740000001/common/f1/2025/mercedes/2025mercedeslogowhite.webp",
+    mclaren: "https://media.formula1.com/image/upload/c_fit%2Ch_256/q_auto/v1740000001/common/f1/2025/mclaren/2025mclarenlogowhite.webp",
+    aston: "https://media.formula1.com/image/upload/c_fit%2Ch_256/q_auto/v1740000001/common/f1/2025/astonmartin/2025astonmartinlogowhite.webp",
+    alpine: "https://media.formula1.com/image/upload/c_fit%2Ch_256/q_auto/v1740000001/common/f1/2025/alpine/2025alpinelogowhite.webp",
+    williams: "https://media.formula1.com/image/upload/c_fit%2Ch_256/q_auto/v1740000001/common/f1/2025/williams/2025williamslogowhite.webp",
+    rb: "https://media.formula1.com/image/upload/c_fit%2Ch_256/q_auto/v1740000001/common/f1/2025/racingbulls/2025racingbullslogowhite.webp",
+    audi: "https://media.formula1.com/image/upload/c_fit%2Ch_256/q_auto/v1740000001/common/f1/2026/audi/2026audilogowhite.webp",
+    haas: "https://media.formula1.com/image/upload/c_fit%2Ch_256/q_auto/v1740000001/common/f1/2025/haas/2025haaslogowhite.webp",
+    cadillac: "https://media.formula1.com/image/upload/c_fit%2Ch_256/q_auto/v1740000001/common/f1/2026/cadillac/2026cadillaclogowhite.webp",
   };
   const IMG = {
     VER: "https://media.formula1.com/image/upload/c_fill%2Cw_720/q_auto/v1740000001/common/f1/2026/redbullracing/maxver01/2026redbullracingmaxver01right.webp",
@@ -226,7 +226,7 @@
     news: [],
     insights: [],
     strategyContext: null,
-    presets: ["Intelligent", "Pit Wall Classic", "Battle Mode", "Data Overload", "Minimal Clean"],
+    presets: ["Intelligent", "Apexline Classic", "Battle Mode", "Data Overload", "Minimal Clean"],
     copilot: null,
     driverForm: {},
     driverProfiles: __seed.driverProfiles,

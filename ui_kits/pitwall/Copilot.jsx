@@ -49,12 +49,15 @@
 	    .pred__note { font-size: var(--text-sm); color: var(--text-tertiary); line-height: 1.4; }
 
 	    /* Race predictions */
+	    .cop-page--projections { grid-template-columns: minmax(0, 1fr); }
 	    .race-pred { display: flex; flex-direction: column; gap: var(--space-6); padding: var(--space-8); border-radius: var(--radius-md); background: linear-gradient(140% 120% at 100% 0, rgba(93,232,174,0.12), transparent 42%), var(--surface-card); border: 1px solid var(--border-subtle); }
 	    .race-pred__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-6); padding-bottom: var(--space-5); border-bottom: 1px solid var(--border-subtle); }
 	    .race-pred__eyebrow { display: inline-flex; align-items: center; gap: 6px; color: var(--text-accent); font-size: var(--text-2xs); font-weight: 800; letter-spacing: var(--tracking-caps); text-transform: uppercase; }
 	    .race-pred__title { margin-top: 4px; color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-xl); font-weight: 800; }
 	    .race-pred__summary { color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.45; }
+	    .race-pred__sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6); align-items: start; }
 	    .race-pred__section { display: flex; flex-direction: column; gap: var(--space-4); }
+	    .race-pred__section--wide { grid-column: 1 / -1; }
 	    .race-pred__label { color: var(--text-tertiary); font-size: var(--text-2xs); font-weight: 800; letter-spacing: var(--tracking-caps); text-transform: uppercase; }
 	    .race-pick { display: grid; grid-template-columns: 42px minmax(0, 1fr) 58px; gap: var(--space-5); align-items: center; min-width: 0; padding: var(--space-5); border-radius: var(--radius-sm); background: var(--bg-sunken); border: 1px solid var(--border-subtle); }
 	    .race-pick__name { color: var(--text-primary); font-family: var(--font-display); font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -63,6 +66,12 @@
 	    .race-pick__fill { width: var(--_w); height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--_c), color-mix(in srgb, var(--_c) 45%, #ffffff)); }
 	    .race-pick__reason { grid-column: 2 / -1; color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.4; }
 	    .race-pick__score { justify-self: end; color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-sm); font-weight: 800; }
+	    .race-board { display: flex; flex-direction: column; gap: 1px; overflow: hidden; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); background: var(--border-subtle); }
+	    .race-board__row { display: grid; grid-template-columns: 42px minmax(0, 1fr) 58px; gap: var(--space-4); align-items: center; min-width: 0; padding: var(--space-4) var(--space-5); background: var(--bg-sunken); }
+	    .race-board__pos { color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; }
+	    .race-board__driver { min-width: 0; color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-sm); font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	    .race-board__prob { justify-self: end; color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; }
+	    .race-board__reason { grid-column: 2 / -1; color: var(--text-tertiary); font-size: var(--text-2xs); line-height: 1.35; }
 	    .race-watch { display: flex; flex-direction: column; gap: 3px; padding: var(--space-5); border-radius: var(--radius-sm); background: var(--bg-sunken); border: 1px solid var(--border-subtle); }
 	    .race-watch__top { display: flex; justify-content: space-between; gap: var(--space-5); color: var(--text-primary); font-weight: 800; font-size: var(--text-sm); }
 	    .race-watch__body { color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.4; }
@@ -156,6 +165,7 @@
 	    .ai-vis__notes { margin: 0; padding-left: 17px; color: var(--text-tertiary); font-size: var(--text-xs); line-height: 1.4; }
 	    @media (max-width: 1180px) { .cop-preds { grid-template-columns: 1fr; } .metric-strip { grid-template-columns: 1fr; } .champ-row { grid-template-columns: 38px minmax(96px, 0.8fr) minmax(120px, 1.2fr) 58px; } .champ-row__gap { display: none; } }
 	    @media (max-width: 980px) { .cop-page { grid-template-columns: 1fr; } .cop-chat { height: min(680px, calc(100vh - 140px)); } .ai-vis__row { grid-template-columns: 60px 1fr; } .ai-vis__bars, .ai-vis__rec { grid-column: 1 / -1; } .ai-vis__quality { grid-column: 2; justify-self: start; } .factors { grid-template-columns: 1fr; } }
+	    @media (max-width: 760px) { .race-pred__sections { grid-template-columns: 1fr; } }
 	    @keyframes pw-typing { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
 	    @media (prefers-reduced-motion: reduce) { .cop-chat__typing i { animation: none; } }
 	    `;
@@ -339,7 +349,7 @@
 	    const color = constructor.color || driver.color || standingsColor(index);
 	    return (
 	      <div className="race-pick" style={{ "--_c": color, "--_w": Math.max(5, confidence * 100) + "%" }}>
-	        <Avatar initials={code || name.slice(0, 3).toUpperCase()} number={isConstructor ? "" : driver.num} ring={color} src={isConstructor ? "" : driver.image} size="sm" />
+	        <Avatar initials={code || name.slice(0, 3).toUpperCase()} number={isConstructor ? "" : driver.num} ring={color} src={isConstructor ? "" : (driver.remoteImage || driver.image)} size="sm" />
 	        <div>
 	          <div className="race-pick__name">{name}</div>
 	          <div className="race-pick__meta"><span>{kind}</span><span>confidence {predictionPercent(confidence)}</span></div>
@@ -375,8 +385,9 @@
 	    const labels = predictionBoardLabels(pageId);
 	    const winner = Array.isArray(predictions.winner) ? predictions.winner.slice(0, 3) : [];
 	    const podium = Array.isArray(predictions.podium) ? predictions.podium.slice(0, 3) : [];
+	    const leaderboard = Array.isArray(predictions.leaderboard) ? predictions.leaderboard.slice(0, 22) : [];
 	    const watchlist = Array.isArray(predictions.watchlist) ? predictions.watchlist.slice(0, 4) : [];
-	    if (!winner.length && !podium.length && !watchlist.length) return null;
+	    if (!winner.length && !podium.length && !leaderboard.length && !watchlist.length) return null;
 	    return (
 	      <section className="race-pred">
 	        <div className="race-pred__head">
@@ -387,29 +398,51 @@
 	          <Badge tone="success">Computed</Badge>
 	        </div>
 	        {predictions.summary && <div className="race-pred__summary">{predictions.summary}</div>}
-	        {winner.length > 0 && (
-	          <div className="race-pred__section">
-	            <div className="race-pred__label">{labels.winner}</div>
-	            {winner.map((item, index) => <PredictionCandidate D={D} item={item} index={index} kind={labels.winnerKind} pageId={pageId} key={`${item.code || "win"}-${index}`} />)}
-	          </div>
-	        )}
-	        {podium.length > 0 && (
-	          <div className="race-pred__section">
-	            <div className="race-pred__label">{labels.podium}</div>
-	            {podium.map((item, index) => <PredictionCandidate D={D} item={item} index={index} kind={labels.podiumKind(index)} pageId={pageId} key={`${item.code || "podium"}-${index}`} />)}
-	          </div>
-	        )}
-	        {watchlist.length > 0 && (
-	          <div className="race-pred__section">
-	            <div className="race-pred__label">{labels.watchlist}</div>
-	            {watchlist.map((item, index) => (
-	              <div className="race-watch" key={`${item.label || "watch"}-${index}`}>
-	                <div className="race-watch__top"><span>{item.label || "Prediction"}</span><span>{predictionPercent(item.confidence)}</span></div>
-	                <div className="race-watch__body">{item.prediction || item.reason}</div>
+	        <div className="race-pred__sections">
+	          {winner.length > 0 && (
+	            <div className="race-pred__section">
+	              <div className="race-pred__label">{labels.winner}</div>
+	              {winner.map((item, index) => <PredictionCandidate D={D} item={item} index={index} kind={labels.winnerKind} pageId={pageId} key={`${item.code || "win"}-${index}`} />)}
+	            </div>
+	          )}
+	          {podium.length > 0 && (
+	            <div className="race-pred__section">
+	              <div className="race-pred__label">{labels.podium}</div>
+	              {podium.map((item, index) => <PredictionCandidate D={D} item={item} index={index} kind={labels.podiumKind(index)} pageId={pageId} key={`${item.code || "podium"}-${index}`} />)}
+	            </div>
+	          )}
+	          {leaderboard.length > 0 && (
+	            <div className="race-pred__section race-pred__section--wide">
+	              <div className="race-pred__label">Full leaderboard</div>
+	              <div className="race-board">
+	                {leaderboard.map((item, index) => {
+	                  const code = item.code || "";
+	                  const driver = D.byCode?.[code] || {};
+	                  const name = item.label || driver.name || code || "Driver";
+	                  return (
+	                    <div className="race-board__row" key={`${code || name}-${index}`}>
+	                      <span className="race-board__pos">P{index + 1}</span>
+	                      <span className="race-board__driver">{name}</span>
+	                      <span className="race-board__prob">{predictionPercent(item.probability)}</span>
+	                      {item.reason && <span className="race-board__reason">{item.reason}</span>}
+	                    </div>
+	                  );
+	                })}
 	              </div>
-	            ))}
-	          </div>
-	        )}
+	            </div>
+	          )}
+	          {watchlist.length > 0 && (
+	            <div className="race-pred__section race-pred__section--wide">
+	              <div className="race-pred__label">{labels.watchlist}</div>
+	              {watchlist.map((item, index) => (
+	                <div className="race-watch" key={`${item.label || "watch"}-${index}`}>
+	                  <div className="race-watch__top"><span>{item.label || "Prediction"}</span><span>{predictionPercent(item.confidence)}</span></div>
+	                  <div className="race-watch__body">{item.prediction || item.reason}</div>
+	                </div>
+	              ))}
+	            </div>
+	          )}
+	        </div>
 	        {predictions.caveat && <div className="race-pred__caveat">{predictions.caveat}</div>}
 	      </section>
 	    );
@@ -530,7 +563,7 @@
 	      computed: false,
 	      alerts: [],
 	      visualization: null,
-	      predictions: { available: false, title: "", summary: "", winner: [], podium: [], watchlist: [], caveat: "" },
+	      predictions: { available: false, title: "", summary: "", winner: [], podium: [], leaderboard: [], watchlist: [], caveat: "" },
 	    };
 	    const showAiVisualization = activeTab !== "drivers-championship" && activeTab !== "constructors-championship";
 	    const showPredictionBoard = Boolean(selectedPage.predictions?.available);
@@ -639,7 +672,7 @@
         {activeTab === "ask-copilot" ? (
           <div className="cop-page cop-page--chat">{chatPanel}</div>
         ) : (
-          <div className="cop-page">
+          <div className={`cop-page${showPredictionBoard ? " cop-page--projections" : ""}`}>
             <div className="cop__main">
               <section className="cop-hero">
                 <div className="cop-hero__top">
@@ -685,7 +718,7 @@
 	                    return (
 	                      <div className="pred" key={p.code}>
 	                        <div className="pred__top">
-	                          <Avatar initials={p.code} number={d.num} ring={d.color} src={d.image} size="md" />
+	                          <Avatar initials={p.code} number={d.num} ring={d.color} src={d.remoteImage || d.image} size="md" />
 	                          <div><div className="pred__label">{p.label}</div><div className="pred__name">{d.name.split(" ")[1] || d.name}</div></div>
 	                        </div>
 	                        <div className="pred__metric"><span className="pred__metricv">{p.points}</span><span className="pred__metricu">pts</span></div>

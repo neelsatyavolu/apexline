@@ -35,7 +35,7 @@
     document.head.appendChild(el);
   }
 
-  function Schedule() {
+  function Schedule({ onNavigate } = {}) {
     const { data: D, dataSource } = window.PW.usePitWall();
     const liveRound = D.schedule.find((r) => r.status === "live") || D.schedule.find((r) => r.status === "upcoming") || D.schedule[0] || {};
     const [selectedRound, setSelectedRound] = React.useState(liveRound.rnd);
@@ -66,6 +66,15 @@
       });
     }
 
+    function openWeekendRecap(race) {
+      const params = new URLSearchParams(window.location.search || "");
+      params.set("screen", "weekend");
+      if (race?.rnd) params.set("weekendRound", String(race.rnd));
+      params.set("weekendMode", "recap");
+      window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}${window.location.hash || ""}`);
+      if (onNavigate) onNavigate("weekend");
+    }
+
     return (
       <div className="sched">
         <div>
@@ -80,7 +89,7 @@
           </div>
           <div className="sched__list">
             {D.schedule.length ? D.schedule.map((r) => (
-              <div className="race" key={r.rnd} data-live={r.status === "live"} data-done={r.status === "done"} data-selected={selectedRound === r.rnd} onClick={() => setSelectedRound(r.rnd)}>
+              <div className="race" key={r.rnd} data-live={r.status === "live"} data-done={r.status === "done"} data-selected={selectedRound === r.rnd} onClick={() => openWeekendRecap(r)}>
                 <div className="race__rnd"><span className="race__rndn">{r.rnd}</span><span className="race__rndl">Round</span></div>
                 <div>
                   <div className="race__name">{r.name}</div>

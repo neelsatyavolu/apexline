@@ -55,9 +55,9 @@
     .saved:last-child { border-bottom: 0; }
     .saved__txt { font-size: var(--text-sm); color: var(--text-secondary); line-height: 1.35; }
     .empty { padding: var(--space-8); border: 1px dashed var(--border-default); border-radius: var(--radius-md); color: var(--text-tertiary); text-align: center; font-size: var(--text-sm); }
-    .news-reader { position: fixed; inset: 0; z-index: 140; display: grid; place-items: center; padding: var(--space-9); background: rgba(3,5,8,0.72); backdrop-filter: blur(12px); }
-    .news-reader__panel { width: min(920px, 100%); max-height: min(860px, calc(100vh - 48px)); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); border-radius: var(--radius-lg); border: 1px solid var(--border-default); background: color-mix(in srgb, var(--surface-overlay) 94%, black); box-shadow: var(--shadow-lg); }
-    .news-reader__bar { display: flex; align-items: center; gap: var(--space-5); padding: var(--space-6) var(--space-7); border-bottom: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--bg-base) 78%, transparent); }
+    .news-reader { position: fixed; inset: 0; z-index: 140; display: grid; place-items: center; padding: var(--space-9); background: radial-gradient(80% 70% at 50% 8%, rgba(226,31,38,0.14), transparent 58%), rgba(3,5,8,0.78); backdrop-filter: blur(14px); }
+    .news-reader__panel { width: min(920px, 100%); max-height: min(860px, calc(100vh - 48px)); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); border-radius: var(--radius-lg); border: 1px solid var(--border-default); background: color-mix(in srgb, var(--surface-overlay) 95%, black); box-shadow: 0 28px 90px rgba(0,0,0,0.48), 0 0 0 1px rgba(255,255,255,0.03) inset; }
+    .news-reader__bar { min-width: 0; display: flex; align-items: center; gap: var(--space-5); padding: var(--space-6) var(--space-7); border-bottom: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--bg-base) 82%, transparent); }
     .news-reader__kicker { color: var(--text-tertiary); font-size: var(--text-xs); font-weight: 700; text-transform: uppercase; letter-spacing: var(--tracking-caps); }
     .news-reader__close { margin-left: auto; }
     .news-reader__scroll { overflow-y: auto; }
@@ -66,14 +66,16 @@
       var(--grad-carbon), var(--bg-sunken); }
     .news-reader__hero img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .news-reader__hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 48%, rgba(5,7,11,0.72)); pointer-events: none; }
-    .news-reader__content { padding: clamp(var(--space-8), 4vw, 44px); }
+    .news-reader__content { width: min(100%, 760px); margin-inline: auto; padding: clamp(var(--space-8), 4vw, 44px); }
     .news-reader__meta { display: flex; align-items: center; gap: var(--space-5); flex-wrap: wrap; margin-bottom: var(--space-6); }
-    .news-reader__source { color: var(--text-tertiary); font-size: var(--text-sm); }
-    .news-reader__title { margin: 0; max-width: 20ch; font-family: var(--font-display); font-size: clamp(30px, 4vw, 52px); line-height: 1.02; letter-spacing: 0; color: var(--text-strong); text-wrap: pretty; }
+    .news-reader__source { min-width: 0; color: var(--text-tertiary); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .news-reader__title { margin: 0; max-width: 20ch; font-family: var(--font-display); font-size: clamp(30px, 4vw, 48px); line-height: 1.04; letter-spacing: 0; color: var(--text-strong); text-wrap: pretty; }
     .news-reader__deck { max-width: 68ch; margin: var(--space-7) 0 0; color: var(--text-secondary); font-size: var(--text-lg); line-height: 1.55; text-wrap: pretty; }
     .news-reader__body { max-width: 68ch; margin-top: var(--space-8); padding-top: var(--space-8); border-top: 1px solid var(--border-subtle); color: color-mix(in srgb, var(--text-primary) 88%, white); font-size: 16px; line-height: 1.72; }
     .news-reader__body p { margin: 0 0 1.15em; }
     .news-reader__body p:last-child { margin-bottom: 0; }
+    .news-reader__gallery { max-width: 980px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6); margin-top: var(--space-9); }
+    .news-reader__gallery img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); background: var(--bg-sunken); }
     .news-reader__foot { display: flex; align-items: center; gap: var(--space-5); flex-wrap: wrap; margin-top: var(--space-9); }
     .news-reader__hint { color: var(--text-tertiary); font-size: var(--text-xs); line-height: 1.4; }
     @media (max-width: 760px) {
@@ -81,15 +83,18 @@
       .news-reader { padding: var(--space-5); }
       .news-reader__panel { max-height: calc(100vh - 24px); }
       .news-reader__content { padding: var(--space-8); }
+      .news-reader__gallery { grid-template-columns: 1fr; }
     }
     `;
 
   function articleParagraphs(story) {
     const leadText = String(story?.lead || "").replace(/\s+/g, " ").trim();
-    const bodyText = String(story?.body || story?.articleText || story?.summary || "").replace(/\s+/g, " ").trim();
+    const bodyText = String(story?.body || story?.articleText || story?.summary || "").replace(/\r/g, "").trim();
     const rawText = bodyText.startsWith(leadText) ? bodyText.slice(leadText.length).trim() : bodyText;
     if (!rawText && leadText) return [];
     if (!rawText) return ["This source only supplied a headline. Open the source for the full article."];
+    const sourceParagraphs = rawText.split(/\n{2,}/).map((text) => text.replace(/\s+/g, " ").trim()).filter(Boolean);
+    if (sourceParagraphs.length > 1) return sourceParagraphs;
     const words = rawText.split(/\s+/);
     if (words.length <= 58) return [rawText];
     const paragraphs = [];
@@ -123,6 +128,7 @@
     const selectedStory = stories.find((n) => n.id === selectedId) || lead || stories[0];
     const savedStories = stories.filter((n) => bookmarks.includes(n.id));
     const readerParagraphs = articleParagraphs(readerStory);
+    const readerImages = Array.from(new Set([readerStory?.image, ...(readerStory?.images || [])].filter(Boolean)));
 
     React.useEffect(() => {
       if (!selectedId && stories[0]) setSelectedId(stories[0].id);
@@ -264,6 +270,13 @@
                   {readerParagraphs.length > 0 && (
                     <div className="news-reader__body">
                       {readerParagraphs.map((paragraph, index) => <p key={index}>{paragraph}</p>)}
+                    </div>
+                  )}
+                  {readerImages.length > 1 && (
+                    <div className="news-reader__gallery">
+                      {readerImages.slice(1).map((image, index) => (
+                        <img key={image || index} src={image} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} />
+                      ))}
                     </div>
                   )}
                   <div className="news-reader__foot">

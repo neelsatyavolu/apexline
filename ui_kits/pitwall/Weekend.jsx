@@ -6,6 +6,7 @@
     Avatar, FlagStatus, TimingRow, TimingRowHeader, SegmentedControl } = NS;
 
   const STYLE_ID = "pw-weekend-styles";
+  const F1_LIVE_TIMING_POLL_INTERVAL_MS = 500;
   if (!document.getElementById(STYLE_ID)) {
     const el = document.createElement("style");
     el.id = STYLE_ID;
@@ -131,8 +132,62 @@
     return live?.kind || done?.kind || selectedRaceSession?.kind || sessions[0]?.kind || "";
   }
 
+  function sessionHasStarted(session, nowMs) {
+    if (!session) return true;
+    const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+    const startsAt = Date.parse(session.startsAt || session.dateStart || session.date_start || "");
+    if (Number.isFinite(startsAt) && startsAt > now) return false;
+    if (Number.isFinite(startsAt) && startsAt <= now) return true;
+    const status = raceMatchText(session.status);
+    if (status === "done" || status === "live" || status === "completed") return true;
+    if (status === "upcoming" || status === "scheduled") return false;
+    return true;
+  }
+
   function raceMatchText(value) {
     return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  }
+
+  function stableRandomValue(seed, code) {
+    const text = `${seed || "session"}:${code || ""}`;
+    let hash = 2166136261;
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+
+  function pendingSessionRows(D, selectedSession, fallbackRows) {
+    const byCode = D.byCode || {};
+    const seen = new Set();
+    const addDriver = (driver = {}) => {
+      const code = driver.code || driver.abbr || driver.shortName || "";
+      if (!code || seen.has(code)) return null;
+      seen.add(code);
+      const details = byCode[code] || {};
+      return {
+        pos: null,
+        code,
+        name: driver.name || details.name || code,
+        number: driver.num || driver.number || details.num,
+        color: driver.color || details.color || "var(--accent)",
+        time: "—",
+        gap: "—",
+        interval: "—",
+        laps: "—",
+        fastestLap: "—",
+        detail: "session pending",
+        placeholder: true,
+      };
+    };
+    const drivers = [
+      ...(D.drivers || []),
+      ...(D.standings || []).map((row) => ({ ...row, ...(byCode[row.code] || {}) })),
+      ...(fallbackRows || []),
+    ].map(addDriver).filter(Boolean);
+    const seed = [selectedSession?.kind, selectedSession?.startsAt, selectedSession?.status].filter(Boolean).join("|");
+    return drivers.sort((a, b) => stableRandomValue(seed, b.code) - stableRandomValue(seed, a.code) || a.code.localeCompare(b.code));
   }
 
   function matchAnalyticsLibraryRace(selectedRace, analyticsLibrary) {
@@ -200,7 +255,8 @@
     return currentGap != null ? `+${Math.max(0, currentGap - previousGap).toFixed(3)}s` : "—";
   }
 
-  function sessionResultRows(D, analytics, fallbackRows) {
+  function sessionResultRows(D, analytics, fallbackRows, selectedSession) {
+    if (!sessionHasStarted(selectedSession)) return pendingSessionRows(D, selectedSession, fallbackRows);
     const drivers = analytics?.drivers || [];
     if (drivers.length) {
       const sessionLabel = String([analytics?.session?.name, analytics?.session?.type].filter(Boolean).join(" ")).toLowerCase();
@@ -268,7 +324,7 @@
       { k: "Rows", v: resultRows.length || "—", n: analytics?.source || dataSource },
       { k: "Fastest", v: fastest?.fastestLap || "—", n: fastest?.code || selectedSession?.kind || "session" },
       { k: "Laps", v: totalLaps || "—", n: "loaded across field" },
-      { k: "Track", v: weather.track != null && weather.track !== "" ? `${weather.track}deg` : "—", n: weather.cond || dataSource },
+      { k: "Track", v: weather.track != null && weather.track !== "" ? `${weather.track}°` : "—", n: weather.cond || dataSource },
     ];
   }
 
@@ -280,15 +336,15 @@
     const wx = weather || {};
     return (
       <div className="wk-wx">
-        <div className="wk-wx__c"><span className="wk-wx__ic"><Icon name="thermometer" size={17} /></span><div><div className="wk-wx__v">{weatherValue(wx.air, "n/a")}{wx.air !== "" && wx.air != null ? "deg" : ""}</div><div className="wk-wx__l">Air temp</div></div></div>
-        <div className="wk-wx__c"><span className="wk-wx__ic"><Icon name="gauge" size={17} /></span><div><div className="wk-wx__v">{weatherValue(wx.track, "n/a")}{wx.track !== "" && wx.track != null ? "deg" : ""}</div><div className="wk-wx__l">Track</div></div></div>
+        <div className="wk-wx__c"><span className="wk-wx__ic"><Icon name="thermometer" size={17} /></span><div><div className="wk-wx__v">{weatherValue(wx.air, "n/a")}{wx.air !== "" && wx.air != null ? "°" : ""}</div><div className="wk-wx__l">Air temp</div></div></div>
+        <div className="wk-wx__c"><span className="wk-wx__ic"><Icon name="gauge" size={17} /></span><div><div className="wk-wx__v">{weatherValue(wx.track, "n/a")}{wx.track !== "" && wx.track != null ? "°" : ""}</div><div className="wk-wx__l">Track</div></div></div>
         <div className="wk-wx__c"><span className="wk-wx__ic"><Icon name="droplet" size={17} /></span><div><div className="wk-wx__v">{weatherValue(wx.rain, "n/a")}</div><div className="wk-wx__l">Rain</div></div></div>
         <div className="wk-wx__c"><span className="wk-wx__ic"><Icon name="wind" size={17} /></span><div><div className="wk-wx__v">{String(weatherValue(wx.wind, "n/a")).split(" ")[0]}</div><div className="wk-wx__l">Wind km/h</div></div></div>
       </div>
     );
   }
 
-  function LiveTiming({ D, selectedRace, selectedRaceSession, rows, onGoLive, dataSource }) {
+  function LiveTiming({ D, selectedRace, selectedRaceSession, rows, onGoLive, dataSource, raceWeather, raceStatus }) {
     const [selected, setSelected] = React.useState(rows[0]?.code || "");
     const leaderRow = rows[0] || {};
     const leader = D.byCode[leaderRow.code] || {};
@@ -301,6 +357,8 @@
     const battlePair = D.battlePairs?.[0] || null;
     const battleA = battlePair ? D.byCode[battlePair.a] || {} : D.byCode[leaderRow.code] || {};
     const battleB = battlePair ? D.byCode[battlePair.b] || {} : D.byCode[second.code] || {};
+    const weather = raceWeather || D.race?.weather || {};
+    const statusLabel = raceStatus || weather.cond || "Status";
 
     return (
       <>
@@ -339,11 +397,11 @@
           </Card>
 
           <div className="wk__rail">
-            <Card title="Race control" aside={<FlagStatus status={D.race?.weather?.cond === "Rain" ? "yellow" : "green"} label={D.race?.weather?.cond || "Status"} />}>
+            <Card title="Race control" aside={<FlagStatus status={weather.cond === "Rain" ? "yellow" : "green"} label={statusLabel} />}>
               <div className="wk-rc">
                 <div className="wk-rc__row"><span className="wk-rc__k"><Icon name="flag" size={15} /> Session</span><span className="wk-rc__v">{selectedRaceSession?.kind || "n/a"}</span></div>
                 <div className="wk-rc__row"><span className="wk-rc__k"><Icon name="timer" size={15} /> Starts</span><span className="wk-rc__v">{selectedRaceSession?.time || selectedRace.date || "n/a"}</span></div>
-                <div className="wk-rc__row"><span className="wk-rc__k"><Icon name="trophy" size={15} /> Leader</span><span className="wk-rc__v">{leaderRow.code || "n/a"} {leaderRow.code && <Avatar initials={leaderRow.code} number={leader.num} ring={leader.color} src={leader.image} size="sm" />}</span></div>
+                <div className="wk-rc__row"><span className="wk-rc__k"><Icon name="trophy" size={15} /> Leader</span><span className="wk-rc__v">{leaderRow.code || "n/a"} {leaderRow.code && <Avatar initials={leaderRow.code} number={leader.num} ring={leader.color} src={leader.remoteImage || leader.image} size="sm" />}</span></div>
                 <div className="wk-rc__row"><span className="wk-rc__k"><Icon name="stopwatch" size={15} /> Source</span><span className="wk-rc__v">{D.source || "seed"}</span></div>
               </div>
               <Button variant="primary" size="sm" iconLeft={<Icon name="play" size={14} />} onClick={onGoLive} style={{ width: "100%", marginTop: "var(--space-7)" }}>
@@ -353,9 +411,9 @@
 
             <Card title="Battle watch" subtitle={battlePair ? "Detected from timing intervals" : "Waiting for close interval"} aside={<Badge tone={battlePair ? "accent" : "outline"}>{battlePair ? "LIVE" : "WATCH"}</Badge>}>
               <div className="wk-battle">
-                <Avatar initials={battlePair?.a || leaderRow.code || "P1"} number={battleA.num} ring={battleA.color || "var(--accent)"} src={battleA.image} />
+                <Avatar initials={battlePair?.a || leaderRow.code || "P1"} number={battleA.num} ring={battleA.color || "var(--accent)"} src={battleA.remoteImage || battleA.image} />
                 <span className="wk-battle__vs">VS</span>
-                <Avatar initials={battlePair?.b || second.code || "P2"} number={battleB.num} ring={battleB.color || "var(--text-tertiary)"} src={battleB.image} />
+                <Avatar initials={battlePair?.b || second.code || "P2"} number={battleB.num} ring={battleB.color || "var(--text-tertiary)"} src={battleB.remoteImage || battleB.image} />
                 <div className="wk-battle__gap">
                   <GapDelta value={battlePair ? "+" + battlePair.gap.toFixed(1) + "s" : second.interval || "n/a"} trend={battlePair ? "gain" : "flat"} />
                   <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)" }}>{battlePair ? `${battlePair.a} · ${battlePair.b}` : "closest loaded pair"}</div>
@@ -366,8 +424,8 @@
               </div>
             </Card>
 
-            <Card title="Track conditions" subtitle={[selectedRace.loc, "OpenF1"].filter(Boolean).join(" · ")}>
-              <WeatherGrid weather={D.race?.weather} />
+            <Card title="Track conditions" subtitle={[D.race?.weatherLoc || selectedRace.loc, "OpenF1"].filter(Boolean).join(" · ")}>
+              <WeatherGrid weather={weather} />
             </Card>
           </div>
         </div>
@@ -391,7 +449,7 @@
       stories.push({ icon: "trophy", tag: "Form", text: `${driver.name || rows[0].code} leads the currently loaded ${D.timing?.length ? "timing" : "standings"} feed.` });
     }
     if (!stories.length) {
-      stories.push({ icon: "timer", tag: "Data", text: "Live weekend data is loading from OpenF1 and Jolpica." });
+      stories.push({ icon: "timer", tag: "Data", text: "Live weekend data is loading from OpenF1." });
     }
     return stories.slice(0, 4);
   }
@@ -407,13 +465,12 @@
     const [libraryLoading, setLibraryLoading] = React.useState(false);
     const libraryRace = matchAnalyticsLibraryRace(selectedRace, analyticsLibrary);
     const recapMeetingKey = selectedRace.meetingKey || libraryRace?.meetingKey || "";
-    const analyticsKey = [recapMeetingKey || "", selectedSessionKind].join(":");
+    const analyticsKey = [recapMeetingKey || "", selectedRace.name || "", selectedRace.startsAt || "", selectedSessionKind].join(":");
     const [analyticsState, setAnalyticsState] = React.useState({ key: "", loading: false, data: null, error: "" });
     const countdownTarget = selectedRaceSession?.startsAt || selectedRace.startsAt || D.race?.startsAt || "";
-    const leaderRow = rows[0] || {};
-    const leader = D.byCode[leaderRow.code] || {};
     const selectedAnalytics = analyticsState.key === analyticsKey ? analyticsState.data : null;
-    const resultRows = sessionResultRows(D, selectedAnalytics, rows).slice(0, 20);
+    const selectedSessionStarted = sessionHasStarted(selectedRecapSession);
+    const resultRows = sessionResultRows(D, selectedAnalytics, rows, selectedRecapSession);
     const metrics = recapMetrics(selectedAnalytics, resultRows, selectedRecapSession, dataSource);
 
     React.useEffect(() => {
@@ -439,12 +496,12 @@
     }, [selectedRace.meetingKey, analyticsSeason]);
 
     React.useEffect(() => {
-      if (!recapMeetingKey || !selectedSessionKind || !window.pitwall?.analytics?.session) {
+      if (!selectedSessionStarted || !recapMeetingKey || !selectedSessionKind || !window.pitwall?.analytics?.session) {
         setAnalyticsState({
           key: analyticsKey,
           loading: libraryLoading,
           data: null,
-          error: libraryLoading ? "Loading race weekend sessions..." : "",
+          error: selectedSessionStarted && libraryLoading ? "Loading race weekend sessions..." : "",
         });
         return;
       }
@@ -455,13 +512,20 @@
         data: current.key === analyticsKey ? current.data : null,
         error: "",
       }));
-      window.pitwall.analytics.session({ meetingKey: recapMeetingKey, sessionKind: selectedSessionKind, season: analyticsSeason }).then((data) => {
+      window.pitwall.analytics.session({
+        meetingKey: recapMeetingKey,
+        sessionKind: selectedSessionKind,
+        season: analyticsSeason,
+        raceName: selectedRace.name || "",
+        raceStartsAt: selectedRace.startsAt || "",
+        sessionStartsAt: selectedRecapSession?.startsAt || "",
+      }).then((data) => {
         if (active) setAnalyticsState({ key: analyticsKey, loading: false, data, error: "" });
       }).catch(() => {
         if (active) setAnalyticsState({ key: analyticsKey, loading: false, data: null, error: "Session result feed unavailable" });
       });
       return () => { active = false; };
-    }, [recapMeetingKey, selectedSessionKind, analyticsSeason, libraryLoading]);
+    }, [selectedSessionStarted, recapMeetingKey, selectedSessionKind, analyticsSeason, libraryLoading, selectedRace.name, selectedRace.startsAt, selectedRecapSession?.startsAt]);
 
     return (
       <>
@@ -477,10 +541,6 @@
             <div>
               <div className="wk-hero__cdl">{selectedRaceSession?.kind ? selectedRaceSession.kind + " starts in" : "Next session"}</div>
               {countdownTarget ? <Countdown to={countdownTarget} size="md" /> : <Badge tone="outline">{dataSource}</Badge>}
-            </div>
-            <div>
-              <div className="wk-hero__cdl">Loaded leader</div>
-              {leaderRow.code ? <DriverTag position={leaderRow.pos || 1} code={leaderRow.code} name={leader.name || leaderRow.code} team={leader.color || "var(--accent)"} /> : <Badge tone="outline">Waiting for standings</Badge>}
             </div>
             <div style={{ marginLeft: "auto" }}>
               <Button variant="primary" size="md" iconLeft={<Icon name="play" size={15} />} onClick={onGoLive}>Watch live</Button>
@@ -517,7 +577,7 @@
                   <span>Pos</span><span>Driver</span><span>Time</span><span>Gap</span><span>Interval</span><span>Laps</span><span>Data</span>
                 </div>
                 {resultRows.length ? resultRows.map((g, index) => (
-                  <div className="wk-recap-row" key={`${g.code}-${index}`} data-leader={index === 0}>
+                  <div className="wk-recap-row" key={`${g.code}-${index}`} data-leader={index === 0 && !g.placeholder}>
                     <span className="wk-recap-pos">{g.pos || index + 1}</span>
                     <DriverTag code={g.code} name={g.name || g.code} number={g.number} team={g.color || "var(--accent)"} compact />
                     <span className="wk-recap-mono">{g.time}</span>
@@ -568,7 +628,7 @@
               </div>
             </Card>
 
-            <Card title="Sunday outlook" subtitle={[selectedRace.loc || D.race?.loc, "OpenF1"].filter(Boolean).join(" · ")}>
+            <Card title="Sunday outlook" subtitle={[D.race?.weatherLoc || selectedRace.loc || D.race?.loc, "OpenF1"].filter(Boolean).join(" · ")}>
               <WeatherGrid weather={D.race?.weather} />
             </Card>
           </div>
@@ -582,15 +642,60 @@
     const query = new URLSearchParams(window.location.search || "");
     const requestedRound = query.get("weekendRound") || "";
     const requestedSessionKind = query.get("weekendSession") || "";
+    const requestedMode = query.get("weekendMode") || "";
     const selectedRace = pickRace(D, requestedRound);
     const selectedRaceSession = pickSession(selectedRace, D, requestedSessionKind);
-    const rows = timingRows(D);
     const hasLiveTiming = Boolean(selectedRaceSession?.status === "live");
-    const [mode, setMode] = React.useState(hasLiveTiming ? "live" : "recap");
+    const [liveTimingData, setLiveTimingData] = React.useState(null);
+    const liveTimingInFlightRef = React.useRef(false);
+    const liveTimingRequestIdRef = React.useRef(0);
+    const rows = hasLiveTiming && liveTimingData?.timing?.length ? liveTimingData.timing : timingRows(D);
+    const liveDataSource = liveTimingData?.sourceLabel || liveTimingData?.message || dataSource;
+    const liveWeather = liveTimingData?.weather && Object.values(liveTimingData.weather).some((value) => value !== "" && value !== null && value !== undefined)
+      ? liveTimingData.weather
+      : null;
+    const liveRaceStatus = liveTimingData?.raceStatus
+      || liveTimingData?.sessionStatus
+      || liveTimingData?.sessionClock?.trackStatus?.message
+      || liveTimingData?.sessionClock?.trackStatus?.status
+      || liveTimingData?.sessionClock?.status
+      || "";
+    const [mode, setMode] = React.useState(requestedMode === "recap" ? "recap" : hasLiveTiming ? "live" : "recap");
 
     React.useEffect(() => {
-      setMode(hasLiveTiming ? "live" : "recap");
-    }, [hasLiveTiming]);
+      setMode(requestedMode === "recap" ? "recap" : hasLiveTiming ? "live" : "recap");
+    }, [hasLiveTiming, requestedMode]);
+
+    React.useEffect(() => {
+      if (!hasLiveTiming || !window.pitwall?.data?.liveTiming) {
+        setLiveTimingData(null);
+        return undefined;
+      }
+      let cancelled = false;
+      const loadLiveTiming = async () => {
+        if (liveTimingInFlightRef.current) return;
+        const requestId = liveTimingRequestIdRef.current + 1;
+        liveTimingRequestIdRef.current = requestId;
+        liveTimingInFlightRef.current = requestId;
+        try {
+          const data = await window.pitwall.data.liveTiming({ source: "f1", targetLatencySeconds: 0 });
+          if (cancelled) return;
+          setLiveTimingData((current) => data?.timing?.length ? data : current?.timing?.length ? current : data || null);
+        } catch {
+          if (!cancelled) setLiveTimingData({ ok: false, timing: [], weather: {}, sourceLabel: "Formula 1 live timing unavailable", message: "Formula 1 live timing is unavailable." });
+        } finally {
+          if (liveTimingInFlightRef.current === requestId) liveTimingInFlightRef.current = false;
+        }
+      };
+      loadLiveTiming();
+      const timer = setInterval(loadLiveTiming, F1_LIVE_TIMING_POLL_INTERVAL_MS);
+      return () => {
+        cancelled = true;
+        liveTimingRequestIdRef.current += 1;
+        liveTimingInFlightRef.current = false;
+        clearInterval(timer);
+      };
+    }, [hasLiveTiming, selectedRaceSession?.kind]);
 
     return (
       <div className="wk">
@@ -611,7 +716,7 @@
         </div>
 
         {mode === "live"
-          ? <LiveTiming D={D} selectedRace={selectedRace} selectedRaceSession={selectedRaceSession} rows={rows} onGoLive={onGoLive} dataSource={dataSource} />
+          ? <LiveTiming D={D} selectedRace={selectedRace} selectedRaceSession={selectedRaceSession} rows={rows} onGoLive={onGoLive} dataSource={liveDataSource} raceWeather={liveWeather} raceStatus={liveRaceStatus} />
           : <Recap D={D} selectedRace={selectedRace} selectedRaceSession={selectedRaceSession} rows={rows} onGoLive={onGoLive} dataSource={dataSource} requestedSessionKind={requestedSessionKind} />}
       </div>
     );

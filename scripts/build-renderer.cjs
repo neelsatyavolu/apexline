@@ -12,6 +12,9 @@ const screens = [
   "Weekend",
   "LiveRacing",
   "Leaderboards",
+  "TrackMap",
+  "Drivers",
+  "Teams",
   "Schedule",
   "News",
   "Analytics",
@@ -22,6 +25,8 @@ const screens = [
 fs.mkdirSync(outDir, { recursive: true });
 fs.copyFileSync(path.join(srcDir, "data.js"), path.join(outDir, "data.js"));
 fs.copyFileSync(path.join(srcDir, "sync.js"), path.join(outDir, "sync.js"));
+fs.copyFileSync(path.join(srcDir, "theme.js"), path.join(outDir, "theme.js"));
+fs.copyFileSync(path.join(srcDir, "trackmap-circuits.js"), path.join(outDir, "trackmap-circuits.js"));
 
 for (const name of screens) {
   const sourcePath = path.join(srcDir, `${name}.jsx`);
@@ -56,15 +61,20 @@ const html = `<!-- Built PitWall renderer. Source: ui_kits/pitwall/index.html --
 <script src="../../node_modules/hls.js/dist/hls.min.js"></script>
 <script src="../../node_modules/shaka-player/dist/shaka-player.compiled.js"></script>
 <script src="../../_ds_bundle.js"></script>
+<script src="theme.js"></script>
 <script src="data.js"></script>
 <script src="sync.js"></script>
+<script src="trackmap-circuits.js"></script>
 ${screenScripts}
 <script>
   const { AppShell } = window.PW;
   const TITLES = {
     dashboard: { t: "Dashboard", c: "Live F1 overview" },
     weekend: { t: "Weekend", c: "Race weekend" },
+    trackmap: { t: "Track Map", c: "Circuit & live positions" },
     leaderboards: { t: "Leaderboards", c: "2026 Championship" },
+    drivers: { t: "Drivers", c: "2026 grid" },
+    teams: { t: "Teams", c: "Constructors" },
     schedule: { t: "Schedule", c: "2026 Season" },
     news: { t: "News", c: "Live feed" },
     analytics: { t: "Analytics", c: "Deep dives" },
@@ -72,7 +82,7 @@ ${screenScripts}
     settings: { t: "Settings", c: "" },
   };
   function initialPitWallScreen() {
-    const allowed = new Set(["dashboard", "weekend", "live", "leaderboards", "schedule", "news", "analytics", "copilot", "settings"]);
+    const allowed = new Set(["dashboard", "weekend", "live", "trackmap", "leaderboards", "drivers", "teams", "schedule", "news", "analytics", "copilot", "settings"]);
     const params = new URLSearchParams(window.location.search);
     const fromQuery = params.get("screen");
     const fromHash = window.location.hash.replace(/^#\\/?/, "");
@@ -83,6 +93,7 @@ ${screenScripts}
     const [screen, setScreen] = React.useState(initialPitWallScreen);
     function handleSearchResult(result) {
       if (result && result.driverCode) localStorage.setItem("pw-search-focus", result.driverCode);
+      if (result && result.teamAbbr) localStorage.setItem("pw-team-focus", result.teamAbbr);
       if (result && result.screen) setScreen(result.screen);
     }
     if (screen === "live") {
@@ -92,7 +103,10 @@ ${screenScripts}
     const Screen = {
       dashboard: window.PW.Dashboard,
       weekend: window.PW.Weekend,
+      trackmap: window.PW.TrackMap,
       leaderboards: window.PW.Leaderboards,
+      drivers: window.PW.Drivers,
+      teams: window.PW.Teams,
       schedule: window.PW.Schedule,
       news: window.PW.News,
       analytics: window.PW.Analytics,

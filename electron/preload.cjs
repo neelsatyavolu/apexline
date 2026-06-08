@@ -67,7 +67,7 @@ contextBridge.exposeInMainWorld("pitwall", {
     logout: () => ipcRenderer.invoke("pitwall:f1tv:logout"),
   },
   data: {
-    snapshot: () => ipcRenderer.invoke("pitwall:data:snapshot"),
+    snapshot: (options = {}) => ipcRenderer.invoke("pitwall:data:snapshot", options),
     liveTiming: (options = {}) => ipcRenderer.invoke("pitwall:data:liveTiming", options),
     replayTiming: (options = {}) => ipcRenderer.invoke("pitwall:data:replayTiming", options),
   },
@@ -86,6 +86,15 @@ contextBridge.exposeInMainWorld("pitwall", {
   },
   notifications: {
     schedule: (options = {}) => ipcRenderer.invoke("pitwall:notify:schedule", options),
+  },
+  windowState: {
+    get: () => ipcRenderer.invoke("pitwall:window:state"),
+    onChange: (callback) => {
+      if (typeof callback !== "function") return () => {};
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on("pitwall:window:state", listener);
+      return () => ipcRenderer.removeListener("pitwall:window:state", listener);
+    },
   },
   debug: {
     log: (area, payload = {}) => ipcRenderer.invoke("pitwall:debug:log", area, payload),

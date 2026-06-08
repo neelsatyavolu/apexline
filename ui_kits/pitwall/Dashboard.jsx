@@ -59,6 +59,34 @@
     document.head.appendChild(el);
   }
 
+  function dashboardSessionCandidate(session) {
+    const status = String(session?.status || "").toLowerCase();
+    if (status === "live" || status === "upcoming" || status === "scheduled") return true;
+    if (status === "done" || status === "completed") return false;
+    const startsAt = Date.parse(session?.startsAt || session?.dateStart || session?.date_start || "");
+    return Number.isFinite(startsAt) && startsAt > Date.now();
+  }
+
+  function dashboardNextSession(D) {
+    const currentSession = (D.sessions || []).find((session) => String(session?.status || "").toLowerCase() === "live") ||
+      (D.sessions || []).find(dashboardSessionCandidate);
+    if (currentSession) {
+      return { race: D.race || {}, session: currentSession, startsAt: currentSession.startsAt || D.race?.startsAt || "" };
+    }
+
+    const race = (D.schedule || []).find((item) => (item.sessions || []).some(dashboardSessionCandidate)) ||
+      (D.schedule || []).find((item) => ["live", "upcoming", "scheduled"].includes(String(item?.status || "").toLowerCase()));
+    const session = (race?.sessions || []).find((item) => String(item?.status || "").toLowerCase() === "live") ||
+      (race?.sessions || []).find(dashboardSessionCandidate) ||
+      null;
+    const startsAt = session?.startsAt || race?.startsAt || D.race?.startsAt || "";
+    return startsAt ? { race: race || D.race || {}, session, startsAt } : null;
+  }
+
+  function dashboardCountdownLabel(nextSession) {
+    return nextSession?.session?.kind ? `${nextSession.session.kind} starts in` : nextSession?.startsAt ? "Starts in" : "Schedule status";
+  }
+
   function Dashboard({ onNavigate }) {
     const { data: D, profile, dataSource, refreshData } = window.PW.usePitWall();
     const top5 = D.standings.slice(0, 5);
@@ -70,7 +98,8 @@
     const favoriteTeam = favoriteTeamAbbr ? D.constructors.find((c) => c.abbr === favoriteTeamAbbr) : null;
     const titleGap = top5.length > 1 ? Math.max(0, top5[0].pts - top5[1].pts) : 0;
     const racesLeft = Math.max(0, (D.seasonSummary.totalRounds || D.schedule.length || 0) - (D.seasonSummary.round || 0));
-    const startsAt = D.race.startsAt || D.schedule.find((race) => race.status === "upcoming")?.startsAt;
+    const nextSession = dashboardNextSession(D);
+    const startsAt = nextSession?.startsAt || "";
     return (
       <div className="dash">
         <div className="dash__grid">
@@ -86,7 +115,7 @@
               </div>
               <div className="hero__cd">
                 <div>
-                  <div className="fav__lbl" style={{ marginBottom: 8 }}>{startsAt ? "Starts in" : "Schedule status"}</div>
+                  <div className="fav__lbl" style={{ marginBottom: 8 }}>{dashboardCountdownLabel(nextSession)}</div>
                   {startsAt ? <Countdown to={startsAt} size="md" /> : <Badge tone="outline">{dataSource}</Badge>}
                 </div>
                 <div className="hero__sessions">
@@ -145,7 +174,7 @@
               </div>
             </Card>
 
-            <Card title="Track conditions" subtitle={(D.race.loc || "Latest session") + " · OpenF1"} padding="default">
+            <Card title="Track conditions" subtitle={(D.race.weatherLoc || D.race.loc || "Latest session") + " · OpenF1"} padding="default">
               <div className="weather">
                 <div className="wx"><span className="wx__icon"><Icon name="thermometer" size={17} /></span><div><div className="wx__v">{wx.air != null && wx.air !== "" ? wx.air + "°" : "—"}</div><div className="wx__l">Air temp</div></div></div>
                 <div className="wx"><span className="wx__icon"><Icon name="gauge" size={17} /></span><div><div className="wx__v">{wx.track != null && wx.track !== "" ? wx.track + "°" : "—"}</div><div className="wx__l">Track</div></div></div>
@@ -157,7 +186,7 @@
             <Card title="Your favorites" aside={<Icon name="star" size={15} />} padding="tight">
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {favoriteDriver ? <div className="fav">
-                  <Avatar initials={favoriteDriver.code} number={favoriteDriver.num} ring={favoriteDriver.color} src={favoriteDriver.image} />
+                  <Avatar initials={favoriteDriver.code} number={favoriteDriver.num} ring={favoriteDriver.color} src={favoriteDriver.remoteImage || favoriteDriver.image} />
                   <div><div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{favoriteDriver.name}</div><div className="fav__lbl">{favoriteDriver.team}</div></div>
                   <div className="fav__last"><div className="fav__pos">{favoriteStanding ? "P" + favoriteStanding.pos : "—"}</div><div className="fav__lbl">championship</div></div>
                 </div> : <div className="empty-live">Choose favorite drivers in Settings.</div>}

@@ -76,10 +76,13 @@ const KEY_PROVIDERS = new Set(["anthropic", "openai", "codex", "grok", "f1tv-ema
 const DEFAULT_USER_PROFILE = { name: "", favoriteDrivers: [], favoriteTeams: [], livePanelSizes: null };
 const PROFILE_FILE = "pitwall-profile.json";
 const COPILOT_INSIGHTS_FILE = "pitwall-copilot-insights.json";
-const COPILOT_INSIGHTS_SCHEMA_VERSION = 4;
+const COPILOT_INSIGHTS_SCHEMA_VERSION = 6;
 const DEBUG_LOG_FILE = "pitwall-debug.log";
 const ANALYTICS_SESSION_CACHE_FILE = "pitwall-analytics-session-cache.json";
 const F1TV_LIBRARY_CACHE_FILE = "pitwall-f1tv-library-cache.json";
+const LIVE_SNAPSHOT_CACHE_FILE = "pitwall-live-snapshot-cache.json";
+const F1TV_LIBRARY_CACHE_VERSION = 2;
+const LIVE_SNAPSHOT_CACHE_VERSION = 2;
 const F1TV_HOME_URL = "https://f1tv.formula1.com/";
 const F1TV_LOGIN_URL = "https://account.formula1.com/#/en/login?redirect=https%3A%2F%2Ff1tv.formula1.com%2F";
 const F1TV_AUTH_URL = "https://api.formula1.com/v2/account/subscriber/authenticate/by-password";
@@ -117,12 +120,6 @@ const NEWS_SOURCES = [
     name: "Motorsport.com",
     url: "https://www.motorsport.com/rss/f1/news/",
     type: "rss",
-  },
-  {
-    key: "autosportNews",
-    name: "Autosport",
-    url: "https://www.autosport.com/rss/f1/news/",
-    type: "rss",
     articlePath: /\/f1\/news\//i,
   },
   {
@@ -148,23 +145,24 @@ const NEWS_SOURCES = [
   },
 ];
 const LIVE_NEWS_URLS = Object.fromEntries(NEWS_SOURCES.map((source) => [source.key, source.url]));
+const DRIVER_RESULTS_URL = "https://api.jolpi.ca/ergast/f1/current/results.json";
 const LIVE_CORE_DATA_URLS = {
-  driverStandings: "https://api.jolpi.ca/ergast/f1/current/driverStandings.json",
-  constructorStandings: "https://api.jolpi.ca/ergast/f1/current/constructorStandings.json",
-  schedule: "https://api.jolpi.ca/ergast/f1/current.json",
+  openF1DriverStandings: "https://api.openf1.org/v1/championship_drivers?session_key=latest",
+  openF1ConstructorStandings: "https://api.openf1.org/v1/championship_teams?session_key=latest",
+  openF1Meetings: `https://api.openf1.org/v1/meetings?year=${new Date().getFullYear()}`,
+  openF1Sessions: `https://api.openf1.org/v1/sessions?year=${new Date().getFullYear()}`,
+  openF1Weather: "https://api.openf1.org/v1/weather?session_key=latest",
   ...LIVE_NEWS_URLS,
 };
 const LIVE_TIMING_ENRICHMENT_URLS = {
+  driverResults: DRIVER_RESULTS_URL,
   openF1Drivers: "https://api.openf1.org/v1/drivers?session_key=latest",
   openF1CarData: "https://api.openf1.org/v1/car_data?session_key=latest",
   openF1Intervals: "https://api.openf1.org/v1/intervals?session_key=latest",
   openF1Laps: "https://api.openf1.org/v1/laps?session_key=latest",
-  openF1Meetings: `https://api.openf1.org/v1/meetings?year=${new Date().getFullYear()}`,
   openF1Pit: "https://api.openf1.org/v1/pit?session_key=latest",
   openF1Position: "https://api.openf1.org/v1/position?session_key=latest",
-  openF1Sessions: "https://api.openf1.org/v1/sessions?meeting_key=latest",
   openF1Stints: "https://api.openf1.org/v1/stints?session_key=latest",
-  openF1Weather: "https://api.openf1.org/v1/weather?session_key=latest",
 };
 const LIVE_DATA_URLS = { ...LIVE_CORE_DATA_URLS, ...LIVE_TIMING_ENRICHMENT_URLS };
 const OPTIONAL_LIVE_DATA_KEYS = new Set(["openF1CarData", "openF1Laps", "openF1Pit", "openF1Stints"]);
@@ -177,6 +175,7 @@ const COPILOT_INSIGHT_PAGES = [
 const COPILOT_WEEKEND_SESSION_KINDS = ["Practice 1", "Practice 2", "Practice 3", "Sprint Shootout", "Sprint", "Qualifying", "Race"];
 let liveDataCache = null;
 let liveDataEnrichmentRefresh = null;
+let liveDataRefresh = null;
 let copilotInsightRefresh = null;
 const ANALYTICS_CACHE_MS = 1000 * 60 * 5;
 const ANALYTICS_DISK_CACHE_MS = 1000 * 60 * 30;
@@ -207,6 +206,7 @@ const OPENF1_ANALYTICS_ENDPOINTS = {
   laps: "https://api.openf1.org/v1/laps",
   overtakes: "https://api.openf1.org/v1/overtakes",
   pit: "https://api.openf1.org/v1/pit",
+  position: "https://api.openf1.org/v1/position",
   sessions: "https://api.openf1.org/v1/sessions",
   sessionResult: "https://api.openf1.org/v1/session_result",
   stints: "https://api.openf1.org/v1/stints",
@@ -1230,15 +1230,18 @@ function normalizeNewsUrl(value) {
 
 function extractHtmlDate(value) {
   const text = decodeEntities(value).replace(/\s+/g, " ");
+  const month = "Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December";
   const patterns = [
     /\b20\d{2}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)?\b/i,
-    /\b(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+\d{1,2},?\s+20\d{2}\b/i,
-    /\b\d{1,2}\s+(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\s+20\d{2}\b/i,
+    new RegExp(`\\b(?:${month})\\s+\\d{1,2},?\\s+20\\d{2}\\s+\\d{1,2}:\\d{2}\\s*(?:[ap]m\\s*)?(?:UTC|GMT|[+-]\\d{2}:?\\d{2})?\\b`, "i"),
+    new RegExp(`\\b\\d{1,2}\\s+(?:${month})\\s+20\\d{2}\\s+\\d{1,2}:\\d{2}\\s*(?:[ap]m\\s*)?(?:UTC|GMT|[+-]\\d{2}:?\\d{2})?\\b`, "i"),
+    new RegExp(`\\b(?:${month})\\s+\\d{1,2},?\\s+20\\d{2}\\b`, "i"),
+    new RegExp(`\\b\\d{1,2}\\s+(?:${month})\\s+20\\d{2}\\b`, "i"),
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (!match) continue;
-    const time = Date.parse(match[0]);
+    const time = Date.parse(match[0].replace(/(\d{1,2}:\d{2})([ap]m)\b/i, "$1 $2"));
     if (Number.isFinite(time)) return new Date(time).toISOString();
   }
   return "";
@@ -1289,7 +1292,69 @@ function extractArticleMetaDate(html) {
   for (const match of html.matchAll(/"datePublished"\s*:\s*"([^"]+)"/gi)) {
     candidates.push(match[1]);
   }
-  return candidates.map(normalizeArticleDate).find(Boolean) || "";
+  return candidates.map(normalizeArticleDate).find(Boolean) || extractHtmlDate(html);
+}
+
+function extractArticleImages(html, baseUrl) {
+  const blocks = [];
+  for (const match of html.matchAll(/<(?:article|main)\b[^>]*>([\s\S]*?)<\/(?:article|main)>/gi)) {
+    blocks.push(match[0]);
+  }
+  const source = blocks.join("\n") || html.slice(0, 40000);
+  const images = [];
+  const push = (value) => {
+    const image = normalizeNewsImage(absoluteNewsUrl(value, baseUrl));
+    if (image && !images.includes(image)) images.push(image);
+  };
+  for (const match of source.matchAll(/<(?:img|source)\b[^>]*\b(?:src|data-src|data-lazy-src|data-original)=["']([^"']+)["'][^>]*>/gi)) {
+    push(match[1]);
+  }
+  for (const match of source.matchAll(/<(?:img|source)\b[^>]*\b(?:srcset|data-srcset)=["']([^"']+)["'][^>]*>/gi)) {
+    for (const part of String(match[1] || "").split(",")) {
+      const candidate = part.trim().split(/\s+/)[0] || "";
+      if (candidate) push(candidate);
+    }
+  }
+  return images.slice(0, 8);
+}
+
+function extractJsonArticleBodies(value, bodies = []) {
+  if (!value || typeof value !== "object") return bodies;
+  if (typeof value.articleBody === "string") bodies.push(value.articleBody);
+  if (Array.isArray(value)) {
+    for (const item of value) extractJsonArticleBodies(item, bodies);
+  } else {
+    for (const item of Object.values(value)) extractJsonArticleBodies(item, bodies);
+  }
+  return bodies;
+}
+
+function extractArticleBody(html, fallback = "") {
+  const fallbackText = decodeEntities(fallback).replace(/\s+/g, " ").trim();
+  const jsonBodies = [];
+  for (const match of html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      jsonBodies.push(...extractJsonArticleBodies(JSON.parse(decodeXmlEntities(match[1]).trim())));
+    } catch {}
+  }
+  const jsonBody = jsonBodies.map((body) => decodeEntities(body).replace(/\s+/g, " ").trim()).find((body) => body.length > fallbackText.length + 80);
+  if (jsonBody) return jsonBody;
+
+  const blocks = [];
+  for (const match of html.matchAll(/<(?:article|main)\b[^>]*>([\s\S]*?)<\/(?:article|main)>/gi)) {
+    blocks.push(match[0]);
+  }
+  const source = blocks.join("\n") || html;
+  const paragraphs = [];
+  for (const match of source.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)) {
+    const text = decodeEntities(match[1]).replace(/\s+/g, " ").trim();
+    if (text.length < 45) continue;
+    if (/^(advertisement|read more|sign up|follow us|share this)/i.test(text)) continue;
+    if (text === fallbackText) continue;
+    if (!paragraphs.includes(text)) paragraphs.push(text);
+  }
+  const body = paragraphs.join("\n\n").trim();
+  return body.length > fallbackText.length ? body : "";
 }
 
 function normalizeNewsStory(sourceName, index, story) {
@@ -1308,6 +1373,7 @@ function normalizeNewsStory(sourceName, index, story) {
     time: timeAgo(publishedAt),
     publishedAt,
     image: story.image || "",
+    images: Array.isArray(story.images) ? story.images.slice(0, 8) : [],
     tag: classifyNews(title),
     team: "",
     color: colourForText(`${title} ${lead}`),
@@ -1386,6 +1452,9 @@ async function enrichNewsStoryImages(stories, limit = 24, fetchText = requestTex
     try {
       const html = await fetchText(story.url, 6500);
       story.image = extractArticleMetaImage(html, story.url) || story.image;
+      story.images = Array.from(new Set([story.image, ...extractArticleImages(html, story.url)].filter(Boolean))).slice(0, 8);
+      const body = extractArticleBody(html, story.lead || story.body || "");
+      if (body) story.body = body;
       const publishedAt = extractArticleMetaDate(html);
       if (publishedAt) {
         story.publishedAt = publishedAt;
@@ -1393,7 +1462,7 @@ async function enrichNewsStoryImages(stories, limit = 24, fetchText = requestTex
       }
     } catch {}
   }));
-  return stories;
+  return stories.sort((a, b) => newsStorySortTime(b) - newsStorySortTime(a));
 }
 
 function newsStorySortTime(story) {
@@ -1478,6 +1547,299 @@ function parseConstructorStandings(json) {
   }));
 }
 
+function parseF1ApiDriverStandings(json) {
+  const rows = Array.isArray(json?.drivers_championship) ? json.drivers_championship : [];
+  return {
+    seasonSummary: {
+      season: json?.season ? String(json.season) : String(new Date().getFullYear()),
+      round: 0,
+    },
+    standings: rows.map((row) => {
+      const code = String(row.driver?.shortName || row.driverId || "").slice(0, 3).toUpperCase();
+      return {
+        pos: Number(row.position),
+        code,
+        pts: Number(row.points),
+        wins: Number(row.wins || 0),
+        delta: 0,
+        driver: {
+          code,
+          name: [row.driver?.name, row.driver?.surname].filter(Boolean).join(" "),
+          num: Number(row.driver?.number || 0),
+          team: row.team?.teamName || "",
+          abbr: teamAbbr(row.team?.teamName, row.teamId),
+        },
+      };
+    }).filter((row) => row.code),
+  };
+}
+
+function parseF1ApiConstructorStandings(json) {
+  const rows = Array.isArray(json?.constructors_championship) ? json.constructors_championship : [];
+  return rows.map((row) => ({
+    pos: Number(row.position),
+    abbr: teamAbbr(row.team?.teamName, row.teamId),
+    name: row.team?.teamName || "",
+    pts: Number(row.points),
+    wins: Number(row.wins || 0),
+    delta: 0,
+  }));
+}
+
+function officialF1ResultsUrl(kind = "drivers", season = new Date().getFullYear()) {
+  const year = String(season || new Date().getFullYear()).replace(/[^0-9]/g, "") || String(new Date().getFullYear());
+  return `https://www.formula1.com/en/results/${year}/${kind}`;
+}
+
+function officialF1ResultsLines(html) {
+  return decodeXmlEntities(String(html || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:tr|div|li|p|h[1-6])>/gi, "\n")
+    .replace(/<[^>]*>/g, " "))
+    .split(/\n+/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+function officialF1ResultsText(html, headingPattern, headerPattern) {
+  const text = decodeEntities(html).replace(/\s+/g, " ").trim();
+  const headingIndex = text.search(headingPattern);
+  const headerIndex = text.search(headerPattern);
+  const start = headerIndex >= 0 ? headerIndex : headingIndex >= 0 ? headingIndex : 0;
+  const tail = text.slice(Math.max(0, start));
+  const end = tail.search(/\bOUR PARTNERS\b|Download the Official F1 App|©/i);
+  return end >= 0 ? tail.slice(0, end).trim() : tail;
+}
+
+function parseOfficialF1DriverStandings(html) {
+  const text = officialF1ResultsText(html, /\b\d{4}\s+Drivers'? Standings\b/i, /\bPos\.?\s*Driver\s+Nationality\s+Team\s+Pts\.?\b/i);
+  const seasonMatch = text.match(/\b(20\d{2}|19\d{2})\s+Drivers'? Standings\b/i);
+  const rows = [];
+  let active = false;
+  for (const line of officialF1ResultsLines(html)) {
+    if (/\bPos\.?\s*Driver\s+Nationality\s+Team\s+Pts\.?\b/i.test(line)) {
+      active = true;
+      continue;
+    }
+    if (/\bOUR PARTNERS\b|Download the Official F1 App/i.test(line)) break;
+    if (!active) continue;
+    const match = line.match(/^(\d{1,2})\s+(.+?)\s+([A-Z]{3})\s+([A-Z]{3})\s+(.+?)\s+(\d+(?:\.\d+)?)$/);
+    if (!match) continue;
+    const [, pos, name, code, , team, points] = match;
+    rows.push({ pos, name, code, team, points });
+  }
+  if (!rows.length) {
+    const normalized = text.replace(/\bPos\.?\s*Driver\s+Nationality\s+Team\s+Pts\.?\b/i, " ");
+    const pattern = /(?:^|\s)(\d{1,2})\s+([A-Za-zÀ-ÿ' .-]+?)\s+([A-Z]{3})\s+([A-Z]{3})\s+([A-Za-z0-9&' .-]+?)\s+(\d+(?:\.\d+)?)(?=\s+\d{1,2}\s+[A-Za-zÀ-ÿ' .-]+?\s+[A-Z]{3}\s+[A-Z]{3}\s+|$)/g;
+    for (const match of normalized.matchAll(pattern)) {
+      const [, pos, name, code, , team, points] = match;
+      rows.push({ pos, name, code, team, points });
+    }
+  }
+  return {
+    seasonSummary: {
+      season: seasonMatch?.[1] || String(new Date().getFullYear()),
+      round: 0,
+    },
+    standings: rows.map((row) => ({
+      pos: Number(row.pos),
+      code: row.code,
+      pts: Number(row.points),
+      wins: 0,
+      delta: 0,
+      driver: {
+        code: row.code,
+        name: row.name,
+        num: 0,
+        team: row.team,
+        abbr: teamAbbr(row.team),
+      },
+    })).filter((row) => row.code && Number.isFinite(row.pos)),
+  };
+}
+
+function parseOfficialF1ConstructorStandings(html) {
+  const text = officialF1ResultsText(html, /\b\d{4}\s+Teams'? Standings\b/i, /\bPos\.?\s*Team\s+Pts\.?\b/i);
+  const rows = [];
+  let active = false;
+  for (const line of officialF1ResultsLines(html)) {
+    if (/\bPos\.?\s*Team\s+Pts\.?\b/i.test(line)) {
+      active = true;
+      continue;
+    }
+    if (/\bOUR PARTNERS\b|Download the Official F1 App/i.test(line)) break;
+    if (!active) continue;
+    const match = line.match(/^(\d{1,2})\s+(.+?)\s+(\d+(?:\.\d+)?)$/);
+    if (!match) continue;
+    const [, pos, name, points] = match;
+    rows.push({ pos, name, points });
+  }
+  if (!rows.length) {
+    const normalized = text.replace(/\bPos\.?\s*Team\s+Pts\.?\b/i, " ");
+    const pattern = /(?:^|\s)(\d{1,2})\s+([A-Za-z0-9&' .-]+?)\s+(\d+(?:\.\d+)?)(?=\s+\d{1,2}\s+[A-Za-z]|$)/g;
+    for (const match of normalized.matchAll(pattern)) {
+      const [, pos, name, points] = match;
+      rows.push({ pos, name, points });
+    }
+  }
+  return rows.map((row) => ({
+    pos: Number(row.pos),
+    abbr: teamAbbr(row.name),
+    name: row.name,
+    pts: Number(row.points),
+    wins: 0,
+    delta: 0,
+  })).filter((row) => row.name && Number.isFinite(row.pos));
+}
+
+function championshipPositionDelta(row) {
+  const current = Number(row?.position_current || row?.position);
+  const start = Number(row?.position_start);
+  if (!Number.isFinite(current) || !Number.isFinite(start)) return 0;
+  return start - current;
+}
+
+function parseOpenF1DriverStandings(rows = [], fallbackDrivers = []) {
+  const driverByNumber = new Map((fallbackDrivers || []).map((driver) => [Number(driver.num), driver]));
+  return {
+    seasonSummary: {
+      season: String(new Date().getFullYear()),
+      round: 0,
+    },
+    standings: (rows || []).map((row) => {
+      const driver = driverByNumber.get(Number(row.driver_number)) || {};
+      const code = driver.code || String(row.driver_number || "");
+      return {
+        pos: Number(row.position_current || row.position),
+        code,
+        pts: Number(row.points_current || row.points || 0),
+        wins: 0,
+        delta: championshipPositionDelta(row),
+        driver: {
+          code,
+          name: driver.name || code,
+          num: Number(row.driver_number || driver.num || 0),
+          team: driver.team || "",
+          abbr: driver.abbr || teamAbbr(driver.team || ""),
+        },
+      };
+    }).filter((row) => row.code),
+  };
+}
+
+function parseOpenF1ConstructorStandings(rows = []) {
+  return (rows || []).map((row) => {
+    const name = row.team_name || row.team || "";
+    return {
+      pos: Number(row.position_current || row.position),
+      abbr: teamAbbr(name),
+      name,
+      pts: Number(row.points_current || row.points || 0),
+      wins: 0,
+      delta: championshipPositionDelta(row),
+    };
+  });
+}
+
+function parseDriverRecentForm(json, maxRaces = 5) {
+  const races = (json?.MRData?.RaceTable?.Races || json?.RaceTable?.Races || [])
+    .filter((race) => Array.isArray(race?.Results) && race.Results.length)
+    .slice(-Math.max(1, Number(maxRaces) || 5));
+  const formRounds = races.map((race) => ({
+    rnd: Number(race.round || 0),
+    gp: race.raceName || "Grand Prix",
+    loc: race.Circuit?.Location?.locality || race.Circuit?.circuitName || "",
+  }));
+  const codes = new Set();
+  for (const race of races) {
+    for (const result of race.Results || []) {
+      const code = String(result?.Driver?.code || "").trim().toUpperCase();
+      if (code) codes.add(code);
+    }
+  }
+  const driverForm = Object.fromEntries(Array.from(codes, (code) => [code, []]));
+  for (const race of races) {
+    const positions = new Map();
+    for (const result of race.Results || []) {
+      const code = String(result?.Driver?.code || "").trim().toUpperCase();
+      if (!code) continue;
+      const numeric = Number(result.positionOrder || result.position);
+      positions.set(code, Number.isFinite(numeric) ? numeric : (result.positionText || result.status || null));
+    }
+    for (const code of codes) driverForm[code].push(positions.get(code) ?? null);
+  }
+  return { formRounds, driverForm };
+}
+
+function raceWinnerName(result) {
+  result = result || {};
+  const driver = result.Driver || {};
+  return [driver.givenName, driver.familyName].filter(Boolean).join(" ").trim()
+    || String(driver.code || driver.driverId || result.number || "").trim();
+}
+
+function parseRaceWinners(json) {
+  return (json?.MRData?.RaceTable?.Races || json?.RaceTable?.Races || [])
+    .map((race) => {
+      const winnerResult = (race.Results || []).find((result) => String(result.positionOrder || result.position || "") === "1") || race.Results?.[0];
+      const winner = raceWinnerName(winnerResult);
+      return {
+        rnd: Number(race.round || 0),
+        name: race.raceName || "Grand Prix",
+        winner,
+      };
+    })
+    .filter((race) => race.winner);
+}
+
+function applyScheduleWinners(schedule = [], raceWinners = []) {
+  const byRound = new Map();
+  const byName = new Map();
+  const byMeeting = new Map();
+  for (const row of raceWinners || []) {
+    if (row.rnd) byRound.set(Number(row.rnd), row.winner);
+    if (row.meetingKey) byMeeting.set(String(row.meetingKey), row.winner);
+    const nameKey = compactText(row.name);
+    if (nameKey) byName.set(nameKey, row.winner);
+  }
+  return (schedule || []).map((race) => {
+    if (race.winner || race.status !== "done") return race;
+    const winner = byMeeting.get(String(race.meetingKey || "")) || byName.get(compactText(race.name)) || byRound.get(Number(race.rnd));
+    return winner ? { ...race, winner } : race;
+  });
+}
+
+function openF1RaceWinnerName(result, openDrivers, fallbackDrivers) {
+  result = result || {};
+  const number = Number(result.driver_number);
+  const openDriver = (openDrivers || []).find((driver) => Number(driver.driver_number) === number);
+  const fallback = (fallbackDrivers || []).find((driver) => Number(driver.num) === number);
+  return String(openDriver?.full_name || fallback?.name || result.driver_name || result.name_acronym || number || "").trim();
+}
+
+async function fetchMissingOpenF1RaceWinners(schedule, season, fallbackDrivers) {
+  const missing = (schedule || [])
+    .filter((race) => race?.status === "done" && !race.winner && race.meetingKey)
+    .slice(0, 8);
+  const winners = [];
+  for (const race of missing) {
+    try {
+      const session = await resolveAnalyticsSession({ season, meetingKey: race.meetingKey, sessionKind: "Race" });
+      const sessionKey = finiteNumber(session?.session_key);
+      if (!sessionKey) continue;
+      const [sessionResult, openDrivers] = await Promise.all([
+        requestOpenF1AnalyticsWithRetry("sessionResult", { session_key: sessionKey }),
+        requestOpenF1AnalyticsWithRetry("drivers", { session_key: sessionKey }),
+      ]);
+      const winnerResult = (sessionResult || []).find((row) => Number(row.position) === 1) || sessionResult?.[0];
+      const winner = openF1RaceWinnerName(winnerResult, openDrivers, fallbackDrivers);
+      if (winner) winners.push({ meetingKey: race.meetingKey, name: race.name, winner });
+      await wait(OPENF1_ANALYTICS_REQUEST_DELAY_MS);
+    } catch {}
+  }
+  return winners;
+}
+
 function sessionDate(session) {
   if (!session?.date) return "";
   return `${session.date}T${session.time || "00:00:00Z"}`;
@@ -1513,10 +1875,24 @@ function matchOpenF1Meeting(race, meetings = []) {
   return scored[0]?.score > 0 ? scored[0].meeting : null;
 }
 
+function isCancelledF12026RaceName(value) {
+  const text = compactText(value);
+  return /\bbahrain grand prix\b/.test(text) || /\bsaudi arabian grand prix\b/.test(text);
+}
+
 function parseSchedule(json, openF1Meetings = []) {
   const races = json?.MRData?.RaceTable?.Races || [];
+  const explicitSeason = String(json?.MRData?.RaceTable?.season || json?.MRData?.season || "");
+  const inferredSeason = races.map((race) => Date.parse(sessionDate(race))).find(Number.isFinite);
+  const season = explicitSeason || (Number.isFinite(inferredSeason) ? String(new Date(inferredSeason).getUTCFullYear()) : "");
   const now = Date.now();
-  return races.map((race) => {
+  const activeMeetings = (openF1Meetings || [])
+    .filter((meeting) => /grand prix/i.test(String(meeting?.meeting_name || "")) && Number.isFinite(Date.parse(meeting?.date_start || "")))
+    .filter((meeting) => season !== "2026" || !isCancelledF12026RaceName(meeting?.meeting_name || meeting?.official_name || ""))
+    .sort((a, b) => Date.parse(a.date_start || "") - Date.parse(b.date_start || ""));
+  const shouldUseActiveMeetingOrder = races.length > 0 && activeMeetings.length >= Math.max(1, Math.floor(races.length * 0.7));
+  const activeRoundByMeetingKey = new Map(activeMeetings.map((meeting, index) => [String(meeting.meeting_key || ""), index + 1]));
+  const parsed = races.filter((race) => season !== "2026" || !isCancelledF12026RaceName(race?.raceName || "")).map((race) => {
     const meeting = matchOpenF1Meeting(race, openF1Meetings);
     const raceDate = Date.parse(sessionDate(race));
     const done = Number.isFinite(raceDate) && raceDate + 1000 * 60 * 60 * 5 < now;
@@ -1540,18 +1916,127 @@ function parseSchedule(json, openF1Meetings = []) {
         status: Number.isFinite(start) && start + 1000 * 60 * 60 * 3 < now ? "done" : Number.isFinite(start) && Math.abs(start - now) < 1000 * 60 * 60 * 3 ? "live" : "upcoming",
       };
     }).filter(Boolean);
+    const meetingKey = meeting?.meeting_key || null;
     return {
-      rnd: Number(race.round),
+      rnd: shouldUseActiveMeetingOrder && meetingKey ? activeRoundByMeetingKey.get(String(meetingKey)) || Number(race.round) : Number(race.round),
       name: race.raceName,
       circuit: race.Circuit?.circuitName || "",
       loc: [race.Circuit?.Location?.locality, race.Circuit?.Location?.country].filter(Boolean).join(", "),
       date: Number.isFinite(raceDate) ? new Intl.DateTimeFormat("en", { month: "short", day: "2-digit" }).format(raceDate) : "",
       startsAt: Number.isFinite(raceDate) ? new Date(raceDate).toISOString() : "",
       status: live ? "live" : done ? "done" : "upcoming",
-      meetingKey: meeting?.meeting_key || null,
+      meetingKey,
       sessions,
     };
   });
+  if (!shouldUseActiveMeetingOrder) return parsed;
+  return normalizeScheduleRoundOrder(parsed, { removeCancelled2026: season === "2026" });
+}
+
+function scheduleHas2026Dates(schedule = []) {
+  return (schedule || []).some((race) => {
+    const startsAt = Date.parse(race?.startsAt || race?.dateStart || race?.date_start || "");
+    return Number.isFinite(startsAt) && new Date(startsAt).getUTCFullYear() === 2026;
+  });
+}
+
+function snapshotIs2026Schedule(data = {}) {
+  const season = finiteNumber(data?.seasonSummary?.year || data?.seasonSummary?.season || data?.season);
+  if (season) return season === 2026;
+  return scheduleHas2026Dates(data?.schedule);
+}
+
+function normalizeScheduleRoundOrder(schedule = [], options) {
+  options = options || {};
+  const rows = Array.isArray(schedule) ? schedule.slice() : [];
+  const hasCancelled2026Rows = options.removeCancelled2026 === true && rows.some((race) => isCancelledF12026RaceName(race?.name || race?.raceName || ""));
+  const eligibleRows = hasCancelled2026Rows ? rows.filter((race) => !isCancelledF12026RaceName(race?.name || race?.raceName || "")) : rows;
+  const matched = eligibleRows.filter((race) => race?.meetingKey);
+  if (hasCancelled2026Rows) return eligibleRows.map((race, index) => ({ ...race, rnd: index + 1 }));
+  if (!rows.length || matched.length < Math.max(1, Math.floor(rows.length * 0.7))) return rows;
+  return eligibleRows.map((race, index) => ({ ...race, rnd: index + 1 }));
+}
+
+function normalizePitWallSnapshotRounds(data) {
+  if (!data || !Array.isArray(data.schedule)) return data;
+  const schedule = normalizeScheduleRoundOrder(data.schedule, { removeCancelled2026: snapshotIs2026Schedule(data) });
+  if (schedule === data.schedule) return data;
+  const currentRace = schedule.find((race) => data.race?.startsAt && race.startsAt === data.race.startsAt)
+    || schedule.find((race) => data.race?.name && race.name === data.race.name)
+    || schedule.find((race) => race.status === "live")
+    || schedule.find((race) => race.status === "upcoming")
+    || schedule.at(-1);
+  return {
+    ...data,
+    schedule,
+    sessions: currentRace?.sessions || data.sessions || [],
+    race: data.race ? { ...data.race, round: currentRace?.rnd || data.race.round || 0 } : data.race,
+    seasonSummary: data.seasonSummary ? { ...data.seasonSummary, round: currentRace?.rnd || data.seasonSummary.round || 0, totalRounds: schedule.length || data.seasonSummary.totalRounds || 0 } : data.seasonSummary,
+  };
+}
+
+function openF1SessionKindLabel(session) {
+  const normalized = normalizeOpenF1SessionKind(session?.session_name || session?.session_type);
+  if (normalized === "practice 1") return "Practice 1";
+  if (normalized === "practice 2") return "Practice 2";
+  if (normalized === "practice 3") return "Practice 3";
+  if (normalized === "sprint qualifying") return "Sprint Shootout";
+  if (normalized === "qualifying") return "Qualifying";
+  if (normalized === "sprint") return "Sprint";
+  if (normalized === "race") return "Race";
+  return String(session?.session_name || session?.session_type || "Session").trim() || "Session";
+}
+
+function parseOpenF1Schedule(openF1Meetings = [], openF1Sessions = [], nowMs = Date.now()) {
+  const sessionsByMeeting = new Map();
+  for (const session of openF1Sessions || []) {
+    const key = String(session?.meeting_key || "");
+    if (!key) continue;
+    if (!sessionsByMeeting.has(key)) sessionsByMeeting.set(key, []);
+    sessionsByMeeting.get(key).push(session);
+  }
+  return (openF1Meetings || [])
+    .filter((meeting) => /grand prix/i.test(String(meeting?.meeting_name || "")))
+    .sort((a, b) => Date.parse(a.date_start || "") - Date.parse(b.date_start || ""))
+    .map((meeting, index) => {
+      const meetingKey = String(meeting.meeting_key || "");
+      const sourceSessions = (sessionsByMeeting.get(meetingKey) || [])
+        .slice()
+        .sort((a, b) => Date.parse(a.date_start || "") - Date.parse(b.date_start || ""));
+      const sessions = sourceSessions.map((session) => {
+        const start = Date.parse(session.date_start || "");
+        const end = Date.parse(session.date_end || "");
+        const doneAt = Number.isFinite(end) ? end : start;
+        const live = Number.isFinite(start) && start <= nowMs && (!Number.isFinite(end) || nowMs <= end + 1000 * 60 * 5);
+        return {
+          kind: openF1SessionKindLabel(session),
+          day: Number.isFinite(start) ? new Intl.DateTimeFormat("en", { weekday: "short" }).format(start) : "",
+          time: Number.isFinite(start) ? new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit" }).format(start) : "",
+          startsAt: Number.isFinite(start) ? new Date(start).toISOString() : "",
+          status: live ? "live" : Number.isFinite(doneAt) && nowMs > doneAt ? "done" : "upcoming",
+        };
+      });
+      const raceSession = sourceSessions.find((session) => normalizeOpenF1SessionKind(session.session_name || session.session_type) === "race") || sourceSessions.at(-1);
+      const firstStart = Math.min(...sourceSessions.map((session) => Date.parse(session.date_start || "")).filter(Number.isFinite));
+      const raceStart = Date.parse(raceSession?.date_start || meeting.date_start || "");
+      const lastEnd = Math.max(...sourceSessions.map((session) => {
+        const end = Date.parse(session.date_end || "");
+        const start = Date.parse(session.date_start || "");
+        return Number.isFinite(end) ? end : start;
+      }).filter(Number.isFinite));
+      const live = Number.isFinite(firstStart) && nowMs >= firstStart && (!Number.isFinite(lastEnd) || nowMs <= lastEnd + 1000 * 60 * 30);
+      return {
+        rnd: index + 1,
+        name: meeting.meeting_name || "Grand Prix",
+        circuit: meeting.circuit_short_name || "",
+        loc: [meeting.location, meeting.country_name].filter(Boolean).join(", "),
+        date: Number.isFinite(raceStart) ? new Intl.DateTimeFormat("en", { month: "short", day: "2-digit" }).format(raceStart) : "",
+        startsAt: Number.isFinite(raceStart) ? new Date(raceStart).toISOString() : "",
+        status: live ? "live" : Number.isFinite(raceStart) && raceStart < nowMs ? "done" : "upcoming",
+        meetingKey: meeting.meeting_key || null,
+        sessions,
+      };
+    });
 }
 
 function latestBy(items, keyFn) {
@@ -1830,7 +2315,7 @@ function parseOpenDrivers(openDrivers, fallbackDrivers, standings) {
       color: driver.team_colour ? `#${driver.team_colour.replace(/^#/, "")}` : fallback.color || "var(--accent)",
       abbr: fallback.abbr || (driver.team_name || "").slice(0, 3).toUpperCase(),
       image: driver.headshot_url || fallback.remoteImage || fallback.image || "",
-      remoteImage: driver.headshot_url || fallback.remoteImage || "",
+      remoteImage: fallback.remoteImage || driver.headshot_url || "",
     };
   }).filter((driver) => driver.code);
   if (fromOpen.length) return fromOpen;
@@ -1951,6 +2436,33 @@ async function resolveF1TimingArchiveBase(meeting, session) {
   throw lastError || new Error("Formula 1 livetiming archive path could not be resolved.");
 }
 
+function f1TimingArchiveIdentityFromOptions(options = {}, sessionKind = "Race") {
+  const raceName = String(options.raceName || options.eventName || "").trim();
+  const raceStartsAt = String(options.raceStartsAt || options.startsAt || "").trim();
+  if (!raceName || !raceStartsAt) return null;
+  const sessionStartsAt = String(options.sessionStartsAt || raceStartsAt).trim();
+  const year = String(options.season || f1TimingDatePart(raceStartsAt).slice(0, 4) || new Date().getFullYear());
+  return {
+    meeting: {
+      year,
+      meeting_name: raceName,
+      date_start: raceStartsAt,
+      date_end: raceStartsAt,
+    },
+    session: {
+      year,
+      session_name: sessionKind,
+      session_type: sessionKind,
+      date_start: sessionStartsAt,
+      date_end: sessionStartsAt,
+    },
+  };
+}
+
+function shouldPreferF1TimingAnalytics(options = {}) {
+  return Boolean(String(options.raceName || options.eventName || "").trim() && String(options.raceStartsAt || options.startsAt || "").trim());
+}
+
 function stripJsonBom(text) {
   return String(text || "").replace(/^\uFEFF/, "").replace(/^\u00EF\u00BB\u00BF/, "");
 }
@@ -2029,11 +2541,11 @@ function f1TimingArchiveStartUtcMs(sessionData) {
 function f1TimingVideoStartArchiveSeconds(sessionData, options) {
   options = options || {};
   const explicitSeconds = finiteNumber(options.videoStartArchiveSeconds);
-  if (explicitSeconds != null) return Math.max(0, explicitSeconds);
+  if (explicitSeconds != null) return explicitSeconds;
   const videoStartUtcMs = Date.parse(options.videoStartUtc || "");
   const archiveStartUtcMs = f1TimingArchiveStartUtcMs(sessionData);
   if (!Number.isFinite(videoStartUtcMs) || !Number.isFinite(archiveStartUtcMs)) return null;
-  return Math.max(0, (videoStartUtcMs - archiveStartUtcMs) / 1000);
+  return (videoStartUtcMs - archiveStartUtcMs) / 1000;
 }
 
 function f1TimingSessionStartSeconds(sessionData) {
@@ -2209,6 +2721,8 @@ function parseF1TimingSessionClock(sessionData, targetSeconds) {
   const clockEntry = f1TimingLatestEntryAt(sessionData.clockEntries || [], targetSeconds);
   const clockState = clockEntry?.data || {};
   const statusState = f1TimingStateAt(sessionData.sessionStatusEntries || [], targetSeconds);
+  const trackStatusState = f1TimingStateAt(sessionData.trackStatusEntries || [], targetSeconds);
+  const lapCount = parseF1TimingLapCount(sessionData, targetSeconds);
   const rawRemaining = f1TimingValue(clockState?.Remaining).trim();
   const remainingSeconds = f1TimingDurationSeconds(rawRemaining);
   const elapsedSinceClock = Math.max(0, Number(targetSeconds || 0) - Number(clockEntry?.seconds || targetSeconds || 0));
@@ -2219,13 +2733,59 @@ function parseF1TimingSessionClock(sessionData, targetSeconds) {
   return {
     remaining,
     status,
+    trackStatus: {
+      status: String(trackStatusState?.Status || "").trim(),
+      message: String(trackStatusState?.Message || "").trim(),
+    },
+    lapCount,
     qualifyingPart: f1TimingQualifyingPart(sessionData, targetSeconds),
     extrapolating: Boolean(clockState?.Extrapolating),
     utc: clockState?.Utc || "",
   };
 }
 
-function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options = {}) {
+function parseF1TimingLapCount(sessionData, targetSeconds) {
+  const state = f1TimingStateAt(sessionData.lapCountEntries || [], targetSeconds) || {};
+  const lap = finiteNumber(state.CurrentLap) ?? finiteNumber(state.Lap) ?? finiteNumber(state.LapNumber);
+  const laps = finiteNumber(state.TotalLaps) ?? finiteNumber(state.Laps) ?? finiteNumber(state.TotalLapCount);
+  return {
+    lap: lap ?? 0,
+    laps: laps ?? 0,
+  };
+}
+
+function parseF1TimingRaceControlMessages(entries, targetSeconds) {
+  const state = f1TimingStateAt(entries || [], targetSeconds);
+  const rawMessages = state?.Messages || state?.messages || state?.Message || [];
+  const values = Array.isArray(rawMessages) ? rawMessages : Object.values(rawMessages || {});
+  const messages = [];
+  const seen = new Set();
+  for (const item of values) {
+    if (!item || typeof item !== "object") continue;
+    const text = String(item.Message || item.message || item.Text || item.text || "").trim();
+    if (!text) continue;
+    const utc = String(item.Utc || item.UTC || item.Time || item.Date || "").trim();
+    const category = String(item.Category || item.Type || item.Kind || "").trim();
+    const status = String(item.Status || item.Flag || item.Mode || "").trim();
+    const lap = finiteNumber(item.Lap || item.LapNumber);
+    const racingNumber = String(item.RacingNumber || item.DriverNumber || "").trim();
+    const key = [utc, lap ?? "", racingNumber, category, status, text].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    messages.push({ utc, lap, category, status, racingNumber, text });
+  }
+  messages.sort((a, b) => {
+    const au = Date.parse(a.utc || "");
+    const bu = Date.parse(b.utc || "");
+    if (Number.isFinite(au) && Number.isFinite(bu) && au !== bu) return au - bu;
+    if (a.lap != null && b.lap != null && a.lap !== b.lap) return a.lap - b.lap;
+    return 0;
+  });
+  return messages.slice(-30);
+}
+
+function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
+  options = options || {};
   const targetElapsedSeconds = Math.max(0, Number(elapsedSeconds || 0));
   const videoStartArchiveSeconds = f1TimingVideoStartArchiveSeconds(sessionData, options);
   const timingAnchor = videoStartArchiveSeconds != null
@@ -2240,6 +2800,7 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options = {}) {
   const weatherState = f1TimingStateAt(sessionData.weatherEntries, targetSeconds);
   const carState = f1TimingStateAt(sessionData.carDataEntries, targetSeconds);
   const sessionClock = parseF1TimingSessionClock(sessionData, targetSeconds);
+  const raceControlMessages = parseF1TimingRaceControlMessages(sessionData.raceControlEntries, targetSeconds);
   const telemetryRows = f1TimingTelemetryFromCarData(carState);
   const telemetryByNumber = latestCarDataByDriverNumber(telemetryRows);
   const lines = timingState?.Lines || {};
@@ -2251,6 +2812,7 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options = {}) {
     const stint = f1TimingLatestStint(appLine);
     const lastSeconds = f1TimingLapSeconds(line?.LastLapTime);
     const bestSeconds = f1TimingLapSeconds(line?.BestLapTime);
+    const sessionLap = finiteNumber(line?.NumberOfLaps) ?? finiteNumber(line?.NumberOfLap) ?? finiteNumber(line?.LapNumber);
     const pos = finiteNumber(line?.Position) ?? finiteNumber(line?.Line) ?? finiteNumber(driver.Line) ?? 99;
     const gapValue = f1TimingValue(line?.GapToLeader);
     const intervalValue = f1TimingValue(line?.IntervalToPositionAhead);
@@ -2262,6 +2824,7 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options = {}) {
       best: bestSeconds != null ? formatLapDuration(bestSeconds) : f1TimingValue(line?.BestLapTime),
       lastLapDuration: lastSeconds,
       bestLapDuration: bestSeconds,
+      sessionLap,
       state: line?.InPit ? "PIT" : line?.Stopped ? "STOP" : null,
       gap: gapValue || (pos === 1 ? "LEADER" : "—"),
       interval: intervalValue || "—",
@@ -2290,7 +2853,7 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options = {}) {
     };
   }).filter((row) => row.code && row.pos).sort((a, b) => a.pos - b.pos);
   const timingRows = fillF1TimingQualifyingDeltas(rows);
-  return { timing: timingRows, weather: parseF1TimingWeatherState(weatherState), sessionClock, diagnostics: {
+  return { timing: timingRows, weather: parseF1TimingWeatherState(weatherState), sessionClock, raceControlMessages, diagnostics: {
     timingAnchor,
     videoStartArchiveSeconds,
     sessionStartSeconds: f1TimingSessionStartSeconds(sessionData),
@@ -2301,15 +2864,19 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options = {}) {
     timingAppEntries: sessionData.timingAppEntries?.length || 0,
     clockEntries: sessionData.clockEntries?.length || 0,
     sessionStatusEntries: sessionData.sessionStatusEntries?.length || 0,
+    trackStatusEntries: sessionData.trackStatusEntries?.length || 0,
+    raceControlEntries: sessionData.raceControlEntries?.length || 0,
+    lapCountEntries: sessionData.lapCountEntries?.length || 0,
     weatherEntries: sessionData.weatherEntries?.length || 0,
     carDataEntries: sessionData.carDataEntries?.length || 0,
     telemetryRows: telemetryRows.length,
   } };
 }
 
-async function getReplayF1TimingSessionData(meetingKey, sessionKind) {
+async function getReplayF1TimingSessionData(meetingKey, sessionKind, options = {}) {
   const normalizedKind = normalizeOpenF1SessionKind(sessionKind || "Race");
-  const cacheKey = `${meetingKey}:${normalizedKind}`;
+  const identityKey = [options.raceName, options.raceStartsAt, options.sessionStartsAt].filter(Boolean).join(":");
+  const cacheKey = `${meetingKey}:${normalizedKind}:${identityKey}`;
   const cached = replayF1TimingCache.get(cacheKey);
   const maxAgeMs = 1000 * 60 * 60;
   if (cached && Date.now() - cached.createdAt < maxAgeMs) return cached.data;
@@ -2321,28 +2888,45 @@ async function getReplayF1TimingSessionData(meetingKey, sessionKind) {
     .slice()
     .sort((a, b) => scoreOpenF1ReplaySession(b, sessionKind) - scoreOpenF1ReplaySession(a, sessionKind))[0];
   if (!selectedSession?.session_key) throw new Error(`No ${sessionKind} session matched this replay.`);
-  const archive = await resolveF1TimingArchiveBase(meeting, selectedSession);
+  const optionIdentity = f1TimingArchiveIdentityFromOptions(options, sessionKind);
+  let archive = null;
+  let resolvedMeeting = meeting;
+  let resolvedSession = selectedSession;
+  if (optionIdentity) {
+    try {
+      archive = await resolveF1TimingArchiveBase(optionIdentity.meeting, optionIdentity.session);
+      resolvedMeeting = optionIdentity.meeting;
+      resolvedSession = { ...selectedSession, ...optionIdentity.session };
+    } catch {}
+  }
+  if (!archive) archive = await resolveF1TimingArchiveBase(meeting, selectedSession);
   const baseUrl = archive.baseUrl;
-  const [driverListText, timingText, appText, clockText, statusText, weatherText, carText] = await Promise.all([
+  const [driverListText, timingText, appText, clockText, statusText, trackStatusText, raceControlText, lapCountText, weatherText, carText] = await Promise.all([
     f1TimingRequestText(`${baseUrl}DriverList.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}TimingData.jsonStream`),
     f1TimingRequestText(`${baseUrl}TimingAppData.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}ExtrapolatedClock.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}SessionStatus.jsonStream`).catch(() => ""),
+    f1TimingRequestText(`${baseUrl}TrackStatus.jsonStream`).catch(() => ""),
+    f1TimingRequestText(`${baseUrl}RaceControlMessages.jsonStream`).catch(() => ""),
+    f1TimingRequestText(`${baseUrl}LapCount.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}WeatherData.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}CarData.z.jsonStream`).catch(() => ""),
   ]);
   const data = {
     ok: true,
     source: "Formula 1 livetiming",
-    meeting,
-    selectedSession,
+    meeting: resolvedMeeting,
+    selectedSession: resolvedSession,
     baseUrl,
     driverListEntries: driverListText ? parseF1TimingJsonStream(driverListText) : [],
     timingEntries: parseF1TimingJsonStream(timingText),
     timingAppEntries: appText ? parseF1TimingJsonStream(appText) : [],
     clockEntries: clockText ? parseF1TimingJsonStream(clockText) : [],
     sessionStatusEntries: statusText ? parseF1TimingJsonStream(statusText) : [],
+    trackStatusEntries: trackStatusText ? parseF1TimingJsonStream(trackStatusText) : [],
+    raceControlEntries: raceControlText ? parseF1TimingJsonStream(raceControlText) : [],
+    lapCountEntries: lapCountText ? parseF1TimingJsonStream(lapCountText) : [],
     weatherEntries: weatherText ? parseF1TimingJsonStream(weatherText) : [],
     carDataEntries: carText ? parseF1TimingJsonStream(carText, { zipped: true }) : [],
   };
@@ -2492,6 +3076,9 @@ function getF1LiveTimingSnapshot(options = {}) {
     timingAppEntries: entriesByTopic.TimingAppData || [],
     clockEntries: entriesByTopic.ExtrapolatedClock || [],
     sessionStatusEntries: entriesByTopic.SessionStatus || [],
+    trackStatusEntries: entriesByTopic.TrackStatus || [],
+    raceControlEntries: entriesByTopic.RaceControlMessages || [],
+    lapCountEntries: entriesByTopic.LapCount || [],
     weatherEntries: entriesByTopic.WeatherData || [],
     carDataEntries: entriesByTopic["CarData.z"] || [],
   }, targetLatencySeconds ? targetSeconds : Number.MAX_SAFE_INTEGER);
@@ -2502,6 +3089,9 @@ function getF1LiveTimingSnapshot(options = {}) {
         timingAppEntries: entriesByTopic.TimingAppData || [],
         clockEntries: entriesByTopic.ExtrapolatedClock || [],
         sessionStatusEntries: entriesByTopic.SessionStatus || [],
+        trackStatusEntries: entriesByTopic.TrackStatus || [],
+        raceControlEntries: entriesByTopic.RaceControlMessages || [],
+        lapCountEntries: entriesByTopic.LapCount || [],
         weatherEntries: entriesByTopic.WeatherData || [],
         carDataEntries: entriesByTopic["CarData.z"] || [],
       }, Number.MAX_SAFE_INTEGER);
@@ -2513,6 +3103,7 @@ function getF1LiveTimingSnapshot(options = {}) {
         timing: latest.timing,
         weather: latest.weather,
         sessionClock: latest.sessionClock,
+        raceControlMessages: latest.raceControlMessages,
         errors: [],
         diagnostics: latest.diagnostics,
         message: "Timing is using latest rows until the latency buffer catches up.",
@@ -2527,6 +3118,7 @@ function getF1LiveTimingSnapshot(options = {}) {
     timing: parsed.timing,
     weather: parsed.weather,
     sessionClock: parsed.sessionClock,
+    raceControlMessages: parsed.raceControlMessages,
     errors: [],
     diagnostics: parsed.diagnostics,
     message: "",
@@ -2772,6 +3364,7 @@ async function getReplayTimingSnapshot(options = {}) {
         timing: parsed.timing,
         weather: parsed.weather,
         sessionClock: parsed.sessionClock,
+        raceControlMessages: parsed.raceControlMessages,
         diagnostics: parsed.diagnostics,
         message: parsed.timing.some((row) => row.last || row.best) ? "" : "Formula 1 timing is loaded; lap times will appear once the session has data.",
       };
@@ -2797,8 +3390,21 @@ async function getReplayTimingSnapshot(options = {}) {
 
 async function getLiveTimingSnapshot(options = {}) {
   const targetLatencySeconds = Math.max(0, Math.min(90, Number(options.targetLatencySeconds || 0)));
+  const requestedSource = String(options.source || options.provider || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const f1Only = requestedSource === "f1" || requestedSource === "formula1";
   const f1Timing = getF1LiveTimingSnapshot({ targetLatencySeconds });
   if (f1Timing?.timing?.length) return f1Timing;
+  if (f1Only) {
+    return {
+      ok: false,
+      sourceLabel: "Formula 1 live timing unavailable",
+      fetchedAt: new Date().toISOString(),
+      timing: [],
+      weather: {},
+      errors: f1LiveTimingState?.lastError ? [f1LiveTimingState.lastError] : [],
+      message: f1LiveTimingState?.lastMessageAt ? "Formula 1 live timing has no current rows." : "Formula 1 live timing is still connecting.",
+    };
+  }
   const cacheKey = `openf1:${Math.round(targetLatencySeconds)}`;
   if (liveTimingCache?.key === cacheKey && Date.now() - liveTimingCache.createdAt < 15000) return liveTimingCache.data;
   const keys = ["openF1Drivers", "openF1Position", "openF1Intervals", "openF1Laps", "openF1Stints", "openF1Pit", "openF1Weather", "openF1CarData"];
@@ -2966,6 +3572,27 @@ function nextRaceWeekend(schedule = []) {
   return (schedule || []).find((race) => race.status === "upcoming") || {};
 }
 
+function nextUpcomingSession(schedule = []) {
+  const sessions = [];
+  for (const race of schedule || []) {
+    for (const sessionItem of race.sessions || []) {
+      if (sessionItem.status && sessionItem.status !== "upcoming") continue;
+      const startsAt = Date.parse(sessionItem.startsAt || "");
+      sessions.push({
+        race: race.name || "",
+        circuit: race.circuit || "",
+        loc: race.loc || "",
+        meetingKey: race.meetingKey || "",
+        kind: sessionItem.kind || "",
+        startsAt: Number.isFinite(startsAt) ? new Date(startsAt).toISOString() : "",
+      });
+    }
+  }
+  return sessions
+    .filter((sessionItem) => sessionItem.kind)
+    .sort((a, b) => Date.parse(a.startsAt || "") - Date.parse(b.startsAt || ""))[0] || {};
+}
+
 function roundedMetric(value) {
   const number = finiteNumber(value);
   return number == null ? null : Math.round(number * 1000) / 1000;
@@ -3063,12 +3690,171 @@ async function buildWeekendSessionSummaries(data, pageId) {
   return summaries;
 }
 
+function copilotTrackEvidenceWords(race = {}) {
+  const generic = new Set(["grand", "prix", "circuit", "autodrome", "international", "round"]);
+  return compactText([race.name, race.circuit, race.loc].filter(Boolean).join(" "))
+    .split(" ")
+    .filter((word) => word.length > 3 && !generic.has(word));
+}
+
+function copilotTrackEvidenceScore(targetRace = {}, candidate = {}) {
+  const words = copilotTrackEvidenceWords(targetRace);
+  if (!words.length) return 0;
+  const text = compactText([
+    candidate.name,
+    candidate.meeting_name,
+    candidate.official_name,
+    candidate.circuit,
+    candidate.circuit_short_name,
+    candidate.loc,
+    candidate.location,
+    candidate.country_name,
+  ].filter(Boolean).join(" "));
+  return words.filter((word) => text.includes(word)).length;
+}
+
+function copilotMeetingToRace(meeting = {}) {
+  const startsAt = Date.parse(meeting.date_start || "");
+  return {
+    name: meeting.meeting_name || "Grand Prix",
+    circuit: meeting.circuit_short_name || "",
+    loc: [meeting.location, meeting.country_name].filter(Boolean).join(", "),
+    startsAt: Number.isFinite(startsAt) ? new Date(startsAt).toISOString() : "",
+    status: "done",
+    meetingKey: meeting.meeting_key || null,
+    season: Number.isFinite(startsAt) ? new Date(startsAt).getUTCFullYear() : null,
+  };
+}
+
+async function findCopilotHistoricalTrackRaces(data = {}, targetRace = {}) {
+  const byKey = new Map();
+  const addRace = (race) => {
+    const meetingKey = String(race?.meetingKey || "").replace(/[^0-9]/g, "");
+    if (!meetingKey || meetingKey === String(targetRace?.meetingKey || "")) return;
+    if (copilotTrackEvidenceScore(targetRace, race) < 2) return;
+    byKey.set(meetingKey, {
+      ...race,
+      meetingKey,
+      season: finiteNumber(race.season) || copilotSessionYear(race, data),
+    });
+  };
+
+  for (const race of data.schedule || []) {
+    if (race?.status === "done") addRace(race);
+  }
+
+  const targetSeason = copilotSessionYear(targetRace, data);
+  for (const season of [targetSeason - 1, targetSeason - 2, targetSeason - 3].filter((year) => year >= 2023)) {
+    const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { year: season })).catch((error) => {
+      throw new Error(`OpenF1 ${season} meetings unavailable: ${sanitizeAiError(error)}`);
+    });
+    for (const meeting of meetings || []) {
+      if (/grand prix/i.test(String(meeting?.meeting_name || ""))) addRace(copilotMeetingToRace(meeting));
+    }
+  }
+
+  return Array.from(byKey.values())
+    .sort((a, b) => Date.parse(b.startsAt || "") - Date.parse(a.startsAt || ""))
+    .slice(0, 2);
+}
+
+async function buildCompletedRacePerformance(data = {}, races = [], label = "completed races") {
+  const performance = {
+    label,
+    races: [],
+    errors: [],
+  };
+  for (const race of races.slice(0, 4)) {
+    const meetingKey = String(race?.meetingKey || "").replace(/[^0-9]/g, "");
+    if (!meetingKey) continue;
+    try {
+      const analytics = await getAnalyticsSession({
+        season: finiteNumber(race.season) || copilotSessionYear(race, data),
+        meetingKey,
+        sessionKind: "Race",
+      });
+      performance.races.push({
+        season: finiteNumber(race.season) || copilotSessionYear(race, data),
+        race: {
+          name: race.name || "",
+          circuit: race.circuit || "",
+          loc: race.loc || "",
+          meetingKey,
+        },
+        session: summarizeWeekendSessionForCopilot({ kind: "Race", status: "done", startsAt: race.startsAt }, analytics),
+      });
+    } catch (error) {
+      performance.errors.push(`${race.name || meetingKey}: ${sanitizeAiError(error)}`);
+    }
+  }
+  performance.available = performance.races.some((race) => race.session?.available);
+  return performance;
+}
+
+async function fetchCopilotSeasonRaces(season, limit = 4) {
+  const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { year: season })).catch(() => []);
+  return (meetings || [])
+    .filter((meeting) => /grand prix/i.test(String(meeting?.meeting_name || "")))
+    .map(copilotMeetingToRace)
+    .sort((a, b) => Date.parse(b.startsAt || "") - Date.parse(a.startsAt || ""))
+    .slice(0, limit);
+}
+
+async function buildNextWeekendPerformanceContext(data = {}) {
+  const targetRace = nextRaceWeekend(data.schedule);
+  const targetSession = nextUpcomingSession(data.schedule);
+  const context = {
+    available: false,
+    target: {
+      race: targetRace?.name || "",
+      circuit: targetRace?.circuit || "",
+      loc: targetRace?.loc || "",
+      session: targetSession?.kind || "Race",
+    },
+    currentSeason: { label: "current season race performance", races: [], errors: [], available: false },
+    previousSeason: { label: "previous season race performance", races: [], errors: [], available: false },
+    trackHistory: { label: "target-track race history", races: [], errors: [], available: false },
+    relevantNews: (data.news || []).slice(0, 8).map((item) => ({
+      source: item.source || "",
+      title: item.title || "",
+      category: item.category || item.tag || "",
+      publishedAt: item.publishedAt || "",
+    })),
+    errors: [],
+  };
+  if (!targetRace?.name && !targetRace?.circuit) {
+    context.errors.push("Next race weekend is unavailable.");
+    return context;
+  }
+
+  const currentSeasonRaces = (data.schedule || [])
+    .filter((race) => race?.status === "done" && race?.meetingKey)
+    .slice(-4)
+    .reverse();
+  context.currentSeason = await buildCompletedRacePerformance(data, currentSeasonRaces, "current season race performance");
+
+  const targetSeason = copilotSessionYear(targetRace, data);
+  const previousSeasonRaces = await fetchCopilotSeasonRaces(targetSeason - 1, 4);
+  context.previousSeason = await buildCompletedRacePerformance(data, previousSeasonRaces, "previous season race performance");
+
+  try {
+    const historicalTrackRaces = await findCopilotHistoricalTrackRaces(data, targetRace);
+    context.trackHistory = await buildCompletedRacePerformance(data, historicalTrackRaces, "target-track race history");
+  } catch (error) {
+    context.trackHistory.errors.push(sanitizeAiError(error));
+  }
+
+  context.available = Boolean(context.currentSeason.available || context.previousSeason.available || context.trackHistory.available || context.relevantNews.length);
+  return context;
+}
+
 async function dailyInsightSnapshot(data, pageId) {
   return {
     focus: pageId,
     race: data.race,
     currentRaceWeekend: currentRaceWeekend(data.schedule),
     nextRaceWeekend: nextRaceWeekend(data.schedule),
+    nextUpcomingSession: nextUpcomingSession(data.schedule),
     seasonSummary: data.seasonSummary,
     standings: (data.standings || []).slice(0, 22),
     constructors: (data.constructors || []).slice(0, 11),
@@ -3077,6 +3863,7 @@ async function dailyInsightSnapshot(data, pageId) {
     schedule: (data.schedule || []).slice(0, 30),
     strategyContext: data.strategyContext || null,
     weekendSessionSummaries: await buildWeekendSessionSummaries(data, pageId),
+    performanceContext: pageId === "next-weekend" ? await buildNextWeekendPerformanceContext(data) : null,
     news: (data.news || []).slice(0, 8),
     source: data.sourceLabel || data.source || "",
   };
@@ -3104,6 +3891,7 @@ function emptyDailyPredictions() {
     summary: "",
     winner: [],
     podium: [],
+    leaderboard: [],
     watchlist: [],
     caveat: "AI race predictions are available after the Current weekend daily page is computed.",
   };
@@ -3145,13 +3933,13 @@ function dailyInsightPrompt(page) {
   if (page.id === "current-weekend") {
     instructions.push("For this Current weekend page, compute AI predictions for the race winner, podium, and watchlist using only the supplied snapshot. Use snapshot.weekendSessionSummaries for FP1-FP3, sprint, qualifying, race-pace, weather, tyre, and session-result evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. If qualifying, race pace, weather, or timing data is missing, lower confidence and say so instead of filling gaps.");
   } else if (page.id === "next-weekend") {
-    instructions.push("For this Next weekend page, compute AI predictions for the race winner, podium, and watchlist using only the supplied snapshot. Use snapshot.nextRaceWeekend, schedule, standings, constructors, timing, strategy context, and news evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. If session, race pace, weather, tyre, or timing data is missing for the next weekend, lower confidence and say so instead of filling gaps.");
+    instructions.push("For this Next weekend page, compute AI predictions for the race winner, podium, watchlist, and the next upcoming session full predicted leaderboard using only the supplied snapshot. Treat snapshot.nextUpcomingSession as the target when it exists; otherwise use snapshot.nextRaceWeekend. Use cumulative evidence from snapshot.performanceContext plus the rest of the snapshot: current-season race performance across completed tracks, performance last season, target-circuit history, standings, constructors, strategy context, schedule, weather/tyre evidence, and relevant news. Do not use a fixed weighting; synthesize the evidence, call out contradictions, and explain which supplied data supports each pick. Put predictions in predictions with available=true, include the full predicted leaderboard in predictions.leaderboard in finishing order, label it as a projection, and explain the data behind each pick. If session, race pace, weather, tyre, season-performance, track-history, or timing data is missing for the next weekend, lower confidence and say so instead of filling gaps.");
   } else if (page.id === "drivers-championship") {
     instructions.push("For this Drivers championship page, compute AI predictions for the drivers' championship winner, leading title contenders, and watchlist using only the supplied snapshot. Use standings, wins, constructors, schedule, season summary, timing, strategy context, and news evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. If remaining-race count, form, reliability, or pace data is missing, lower confidence and say so instead of filling gaps.");
   } else if (page.id === "constructors-championship") {
     instructions.push("For this Constructors championship page, compute AI predictions for the constructors' championship winner, leading title contenders, and watchlist using only the supplied snapshot. Use constructors standings, driver standings, schedule, season summary, timing, strategy context, and news evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. Use constructor abbreviations or names in prediction candidate code fields. If remaining-race count, form, reliability, or pace data is missing, lower confidence and say so instead of filling gaps.");
   } else {
-    instructions.push("For predictions, set available=false with empty winner, podium, and watchlist arrays.");
+    instructions.push("For predictions, set available=false with empty winner, podium, leaderboard, and watchlist arrays.");
   }
   return instructions.join(" ");
 }
@@ -3183,6 +3971,7 @@ function normalizeDailyPredictions(value) {
     summary: String(value.summary || "").slice(0, 260),
     winner: Array.isArray(value.winner) ? value.winner.slice(0, 3).map(normalizePredictionCandidate) : [],
     podium: Array.isArray(value.podium) ? value.podium.slice(0, 3).map(normalizePredictionCandidate) : [],
+    leaderboard: Array.isArray(value.leaderboard) ? value.leaderboard.slice(0, 22).map(normalizePredictionCandidate) : [],
     watchlist: Array.isArray(value.watchlist) ? value.watchlist.slice(0, 4).map(normalizePredictionWatchItem) : [],
     caveat: String(value.caveat || "").slice(0, 220),
   };
@@ -3282,7 +4071,7 @@ async function getDailyCopilotInsights(data) {
 }
 
 function shouldRetryDailyCopilotInsights(cached, today, nowMs = Date.now(), retryMs = COPILOT_INSIGHT_RETRY_MS) {
-  if (cached?.status !== "failed" || cached.attemptedOn !== today) return false;
+  if (!["failed", "pending"].includes(cached?.status) || cached.attemptedOn !== today) return false;
   const updatedAtMs = Date.parse(cached.updatedAt || "");
   return !Number.isFinite(updatedAtMs) || nowMs - updatedAtMs >= retryMs;
 }
@@ -3305,22 +4094,77 @@ async function fetchLiveDataEntries(urls) {
   return { raw, errors };
 }
 
+async function fetchOfficialF1StandingsFallback(raw, errors = []) {
+  const season = new Date().getFullYear();
+  const hasOfficialDrivers = parseOfficialF1DriverStandings(raw.officialF1DriverStandings).standings.length > 0;
+  const hasOfficialConstructors = parseOfficialF1ConstructorStandings(raw.officialF1ConstructorStandings).length > 0;
+  const needsDrivers = (!Array.isArray(raw.openF1DriverStandings) || !raw.openF1DriverStandings.length) && !hasOfficialDrivers;
+  const needsConstructors = (!Array.isArray(raw.openF1ConstructorStandings) || !raw.openF1ConstructorStandings.length) && !hasOfficialConstructors;
+  const requests = [];
+  if (needsDrivers) requests.push(["officialF1DriverStandings", officialF1ResultsUrl("drivers", season)]);
+  if (needsConstructors) requests.push(["officialF1ConstructorStandings", officialF1ResultsUrl("team", season)]);
+  if (!requests.length) return raw;
+  const entries = await Promise.all(requests.map(async ([key, url]) => {
+    try {
+      return { key, value: await requestText(url, 6500, { Accept: "text/html,application/xhtml+xml,*/*" }) };
+    } catch (error) {
+      return { key, error };
+    }
+  }));
+  for (const entry of entries) {
+    if (!entry.error) raw[entry.key] = entry.value;
+    else errors.push(entry.error.message);
+  }
+  return raw;
+}
+
 async function buildPitWallSnapshot(raw, errors = [], options = {}) {
   const fallbackData = readFallbackPitWallData();
-  const driverResult = parseDriverStandings(raw.driverStandings);
-  const constructors = parseConstructorStandings(raw.constructorStandings);
-  const schedule = parseSchedule(raw.schedule, raw.openF1Meetings);
+  const openF1DriverResult = parseOpenF1DriverStandings(raw.openF1DriverStandings, fallbackData.drivers);
+  const officialF1DriverResult = parseOfficialF1DriverStandings(raw.officialF1DriverStandings);
+  const f1ApiDriverResult = parseF1ApiDriverStandings(raw.f1ApiDriverStandings);
+  const jolpicaDriverResult = parseDriverStandings(raw.driverStandings);
+  const driverResult = openF1DriverResult.standings.length ? openF1DriverResult : officialF1DriverResult.standings.length ? officialF1DriverResult : f1ApiDriverResult.standings.length ? f1ApiDriverResult : jolpicaDriverResult;
+  const openF1Constructors = parseOpenF1ConstructorStandings(raw.openF1ConstructorStandings);
+  const officialF1Constructors = parseOfficialF1ConstructorStandings(raw.officialF1ConstructorStandings);
+  const f1ApiConstructors = parseF1ApiConstructorStandings(raw.f1ApiConstructorStandings);
+  const constructors = openF1Constructors.length ? openF1Constructors : officialF1Constructors.length ? officialF1Constructors : f1ApiConstructors.length ? f1ApiConstructors : parseConstructorStandings(raw.constructorStandings);
+  let raceWinners = parseRaceWinners(raw.driverResults);
+  const schedule = applyScheduleWinners(parseSchedule(raw.schedule, raw.openF1Meetings), raceWinners);
+  const openF1Schedule = parseOpenF1Schedule(raw.openF1Meetings, raw.openF1Sessions);
+  const fallbackSchedule = normalizeScheduleRoundOrder(openF1Schedule, { removeCancelled2026: scheduleHas2026Dates(openF1Schedule) });
+  let effectiveSchedule = schedule.length ? schedule : applyScheduleWinners(fallbackSchedule, raceWinners);
+  if (!options.enrichmentPending) {
+    const openF1RaceWinners = await fetchMissingOpenF1RaceWinners(effectiveSchedule, driverResult.seasonSummary.season, fallbackData.drivers);
+    if (openF1RaceWinners.length) {
+      raceWinners = raceWinners.concat(openF1RaceWinners);
+      effectiveSchedule = applyScheduleWinners(effectiveSchedule, raceWinners);
+    }
+  }
   const drivers = parseOpenDrivers(raw.openF1Drivers, fallbackData.drivers, driverResult.standings);
   const byCode = Object.fromEntries(drivers.map((driver) => [driver.code, driver]));
+  const recentForm = parseDriverRecentForm(raw.driverResults);
   const timing = parseTiming(raw.openF1Drivers, raw.openF1Position, raw.openF1Intervals, driverResult.standings, raw.openF1Stints, raw.openF1Pit, raw.openF1Laps, raw.openF1CarData);
   const battlePairs = detectBattlePairs(timing);
-  const nextRace = schedule.find((race) => race.status === "live") || schedule.find((race) => race.status === "upcoming") || schedule.at(-1) || {};
+  const nextRace = effectiveSchedule.find((race) => race.status === "live") || effectiveSchedule.find((race) => race.status === "upcoming") || effectiveSchedule.at(-1) || {};
   let weatherRows = Array.isArray(raw.openF1Weather) ? raw.openF1Weather : [];
+  let weatherLoc = nextRace.loc || "";
   const latestWeatherMeetingKey = weatherRows.at(-1)?.meeting_key;
-  if (nextRace.meetingKey && latestWeatherMeetingKey && String(latestWeatherMeetingKey) !== String(nextRace.meetingKey)) weatherRows = [];
+  const latestWeatherRows = weatherRows;
+  if (nextRace.meetingKey && latestWeatherMeetingKey && String(latestWeatherMeetingKey) !== String(nextRace.meetingKey)) {
+    weatherRows = [];
+    weatherLoc = "Latest session";
+  }
   if (options.includeWeekendWeatherFallback !== false && !hasWeatherRows(weatherRows)) {
     const weekendWeatherRows = await fetchOpenF1WeekendWeather(nextRace);
-    if (hasWeatherRows(weekendWeatherRows)) weatherRows = weekendWeatherRows;
+    if (hasWeatherRows(weekendWeatherRows)) {
+      weatherRows = weekendWeatherRows;
+      weatherLoc = nextRace.loc || weatherLoc;
+    }
+  }
+  if (!hasWeatherRows(weatherRows) && hasWeatherRows(latestWeatherRows)) {
+    weatherRows = latestWeatherRows;
+    weatherLoc = "Latest session";
   }
   const weather = parseWeather(weatherRows);
   const baseNews = buildNewsFeed(raw);
@@ -3332,11 +4176,12 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
     round: nextRace.rnd || 0,
     startsAt: nextRace.startsAt || "",
     weather,
+    weatherLoc,
   };
   const seasonSummary = {
     season: driverResult.seasonSummary.season,
     round: driverResult.seasonSummary.round || nextRace.rnd || 0,
-    totalRounds: schedule.length,
+    totalRounds: effectiveSchedule.length,
   };
   const strategyContext = buildStrategyContext({
     race,
@@ -3357,9 +4202,11 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
     errors,
     drivers,
     byCode,
+    driverForm: recentForm.driverForm,
+    formRounds: recentForm.formRounds,
     standings: driverResult.standings,
     constructors,
-    schedule,
+    schedule: effectiveSchedule,
     sessions: nextRace.sessions || [],
     news,
     timing,
@@ -3385,6 +4232,7 @@ function refreshLiveDataEnrichment(baseRaw, baseErrors, baseData) {
     data.copilot = baseData.copilot;
     if (liveDataCache?.data?.fetchedAt === baseData.fetchedAt) {
       liveDataCache = { createdAt: Date.now(), data };
+      writeLiveSnapshotDiskCache(data);
     }
     return data;
   })().catch((error) => {
@@ -3399,17 +4247,68 @@ function refreshLiveDataEnrichment(baseRaw, baseErrors, baseData) {
   return liveDataEnrichmentRefresh;
 }
 
-async function getPitWallSnapshot() {
-  if (liveDataCache && Date.now() - liveDataCache.createdAt < DATA_CACHE_MS) return liveDataCache.data;
+function liveSnapshotCachePath() {
+  return path.join(app.getPath("userData"), LIVE_SNAPSHOT_CACHE_FILE);
+}
+
+function readLiveSnapshotDiskCache() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(liveSnapshotCachePath(), "utf8"));
+    if (parsed?.schemaVersion && parsed.schemaVersion !== LIVE_SNAPSHOT_CACHE_VERSION) return null;
+    return parsed?.data?.source === "live" ? normalizePitWallSnapshotRounds(parsed.data) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLiveSnapshotDiskCache(data) {
+  if (!data?.schedule?.length && !data?.standings?.length) return;
+  try {
+    fs.mkdirSync(path.dirname(liveSnapshotCachePath()), { recursive: true });
+    fs.writeFileSync(liveSnapshotCachePath(), JSON.stringify({ schemaVersion: LIVE_SNAPSHOT_CACHE_VERSION, createdAt: new Date().toISOString(), data: normalizePitWallSnapshotRounds(data) }), "utf8");
+  } catch {}
+}
+
+async function refreshLiveDataSnapshot() {
   const { raw, errors } = await fetchLiveDataEntries(LIVE_CORE_DATA_URLS);
+  await fetchOfficialF1StandingsFallback(raw, errors);
   const data = await buildPitWallSnapshot(raw, errors, {
     includeWeekendWeatherFallback: false,
     enrichmentPending: true,
   });
   data.copilot = { daily: await getDailyCopilotInsights(data) };
   liveDataCache = { createdAt: Date.now(), data };
+  writeLiveSnapshotDiskCache(data);
   refreshLiveDataEnrichment(raw, errors, data);
   return data;
+}
+
+async function getPitWallSnapshot(options = {}) {
+  if (options?.forceRefresh) {
+    if (!liveDataRefresh) {
+      liveDataRefresh = refreshLiveDataSnapshot().finally(() => { liveDataRefresh = null; });
+    }
+    return liveDataRefresh;
+  }
+  if (liveDataCache && Date.now() - liveDataCache.createdAt < DATA_CACHE_MS) return liveDataCache.data;
+  const diskData = readLiveSnapshotDiskCache();
+  if (diskData) {
+    const data = { ...diskData, sourceLabel: "Live data (refreshing)", enrichmentPending: true };
+    liveDataCache = { createdAt: Date.now(), data };
+    if (!liveDataRefresh) {
+      liveDataRefresh = refreshLiveDataSnapshot()
+        .catch((error) => {
+          writePitWallDebugLog("live-data.refresh-failed", { message: error?.message || "Live data refresh failed" });
+          return null;
+        })
+        .finally(() => { liveDataRefresh = null; });
+    }
+    return data;
+  }
+  if (!liveDataRefresh) {
+    liveDataRefresh = refreshLiveDataSnapshot().finally(() => { liveDataRefresh = null; });
+  }
+  return liveDataRefresh;
 }
 
 function readFallbackPitWallData() {
@@ -4226,20 +5125,14 @@ async function findF1TvContentCandidatesInPage(webContents, options = {}) {
     (() => {
       const sessionKind = ${JSON.stringify(String(options.sessionKind || ""))};
       const raceName = ${JSON.stringify(String(options.raceName || ""))};
+      const scoreCandidate = ${scoreF1TvContentCandidate.toString()};
       const normalize = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-      const raceNeedle = normalize(raceName);
-      const sessionNeedle = normalize(sessionKind);
       const nodes = Array.from(document.querySelectorAll('a[href*="/detail/"], [data-href*="/detail/"]'));
       const candidates = nodes.map((node, index) => {
         const href = node.href || node.getAttribute("href") || node.dataset?.href || "";
         const id = (String(href).match(/\\/detail\\/([0-9]+)/i) || [])[1] || "";
         const text = normalize([node.textContent, node.ariaLabel, node.title, href].filter(Boolean).join(" "));
-        let score = 0;
-        if (raceNeedle && text.includes(raceNeedle)) score += 3;
-        if (sessionNeedle && text.includes(sessionNeedle)) score += 3;
-        if (/pre qualifying|post qualifying|pre race|post race|highlights|summary/.test(text)) score -= 1;
-        if (/practice|qualifying|race/.test(text)) score += 2;
-        if (/replay|live event|qualifying|practice|race/.test(text)) score += 1;
+        const score = scoreCandidate(text, { raceName, sessionKind });
         return { id, score, index, text: text.slice(0, 140) };
       }).filter((item) => item.id);
       candidates.sort((a, b) => b.score - a.score || a.index - b.index);
@@ -4256,6 +5149,29 @@ async function findF1TvContentCandidatesInPage(webContents, options = {}) {
 async function findF1TvContentIdInPage(webContents, options = {}) {
   const candidates = await findF1TvContentCandidatesInPage(webContents, options);
   return candidates[0]?.id || "";
+}
+
+function scoreF1TvContentCandidate(value, options) {
+  options = options || {};
+  const normalize = (text) => String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const text = normalize(value);
+  const raceNeedle = normalize(options.raceName || "");
+  const sessionNeedle = normalize(options.sessionKind || "");
+  const raceWords = raceNeedle.split(" ").filter((word) => word.length > 3 && !["grand", "prix", "race"].includes(word));
+  let score = 0;
+  if (raceNeedle && text.includes(raceNeedle)) score += 3;
+  if (raceWords.length) score += Math.min(3, raceWords.filter((word) => text.includes(word)).length);
+  const hasRequestedSession = Boolean(sessionNeedle && text.includes(sessionNeedle));
+  if (hasRequestedSession) score += 6;
+  if (sessionNeedle && sessionNeedle !== "race" && !hasRequestedSession) score -= 4;
+  if (/\b(formula 1|f1)\b/.test(text)) score += 8;
+  if (/\bgrand prix\b/.test(text)) score += 2;
+  if (sessionNeedle === "race" && /\bgrand prix\b/.test(text) && !/\b(practice|qualifying|pre race|post race|kids)\b/.test(text)) score += 6;
+  if (/\b(formula 2|f2|formula 3|f3|f1 academy|f1 kids|kids|porsche supercup|psc)\b/.test(text)) score -= 12;
+  if (/pre qualifying|post qualifying|pre race|post race|highlights|summary/.test(text)) score -= 1;
+  if (/practice|qualifying|race/.test(text)) score += 2;
+  if (/replay|live event|qualifying|practice|race/.test(text)) score += 1;
+  return score;
 }
 
 function scopedRequestHeaders(headers = {}) {
@@ -4687,10 +5603,18 @@ async function resolveF1TvContent(_event, options = {}) {
       : stream.drm,
   }));
   const timingFeed = feeds.find((feed) => feed.kind === "world" || feed.feedId === "WORLD") || feeds[0] || null;
-  const manifestTiming = timingFeed ? await f1TvManifestTiming(timingFeed).catch(() => ({})) : {};
-  if (manifestTiming.videoStartUtc) {
-    feeds = feeds.map((feed) => ({ ...feed, ...manifestTiming }));
-  }
+  const feedTimings = await Promise.all(feeds.map(async (feed) => ({
+    feed,
+    timing: await f1TvManifestTiming(feed).catch(() => ({})),
+  })));
+  const timingFeedTiming = feedTimings.find((item) => item.feed === timingFeed)?.timing || {};
+  const manifestTiming = timingFeedTiming.videoStartUtc
+    ? timingFeedTiming
+    : feedTimings.find((item) => item.timing?.videoStartUtc)?.timing || {};
+  feeds = feedTimings.map(({ feed, timing }) => {
+    if (timing?.videoStartUtc) return { ...feed, ...timing };
+    return manifestTiming.videoStartUtc ? { ...feed, ...manifestTiming, videoStartSource: `${manifestTiming.videoStartSource || "manifest"}:fallback` } : feed;
+  });
 
   const result = {
     ok: feeds.length > 0,
@@ -4944,6 +5868,7 @@ function f1TvLibraryCacheEntry(year, allowStale = false) {
   }
   try {
     const parsed = JSON.parse(fs.readFileSync(f1TvLibraryCachePath(), "utf8"));
+    if (parsed?.schemaVersion !== F1TV_LIBRARY_CACHE_VERSION) return null;
     const entry = parsed?.entries?.[year];
     const createdAt = Date.parse(entry?.createdAt || "");
     if (entry?.data?.races?.length && Number.isFinite(createdAt) && (allowStale || now - createdAt < F1TV_LIBRARY_CACHE_MS)) {
@@ -4963,7 +5888,7 @@ function writeF1TvLibraryCache(year, data) {
     try { parsed = JSON.parse(fs.readFileSync(f1TvLibraryCachePath(), "utf8")); } catch {}
     const entries = { ...(parsed.entries || {}), [year]: { createdAt, data } };
     fs.mkdirSync(path.dirname(f1TvLibraryCachePath()), { recursive: true });
-    fs.writeFileSync(f1TvLibraryCachePath(), JSON.stringify({ entries }, null, 2), "utf8");
+    fs.writeFileSync(f1TvLibraryCachePath(), JSON.stringify({ schemaVersion: F1TV_LIBRARY_CACHE_VERSION, entries }, null, 2), "utf8");
   } catch {}
 }
 
@@ -4981,14 +5906,16 @@ async function getF1TvLibrary(options = {}) {
       };
     }
   }
-  const [scheduleResult, meetingsResult] = await Promise.allSettled([
-    requestJson(`https://api.jolpi.ca/ergast/f1/${year}.json`),
+  const [meetingsResult, sessionsResult] = await Promise.allSettled([
     requestOpenF1Json(`https://api.openf1.org/v1/meetings?year=${year}`),
+    requestOpenF1Json(`https://api.openf1.org/v1/sessions?year=${year}`),
   ]);
-  const scheduleJson = scheduleResult.status === "fulfilled" ? scheduleResult.value : null;
   const meetings = meetingsResult.status === "fulfilled" ? meetingsResult.value : [];
-  const races = parseSchedule(scheduleJson, meetings).map((race) => ({
-    rnd: race.rnd,
+  const sessions = sessionsResult.status === "fulfilled" ? sessionsResult.value : [];
+  const races = parseOpenF1Schedule(meetings, sessions)
+  .filter((race) => year !== "2026" || !isCancelledF12026RaceName(race.name || ""))
+  .map((race, index) => ({
+    rnd: index + 1,
     name: race.name,
     circuit: race.circuit,
     loc: race.loc,
@@ -5005,11 +5932,11 @@ async function getF1TvLibrary(options = {}) {
     ],
   }));
   const library = {
-    source: "Jolpica + OpenF1",
+    source: "OpenF1",
     season: year,
     races,
     fetchedAt: new Date().toISOString(),
-    errors: [scheduleResult, meetingsResult].filter((result) => result.status === "rejected").map((result) => result.reason.message),
+    errors: [meetingsResult, sessionsResult].filter((result) => result.status === "rejected").map((result) => result.reason.message),
   };
   if (library.races.length) {
     writeF1TvLibraryCache(year, library);
@@ -5059,6 +5986,9 @@ function analyticsSessionDiagnosticSummary(sessionKind, data = {}) {
   const rowsWithTime = drivers.filter((driver) => finiteNumber(driver.resultDuration) != null || finiteNumber(driver.fastestLap) != null).length;
   const rowsWithGap = drivers.filter((driver) => driver.gapToLeader !== null && driver.gapToLeader !== undefined && driver.gapToLeader !== "").length;
   const rowsWithLaps = drivers.filter((driver) => finiteNumber(driver.laps) != null && Number(driver.laps) > 0).length;
+  const rowsWithLapTrace = drivers.filter((driver) => Array.isArray(driver.lapTrace) && driver.lapTrace.length > 0).length;
+  const rowsWithConsistency = drivers.filter((driver) => finiteNumber(driver.consistency?.medianLap) != null).length;
+  const rowsWithTyreCurve = drivers.filter((driver) => Array.isArray(driver.tyreCurve) && driver.tyreCurve.length > 0).length;
   const rich = drivers.length >= 15 && rowsWithPosition >= 15 && rowsWithTime >= 15 && rowsWithLaps >= 15;
   return {
     sessionKind,
@@ -5066,11 +5996,18 @@ function analyticsSessionDiagnosticSummary(sessionKind, data = {}) {
     source: data.source || "",
     session: data.session?.name || sessionKind,
     sessionKey: data.session?.key || "",
+    cached: Boolean(data.cached),
+    cacheSource: data.cacheSource || "",
+    revalidating: Boolean(data.revalidating),
+    cacheAgeSeconds: finiteNumber(data.cacheAgeSeconds),
     driverRows: drivers.length,
     rowsWithPosition,
     rowsWithTime,
     rowsWithGap,
     rowsWithLaps,
+    rowsWithLapTrace,
+    rowsWithConsistency,
+    rowsWithTyreCurve,
     counts: data.counts || {},
     errors: data.errors || [],
     sample: drivers.slice(0, 5).map((driver) => ({
@@ -5088,6 +6025,9 @@ async function runAnalyticsSessionDiagnosticAndQuit() {
   if (!process.env.PITWALL_ANALYTICS_SESSION_DIAG) return false;
   const season = String(process.env.PITWALL_ANALYTICS_SEASON || new Date().getFullYear()).replace(/[^0-9]/g, "") || String(new Date().getFullYear());
   const meetingKey = String(process.env.PITWALL_ANALYTICS_MEETING_KEY || "").replace(/[^0-9]/g, "");
+  const raceName = String(process.env.PITWALL_ANALYTICS_RACE_NAME || "").trim();
+  const raceStartsAt = String(process.env.PITWALL_ANALYTICS_RACE_STARTS_AT || "").trim();
+  const sessionStartsAt = String(process.env.PITWALL_ANALYTICS_SESSION_STARTS_AT || "").trim();
   const sessionKinds = String(process.env.PITWALL_ANALYTICS_SESSIONS || "Practice 1,Practice 2,Practice 3,Qualifying")
     .split(",")
     .map((value) => value.trim())
@@ -5095,7 +6035,7 @@ async function runAnalyticsSessionDiagnosticAndQuit() {
   const results = [];
   for (const sessionKind of sessionKinds) {
     try {
-      const data = await getAnalyticsSession({ season, meetingKey, sessionKind });
+      const data = await getAnalyticsSession({ season, meetingKey, sessionKind, raceName, raceStartsAt, sessionStartsAt });
       results.push(analyticsSessionDiagnosticSummary(sessionKind, data));
     } catch (error) {
       results.push({ sessionKind, rich: false, errors: [error?.message || "Session analytics failed"] });
@@ -5138,6 +6078,107 @@ function weekendRecapDomScript() {
       rows,
     };
   })()`;
+}
+
+function dashboardDomScript() {
+  return `(() => {
+    const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+    const weatherValues = Array.from(document.querySelectorAll(".wx__v")).map((node) => clean(node.textContent));
+    return {
+      title: clean(document.querySelector(".hero__name")?.textContent),
+      round: clean(document.querySelector(".hero__round")?.textContent),
+      trackSubtitle: clean(Array.from(document.querySelectorAll(".pw-card__sub, .card__sub")).find((node) => /OpenF1/.test(node.textContent || ""))?.textContent),
+      standingsRows: document.querySelectorAll(".stand__row").length,
+      sessionRows: document.querySelectorAll(".sess").length,
+      newsRows: document.querySelectorAll(".news__item").length,
+      favoriteRows: document.querySelectorAll(".fav").length,
+      weatherValues,
+      loading: /loading|Waiting for session times/i.test(document.body.textContent || ""),
+      body: clean(document.body.textContent),
+    };
+  })()`;
+}
+
+function dashboardSummary(dom = {}, elapsedMs = 0) {
+  const weatherRich = (dom.weatherValues || []).filter(richCell).length;
+  const rich = Boolean(
+    richCell(dom.title) &&
+    !/Current Formula 1 session|Formula 1$/i.test(dom.title || "") &&
+    dom.standingsRows >= 5 &&
+    dom.sessionRows >= 4 &&
+    dom.newsRows >= 1 &&
+    weatherRich >= 3 &&
+    !dom.loading
+  );
+  return {
+    rich,
+    elapsedMs,
+    title: dom.title || "",
+    round: dom.round || "",
+    trackSubtitle: dom.trackSubtitle || "",
+    standingsRows: dom.standingsRows || 0,
+    sessionRows: dom.sessionRows || 0,
+    newsRows: dom.newsRows || 0,
+    favoriteRows: dom.favoriteRows || 0,
+    weatherRich,
+    loading: Boolean(dom.loading),
+  };
+}
+
+async function loadDashboardDom(root, serverUrl, rendererEntry, timeoutMs) {
+  const win = new BrowserWindow({
+    width: 1360,
+    height: 900,
+    show: false,
+    backgroundColor: "#07090d",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webviewTag: false,
+      preload: path.join(root, "electron/preload.cjs"),
+    },
+  });
+  try {
+    const startedAt = Date.now();
+    await win.loadURL(`${serverUrl}/${rendererEntry}?screen=dashboard`);
+    const deadline = Date.now() + timeoutMs;
+    let dom = {};
+    while (Date.now() < deadline) {
+      dom = await win.webContents.executeJavaScript(dashboardDomScript(), true).catch((error) => ({ body: error?.message || String(error || "") }));
+      const summary = dashboardSummary(dom, Date.now() - startedAt);
+      if (summary.rich) return summary;
+      await wait(250);
+    }
+    return dashboardSummary(dom, Date.now() - startedAt);
+  } finally {
+    win.destroy();
+  }
+}
+
+async function runDashboardDiagnosticAndQuit() {
+  if (!process.env.PITWALL_DASHBOARD_DIAG) return false;
+  const root = path.resolve(app.getAppPath());
+  const { server, url } = await startStaticServer(root);
+  staticServer = server;
+  const rendererEntry = fs.existsSync(path.join(root, "dist/pitwall/index.html"))
+    ? "dist/pitwall/index.html"
+    : "ui_kits/pitwall/index.html";
+  const timeoutMs = Math.max(3000, Number(process.env.PITWALL_DASHBOARD_TIMEOUT_MS || 15000));
+  diagnosticWindowRunActive = true;
+  let summary;
+  try {
+    summary = await loadDashboardDom(root, url, rendererEntry, timeoutMs);
+  } catch (error) {
+    summary = dashboardSummary({ body: error?.message || "Dashboard diagnostic failed" }, timeoutMs);
+  } finally {
+    diagnosticWindowRunActive = false;
+    server.close();
+    staticServer = null;
+  }
+  console.log(JSON.stringify({ pitwallDashboardDiagnostic: summary }, null, 2));
+  app.exit(summary.rich ? 0 : 2);
+  return true;
 }
 
 function richCell(value) {
@@ -5304,10 +6345,11 @@ const AI_PREDICTIONS_SCHEMA = {
     summary: { type: "string" },
     winner: { type: "array", items: AI_PREDICTION_CANDIDATE_SCHEMA },
     podium: { type: "array", items: AI_PREDICTION_CANDIDATE_SCHEMA },
+    leaderboard: { type: "array", items: AI_PREDICTION_CANDIDATE_SCHEMA },
     watchlist: { type: "array", items: AI_PREDICTION_WATCH_SCHEMA },
     caveat: { type: "string" },
   },
-  required: ["available", "title", "summary", "winner", "podium", "watchlist", "caveat"],
+  required: ["available", "title", "summary", "winner", "podium", "leaderboard", "watchlist", "caveat"],
 };
 
 const AI_RESPONSE_SCHEMA = {
@@ -5356,8 +6398,8 @@ const AI_SYSTEM_PROMPT = [
   "Set visualization.kind to comparison, timeline, or battle only when that helps the user understand the answer.",
   "Set visualization.kind to none with empty title, subtitle, rows, and notes when prose is clearer.",
   "Never invent tyre compounds or stint laps when snapshot.strategyContext.tyreStrategy.available is false; explain what is missing instead.",
-  "Always include predictions. Set predictions.available=true only for daily Current weekend, Next weekend, Drivers championship, or Constructors championship projection pages, otherwise set it false with empty winner, podium, and watchlist arrays.",
-  "When predictions are available, label them as projections, use confidence and probability values from 0 to 1, and ground every winner, podium, and watchlist reason in the snapshot.",
+  "Always include predictions. Set predictions.available=true only for daily Current weekend, Next weekend, Drivers championship, or Constructors championship projection pages, otherwise set it false with empty winner, podium, leaderboard, and watchlist arrays.",
+  "When predictions are available, label them as projections, use confidence and probability values from 0 to 1, and ground every winner, podium, leaderboard, and watchlist reason in the snapshot.",
 ].join(" ");
 
 function aiPayload(options = {}) {
@@ -5365,7 +6407,7 @@ function aiPayload(options = {}) {
     prompt: String(options.prompt || "Summarize the live F1 snapshot."),
     snapshot: options.snapshot || {},
     visualizationGuide: "Return visualization.kind='none' for text-only answers. Use 'tyre_strategy' with one row per relevant driver when tyre, stint, pit, compound, or race-plan data is best shown visually.",
-    predictionGuide: "Return predictions.available=true only for daily Current weekend, Next weekend, Drivers championship, or Constructors championship projection pages. Otherwise use available=false with empty winner, podium, and watchlist arrays.",
+    predictionGuide: "Return predictions.available=true only for daily Current weekend, Next weekend, Drivers championship, or Constructors championship projection pages. For Next weekend, include predictions.leaderboard as the full predicted next upcoming session order. Otherwise use available=false with empty winner, podium, leaderboard, and watchlist arrays.",
     generatedAt: new Date().toISOString(),
   };
 }
@@ -5710,6 +6752,154 @@ function analyticsDriverCode(openDriver, fallbackDrivers) {
   return fallback?.code || String(number || "");
 }
 
+function f1TimingAnalyticsDriverRows(timingRows, fallbackDrivers) {
+  const fallbackByCode = new Map((fallbackDrivers || []).map((driver) => [String(driver.code || "").toUpperCase(), driver]));
+  return (timingRows || []).map((row) => {
+    const code = String(row.code || "").toUpperCase();
+    const fallback = fallbackByCode.get(code) || {};
+    const fastestLap = finiteNumber(row.bestLapDuration) ?? finiteNumber(row.lastLapDuration);
+    const resultDuration = finiteNumber(row.lastLapDuration) ?? fastestLap;
+    const sessionProgress = finiteNumber(row.sessionLap) ?? finiteNumber(row.laps);
+    const lapTraceLap = sessionProgress ?? (resultDuration != null || fastestLap != null ? 1 : null);
+    const tyreAge = finiteNumber(row.age);
+    return {
+      code,
+      number: finiteNumber(row.number) ?? fallback.num,
+      name: fallback.name || code,
+      team: fallback.team || "",
+      teamAbbr: fallback.abbr || teamAbbr(fallback.team || ""),
+      color: fallback.color || "var(--accent)",
+      image: fallback.image || "",
+      position: finiteNumber(row.pos),
+      resultDuration,
+      gapToLeader: row.gap === "LEADER" ? 0 : row.gap || "",
+      laps: sessionProgress,
+      fastestLap,
+      avgLap: resultDuration,
+      sectors: row.sectorTimes || {},
+      consistency: { medianLap: fastestLap },
+      racecraft: { startPosition: null, endPosition: finiteNumber(row.pos), positionDelta: null, overtakes: 0, pitStops: row.pits || 0 },
+      stints: row.comp ? [{ compound: row.comp, lapStart: null, lapEnd: null, laps: sessionProgress, tyreAgeAtStart: null }] : [],
+      tyreCurve: lapTraceLap != null && resultDuration != null ? [{ lap: lapTraceLap, tyreAge, duration: resultDuration }] : [],
+      lapTrace: resultDuration != null ? [{ lap: lapTraceLap || 1, duration: resultDuration, s1: null, s2: null, s3: null, pitOut: false }] : [],
+      telemetry: row.telemetry || {},
+    };
+  }).filter((row) => row.code);
+}
+
+function f1TimingAnalyticsElapsedSeconds(sessionData) {
+  const startSeconds = f1TimingSessionStartSeconds(sessionData);
+  return Number.isFinite(startSeconds) && startSeconds > 0 ? startSeconds + 1400 : 5200;
+}
+
+async function buildF1TimingAnalyticsSessionData(sessionInfo, options = {}) {
+  const meetingKey = finiteNumber(sessionInfo?.meeting_key) || finiteNumber(options.meetingKey);
+  if (!meetingKey) throw new Error("Formula 1 timing fallback needs an OpenF1 meeting key.");
+  const sessionKind = options.sessionKind || sessionInfo?.session_name || "Race";
+  const sessionData = await getReplayF1TimingSessionData(meetingKey, sessionKind, options);
+  const parsed = parseF1TimingArchiveRows(sessionData, f1TimingAnalyticsElapsedSeconds(sessionData), { timingAnchor: "program" });
+  const fallback = readFallbackPitWallData();
+  const drivers = f1TimingAnalyticsDriverRows(parsed.timing, fallback.drivers);
+  return {
+    source: "Formula 1 livetiming",
+    fetchedAt: new Date().toISOString(),
+    errors: [],
+    session: {
+      key: finiteNumber(sessionData.selectedSession?.session_key) || finiteNumber(sessionInfo?.session_key),
+      meetingKey,
+      name: sessionData.selectedSession?.session_name || sessionInfo?.session_name || sessionKind,
+      type: sessionData.selectedSession?.session_type || sessionInfo?.session_type || "",
+      dateStart: sessionData.selectedSession?.date_start || sessionInfo?.date_start || "",
+      dateEnd: sessionData.selectedSession?.date_end || sessionInfo?.date_end || "",
+      circuit: sessionData.meeting?.circuit_short_name || sessionInfo?.circuit_short_name || "",
+      location: [sessionData.meeting?.location, sessionData.meeting?.country_name].filter(Boolean).join(", ") || [sessionInfo?.location, sessionInfo?.country_name].filter(Boolean).join(", "),
+      year: sessionData.selectedSession?.year || sessionInfo?.year || options.season || "",
+    },
+    weather: parsed.weather || {},
+    drivers,
+    counts: {
+      drivers: drivers.length,
+      laps: drivers.filter((driver) => finiteNumber(driver.fastestLap) != null || finiteNumber(driver.resultDuration) != null).length,
+      overtakes: 0,
+      pit: drivers.filter((driver) => driver.racecraft?.pitStops).length,
+      position: drivers.filter((driver) => finiteNumber(driver.position) != null).length,
+      sessionResult: 0,
+      stints: drivers.filter((driver) => driver.stints?.length).length,
+      weather: parsed.weather && Object.keys(parsed.weather).length ? 1 : 0,
+      f1TimingEntries: parsed.diagnostics?.timingEntries || 0,
+    },
+  };
+}
+
+function median(values) {
+  const clean = values.map(finiteNumber).filter((value) => value != null).sort((a, b) => a - b);
+  if (!clean.length) return null;
+  const middle = Math.floor(clean.length / 2);
+  return clean.length % 2 ? clean[middle] : (clean[middle - 1] + clean[middle]) / 2;
+}
+
+function lapSpread(values) {
+  const clean = values.map(finiteNumber).filter((value) => value != null);
+  if (clean.length < 2) return null;
+  return Math.max(...clean) - Math.min(...clean);
+}
+
+function cleanLapTrace(laps) {
+  return (laps || [])
+    .map((row) => ({
+      lap: finiteNumber(row.lap_number),
+      duration: finiteNumber(row.lap_duration),
+      s1: finiteNumber(row.duration_sector_1),
+      s2: finiteNumber(row.duration_sector_2),
+      s3: finiteNumber(row.duration_sector_3),
+      pitOut: Boolean(row.is_pit_out_lap),
+    }))
+    .filter((row) => row.lap != null && row.duration != null && row.duration > 0 && !row.pitOut)
+    .sort((a, b) => a.lap - b.lap);
+}
+
+function tyreAgeForLap(stints, lapNumber) {
+  const lap = finiteNumber(lapNumber);
+  if (lap == null) return null;
+  const stint = (stints || []).find((item) => {
+    const start = finiteNumber(item.lapStart);
+    const end = finiteNumber(item.lapEnd);
+    return start != null && lap >= start && (end == null || lap <= end);
+  });
+  if (!stint) return lap;
+  const start = finiteNumber(stint.lapStart) || lap;
+  const ageAtStart = finiteNumber(stint.tyreAgeAtStart) || 0;
+  return ageAtStart + Math.max(0, lap - start);
+}
+
+function tyreAgeCurve(lapTrace, stints) {
+  return (lapTrace || []).map((lap) => ({
+    lap: lap.lap,
+    tyreAge: tyreAgeForLap(stints, lap.lap),
+    duration: lap.duration,
+  })).filter((row) => row.tyreAge != null && row.duration != null);
+}
+
+function racecraftForDriver(number, result, positions, overtakes, pitStops) {
+  const driverPositions = (positions || [])
+    .filter((row) => Number(row.driver_number) === number && finiteNumber(row.position) != null)
+    .sort((a, b) => {
+      const left = Date.parse(a.date || "");
+      const right = Date.parse(b.date || "");
+      if (Number.isFinite(left) && Number.isFinite(right) && left !== right) return left - right;
+      return 0;
+    });
+  const startPosition = finiteNumber(driverPositions[0]?.position);
+  const endPosition = finiteNumber(result.position) ?? finiteNumber(driverPositions.at(-1)?.position);
+  return {
+    startPosition,
+    endPosition,
+    positionDelta: startPosition != null && endPosition != null ? startPosition - endPosition : null,
+    overtakes: overtakes || 0,
+    pitStops,
+  };
+}
+
 function summarizeAnalyticsDrivers(raw, fallbackDrivers) {
   const openDrivers = Array.isArray(raw.drivers) ? raw.drivers : [];
   const drivers = parseOpenDrivers(openDrivers, fallbackDrivers, []);
@@ -5752,6 +6942,9 @@ function summarizeAnalyticsDrivers(raw, fallbackDrivers) {
         tyreAgeAtStart: finiteNumber(row.tyre_age_at_start),
       }));
     const pitStops = (raw.pit || []).filter((row) => Number(row.driver_number) === number);
+    const lapTrace = cleanLapTrace(laps);
+    const lapDurations = lapTrace.map((row) => row.duration);
+    const overtakes = overtakesByNumber.get(number) || 0;
     return {
       code,
       number,
@@ -5773,10 +6966,19 @@ function summarizeAnalyticsDrivers(raw, fallbackDrivers) {
       },
       topSpeed: maxLapSpeed(cleanLaps),
       tyreDeg: lapDurationSlope(cleanLaps),
+      lapTrace,
+      consistency: {
+        medianLap: median(lapDurations),
+        bestFiveAvg: average(paceLaps.map((row) => finiteNumber(row.lap_duration))),
+        spread: lapSpread(lapDurations),
+        cleanLapCount: lapTrace.length,
+      },
+      tyreCurve: tyreAgeCurve(lapTrace, stints),
+      racecraft: racecraftForDriver(number, result, raw.position || [], overtakes, pitStops.length),
       stints,
       pitStops: pitStops.length,
       pitLoss: average(pitStops.map((row) => finiteNumber(row.lane_duration) ?? finiteNumber(row.pit_duration))),
-      overtakes: overtakesByNumber.get(number) || 0,
+      overtakes,
     };
   }).sort((a, b) => {
     if (a.position && b.position) return a.position - b.position;
@@ -5800,7 +7002,17 @@ function readAnalyticsSessionDiskCache() {
 
 function analyticsDiskEntryFresh(entry) {
   const createdAt = Date.parse(entry?.createdAt || "");
-  return Boolean(entry?.data && Number.isFinite(createdAt) && Date.now() - createdAt < ANALYTICS_DISK_CACHE_MS);
+  return Boolean(entry?.data && Number.isFinite(createdAt) && (analyticsSessionIsImmutable(entry.data) || Date.now() - createdAt < ANALYTICS_DISK_CACHE_MS));
+}
+
+function analyticsSessionIsImmutable(data = {}) {
+  return /formula 1/i.test(String(data?.source || ""));
+}
+
+function analyticsSessionHasPublishedRows(data = {}) {
+  if (analyticsSessionIsImmutable(data)) return true;
+  const counts = data?.counts || {};
+  return ["laps", "position", "sessionResult", "stints"].some((key) => finiteNumber(counts[key]) > 0);
 }
 
 function analyticsAliasKey(options = {}) {
@@ -5808,6 +7020,15 @@ function analyticsAliasKey(options = {}) {
   const meetingKey = finiteNumber(options.meetingKey) || "";
   const sessionNeedle = cleanSessionName(options.sessionKind || options.sessionName || "Race");
   return [season, meetingKey, sessionNeedle].join(":");
+}
+
+function analyticsArchiveAliasKey(options = {}) {
+  if (!shouldPreferF1TimingAnalytics(options)) return "";
+  const season = String(options.season || f1TimingDatePart(options.raceStartsAt || options.startsAt).slice(0, 4) || new Date().getFullYear()).replace(/[^0-9]/g, "") || String(new Date().getFullYear());
+  const raceName = compactText(options.raceName || options.eventName);
+  const raceStartsAt = f1TimingDatePart(options.raceStartsAt || options.startsAt);
+  const sessionNeedle = cleanSessionName(options.sessionKind || options.sessionName || "Race");
+  return raceName && raceStartsAt ? ["f1", season, raceName, raceStartsAt, sessionNeedle].join(":") : "";
 }
 
 function analyticsSessionDiskEntry(keys = [], options = {}) {
@@ -5856,7 +7077,8 @@ function cachedAnalyticsSessionData(data, source, createdAt, revalidating = fals
   };
 }
 
-function shouldRevalidateAnalyticsCache(createdAt) {
+function shouldRevalidateAnalyticsCache(createdAt, data) {
+  if (analyticsSessionIsImmutable(data)) return false;
   const createdAtMs = typeof createdAt === "number" ? createdAt : Date.parse(createdAt || "");
   return !Number.isFinite(createdAtMs) || Date.now() - createdAtMs >= ANALYTICS_REVALIDATE_MS;
 }
@@ -5888,11 +7110,18 @@ async function resolveAnalyticsSession(options = {}) {
 async function buildAnalyticsSessionData(sessionInfo, options = {}) {
   const sessionKey = finiteNumber(sessionInfo?.session_key);
   if (!sessionKey) throw new Error("OpenF1 did not return a session key for this selection.");
+  if (shouldPreferF1TimingAnalytics(options)) {
+    try {
+      return await buildF1TimingAnalyticsSessionData(sessionInfo, options);
+    } catch {}
+  }
+  const optionalEndpoints = new Set(["overtakes", "position"]);
   const requests = {
     drivers: ["drivers", { session_key: sessionKey }],
     laps: ["laps", { session_key: sessionKey }],
     overtakes: ["overtakes", { session_key: sessionKey }],
     pit: ["pit", { session_key: sessionKey }],
+    position: ["position", { session_key: sessionKey }],
     sessionResult: ["sessionResult", { session_key: sessionKey }],
     stints: ["stints", { session_key: sessionKey }],
     weather: ["weather", { session_key: sessionKey }],
@@ -5907,12 +7136,12 @@ async function buildAnalyticsSessionData(sessionInfo, options = {}) {
       raw[key] = Array.isArray(rows) ? rows : [];
     } catch (error) {
       raw[key] = [];
-      errors.push(error?.message || "OpenF1 request failed");
+      if (!optionalEndpoints.has(key)) errors.push(error?.message || "OpenF1 request failed");
     }
     requestIndex += 1;
     if (requestIndex < requestEntries.length) await wait(OPENF1_ANALYTICS_REQUEST_DELAY_MS);
   }
-  const hasPublishedRows = ["drivers", "laps", "sessionResult"].some((key) => raw[key]?.length);
+  const hasPublishedRows = ["laps", "position", "sessionResult", "stints"].some((key) => raw[key]?.length);
   if (!hasPublishedRows && !errors.length) {
     errors.push("OpenF1 has not published analytics rows for this session yet.");
   }
@@ -5936,11 +7165,19 @@ async function buildAnalyticsSessionData(sessionInfo, options = {}) {
     drivers: summarizeAnalyticsDrivers(raw, fallback.drivers),
     counts: Object.fromEntries(Object.entries(raw).map(([key, rows]) => [key, rows.length])),
   };
+  if (!hasPublishedRows) {
+    try {
+      return await buildF1TimingAnalyticsSessionData(sessionInfo, options);
+    } catch (error) {
+      data.errors.push(`Formula 1 timing fallback unavailable: ${error?.message || "unknown error"}`);
+    }
+  }
   return data;
 }
 
 function refreshAnalyticsSessionCache({ cacheKey, aliasKey, options = {}, sessionInfo = null, cachedData = null } = {}) {
-  const refreshKeys = [cacheKey, aliasKey].filter(Boolean).map(String);
+  const archiveAliasKey = analyticsArchiveAliasKey(options);
+  const refreshKeys = [cacheKey, archiveAliasKey, aliasKey].filter(Boolean).map(String);
   if (!refreshKeys.length || refreshKeys.some((key) => analyticsRefreshInFlight.has(key))) return;
   for (const key of refreshKeys) analyticsRefreshInFlight.set(key, true);
   Promise.resolve().then(async () => {
@@ -5955,7 +7192,7 @@ function refreshAnalyticsSessionCache({ cacheKey, aliasKey, options = {}, sessio
     const createdAt = Date.now();
     if (analyticsCacheFingerprint(previousData) !== analyticsCacheFingerprint(data)) {
       analyticsSessionCache.set(resolvedCacheKey, { createdAt, data });
-      writeAnalyticsSessionDiskCache([resolvedCacheKey, aliasKey], data);
+      writeAnalyticsSessionDiskCache([resolvedCacheKey, archiveAliasKey, aliasKey], data);
     } else {
       analyticsSessionCache.set(resolvedCacheKey, { createdAt, data: previousData || data });
     }
@@ -5967,16 +7204,24 @@ function refreshAnalyticsSessionCache({ cacheKey, aliasKey, options = {}, sessio
 
 async function getAnalyticsSession(options = {}) {
   const aliasKey = analyticsAliasKey(options);
-  const aliasDiskEntry = analyticsSessionDiskEntry([aliasKey], { withMeta: true });
-  if (aliasDiskEntry?.data) {
-    const shouldRefresh = shouldRevalidateAnalyticsCache(aliasDiskEntry.createdAt);
+  const archiveAliasKey = analyticsArchiveAliasKey(options);
+  const aliasDiskEntry = analyticsSessionDiskEntry([archiveAliasKey, aliasKey], { withMeta: true });
+  if (aliasDiskEntry?.data && analyticsSessionHasPublishedRows(aliasDiskEntry.data)) {
+    const shouldRefresh = shouldRevalidateAnalyticsCache(aliasDiskEntry.createdAt, aliasDiskEntry.data);
+    if (archiveAliasKey && aliasDiskEntry.key !== archiveAliasKey && analyticsSessionIsImmutable(aliasDiskEntry.data)) {
+      writeAnalyticsSessionDiskCache([archiveAliasKey], aliasDiskEntry.data);
+    }
     if (shouldRefresh) refreshAnalyticsSessionCache({ aliasKey, options, cachedData: aliasDiskEntry.data });
     return cachedAnalyticsSessionData(aliasDiskEntry.data, "disk", aliasDiskEntry.createdAt, shouldRefresh);
   }
-  const staleAliasEntry = analyticsSessionDiskEntry([aliasKey], { allowStale: true, withMeta: true });
-  if (staleAliasEntry?.data) {
-    refreshAnalyticsSessionCache({ aliasKey, options, cachedData: staleAliasEntry.data });
-    return cachedAnalyticsSessionData(staleAliasEntry.data, "disk", staleAliasEntry.createdAt, true);
+  const staleAliasEntry = analyticsSessionDiskEntry([archiveAliasKey, aliasKey], { allowStale: true, withMeta: true });
+  if (staleAliasEntry?.data && analyticsSessionHasPublishedRows(staleAliasEntry.data)) {
+    const shouldRefresh = shouldRevalidateAnalyticsCache(staleAliasEntry.createdAt, staleAliasEntry.data);
+    if (archiveAliasKey && staleAliasEntry.key !== archiveAliasKey && analyticsSessionIsImmutable(staleAliasEntry.data)) {
+      writeAnalyticsSessionDiskCache([archiveAliasKey], staleAliasEntry.data);
+    }
+    if (shouldRefresh) refreshAnalyticsSessionCache({ aliasKey, options, cachedData: staleAliasEntry.data });
+    return cachedAnalyticsSessionData(staleAliasEntry.data, "disk", staleAliasEntry.createdAt, shouldRefresh);
   }
   let sessionInfo = null;
   try {
@@ -5990,32 +7235,33 @@ async function getAnalyticsSession(options = {}) {
   if (!sessionKey) throw new Error("OpenF1 did not return a session key for this selection.");
   const cacheKey = String(sessionKey);
   const cached = analyticsSessionCache.get(cacheKey);
-  if (cached) {
-    const shouldRefresh = shouldRevalidateAnalyticsCache(cached.createdAt);
+  if (cached && analyticsSessionHasPublishedRows(cached.data)) {
+    const shouldRefresh = shouldRevalidateAnalyticsCache(cached.createdAt, cached.data);
     if (shouldRefresh) refreshAnalyticsSessionCache({ cacheKey, aliasKey, options, sessionInfo, cachedData: cached.data });
     return cachedAnalyticsSessionData(cached.data, "memory", new Date(cached.createdAt).toISOString(), shouldRefresh);
   }
-  const diskEntry = analyticsSessionDiskEntry([cacheKey, aliasKey], { withMeta: true });
-  if (diskEntry?.data) {
-    const shouldRefresh = shouldRevalidateAnalyticsCache(diskEntry.createdAt);
+  const diskEntry = analyticsSessionDiskEntry([cacheKey, archiveAliasKey, aliasKey], { withMeta: true });
+  if (diskEntry?.data && analyticsSessionHasPublishedRows(diskEntry.data)) {
+    const shouldRefresh = shouldRevalidateAnalyticsCache(diskEntry.createdAt, diskEntry.data);
     analyticsSessionCache.set(cacheKey, { createdAt: Date.parse(diskEntry.createdAt || "") || Date.now(), data: diskEntry.data });
     trimAnalyticsSessionMemoryCache();
     if (shouldRefresh) refreshAnalyticsSessionCache({ cacheKey, aliasKey, options, sessionInfo, cachedData: diskEntry.data });
     return cachedAnalyticsSessionData(diskEntry.data, "disk", diskEntry.createdAt, shouldRefresh);
   }
-  const staleDiskEntry = analyticsSessionDiskEntry([cacheKey, aliasKey], { allowStale: true, withMeta: true });
-  const staleDiskData = analyticsSessionDiskEntry([cacheKey, aliasKey], { allowStale: true });
-  if (staleDiskEntry?.data || staleDiskData) {
+  const staleDiskEntry = analyticsSessionDiskEntry([cacheKey, archiveAliasKey, aliasKey], { allowStale: true, withMeta: true });
+  const staleDiskData = analyticsSessionDiskEntry([cacheKey, archiveAliasKey, aliasKey], { allowStale: true });
+  if ((staleDiskEntry?.data && analyticsSessionHasPublishedRows(staleDiskEntry.data)) || (staleDiskData && analyticsSessionHasPublishedRows(staleDiskData))) {
     const data = staleDiskEntry?.data || staleDiskData;
     analyticsSessionCache.set(cacheKey, { createdAt: Date.now(), data });
     trimAnalyticsSessionMemoryCache();
-    refreshAnalyticsSessionCache({ cacheKey, aliasKey, options, sessionInfo, cachedData: data });
-    return cachedAnalyticsSessionData(data, "disk", staleDiskEntry?.createdAt, true);
+    const shouldRefresh = shouldRevalidateAnalyticsCache(staleDiskEntry?.createdAt, data);
+    if (shouldRefresh) refreshAnalyticsSessionCache({ cacheKey, aliasKey, options, sessionInfo, cachedData: data });
+    return cachedAnalyticsSessionData(data, "disk", staleDiskEntry?.createdAt, shouldRefresh);
   }
 
   const data = await buildAnalyticsSessionData(sessionInfo, options);
   analyticsSessionCache.set(cacheKey, { createdAt: Date.now(), data });
-  writeAnalyticsSessionDiskCache([cacheKey, aliasKey], data);
+  writeAnalyticsSessionDiskCache([cacheKey, archiveAliasKey, aliasKey], data);
   trimAnalyticsSessionMemoryCache();
   return data;
 }
@@ -6108,7 +7354,7 @@ ipcMain.handle("pitwall:f1tv:logout", async () => {
   capturedF1TvStreams.length = 0;
   return getF1TvStatus();
 });
-ipcMain.handle("pitwall:data:snapshot", () => getPitWallSnapshot());
+ipcMain.handle("pitwall:data:snapshot", (_event, options = {}) => getPitWallSnapshot(options));
 ipcMain.handle("pitwall:data:liveTiming", (_event, options = {}) => getLiveTimingSnapshot(options));
 ipcMain.handle("pitwall:data:replayTiming", (_event, options = {}) => getReplayTimingSnapshot(options));
 ipcMain.handle("pitwall:ai:authStatus", () => getAiAuthStatus());
@@ -6119,6 +7365,10 @@ ipcMain.handle("pitwall:analytics:library", (_event, options = {}) => getF1TvLib
 ipcMain.handle("pitwall:analytics:session", (_event, options = {}) => getAnalyticsSession(options));
 ipcMain.handle("pitwall:history:query", (_event, options = {}) => queryHistory(options));
 ipcMain.handle("pitwall:notify:schedule", (_event, options = {}) => scheduleReminder(options));
+ipcMain.handle("pitwall:window:state", (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  return { isFullScreen: Boolean(win?.isFullScreen()) };
+});
 
 async function createWindow() {
   const root = path.resolve(app.getAppPath());
@@ -6145,6 +7395,15 @@ async function createWindow() {
       preload: path.join(root, "electron/preload.cjs"),
     },
   });
+
+  function sendWindowState() {
+    if (!win.isDestroyed()) {
+      win.webContents.send("pitwall:window:state", { isFullScreen: win.isFullScreen() });
+    }
+  }
+  win.on("enter-full-screen", sendWindowState);
+  win.on("leave-full-screen", sendWindowState);
+  win.webContents.on("did-finish-load", sendWindowState);
 
   win.webContents.on("will-attach-webview", (event, webPreferences, params) => {
     if (!isF1TvUrl(params.src || "")) {
@@ -6201,6 +7460,7 @@ app.whenReady().then(async () => {
   if (await runF1TvProbeDiagnosticAndQuit()) return null;
   if (await runF1TvLibraryDiagnosticAndQuit()) return null;
   if (await runAnalyticsSessionDiagnosticAndQuit()) return null;
+  if (await runDashboardDiagnosticAndQuit()) return null;
   if (await runWeekendRecapDiagnosticAndQuit()) return null;
   if (await runF1TvDiagnosticAndQuit()) return null;
   return createWindow();

@@ -63,6 +63,12 @@ helpers live in `scripts`.
 ## Verification Expectations
 
 - For docs-only changes, inspect the edited file.
+- For Live Racing features that surface live/replay data, verify with a real
+  data check when possible: run or add a terminal probe against an actual F1
+  livetiming/OpenF1/F1 TV replay source and confirm the new field appears in the
+  parsed snapshot or UI-bound data. If network, credentials, or event
+  availability prevent that, report the blocker and keep a stable smoke-test
+  assertion instead.
 - For renderer changes, run `/opt/homebrew/bin/npm test` and
   `/opt/homebrew/bin/npm run build`.
 - For Electron main/preload or packaging changes, also run

@@ -880,7 +880,7 @@ function DriverTag({
 }) {
   const driver = typeof window !== "undefined" && window.PW_DATA && window.PW_DATA.byCode ? window.PW_DATA.byCode[code] : null;
   const Avatar = __ds_scope.Avatar;
-  const avatarSrc = src || driver && driver.image;
+  const avatarSrc = src || driver && (driver.remoteImage || driver.image);
   const driverName = name || driver && driver.name;
   const driverNumber = number != null ? number : driver && driver.num;
   const teamColor = team || driver && driver.color;

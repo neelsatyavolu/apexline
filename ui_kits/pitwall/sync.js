@@ -24,12 +24,14 @@
 
   function syncReplayPlayers(players, masterTime, options = {}) {
     const updates = [];
-    (players || []).forEach((player) => {
+    (players || []).forEach((entry) => {
+      const player = entry?.player || entry;
       if (!player) return;
-      const decision = replaySync(masterTime, player.currentTime, options);
-      if (decision.action === "seek") player.currentTime = finite(masterTime, 0);
+      const targetTime = entry?.player ? finite(entry.targetTime, finite(masterTime, 0)) : finite(masterTime, 0);
+      const decision = replaySync(targetTime, player.currentTime, options);
+      if (decision.action === "seek") player.currentTime = targetTime;
       player.playbackRate = decision.playbackRate;
-      updates.push({ player, decision });
+      updates.push({ player, targetTime, decision });
     });
     return updates;
   }

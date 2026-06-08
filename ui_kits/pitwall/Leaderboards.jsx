@@ -126,9 +126,10 @@
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {(showH2H && driverRows.length >= 2 ? driverRows.slice(0, 2) : D.standings.slice(0, 2)).map((s, i) => {
                   const d = D.byCode[s.code] || {};
+                  const driverImage = d.remoteImage || d.image;
                   return (
                     <div key={s.code} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <Avatar initials={s.code} number={d.num} ring={d.color || "var(--accent)"} src={d.image} />
+                      <Avatar initials={s.code} number={d.num} ring={d.color || "var(--accent)"} src={driverImage} />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{d.name || s.code}</div>
                         <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{d.team}</div>

@@ -6,6 +6,7 @@
   "main": "electron/main.cjs",
   "scripts": {
     "build": "node scripts/build-renderer.cjs",
+    "icon:app": "node scripts/generate-app-icon.cjs",
     "package:mac": "node scripts/build-renderer.cjs && node scripts/package-macos.cjs",
     "package:mac:vmp": "node scripts/build-renderer.cjs && PITWALL_CASTLABS_VMP=1 node scripts/package-macos.cjs",
     "start": "node scripts/build-renderer.cjs && electron .",

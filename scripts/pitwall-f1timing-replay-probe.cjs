@@ -45,13 +45,18 @@ const parser = vm.runInNewContext(`(() => {
     "f1TimingDurationSeconds",
     "formatF1TimingDuration",
     "f1TimingSessionStartSeconds",
+    "f1TimingQualifyingPart",
+    "parseF1TimingLapCount",
+    "fillF1TimingQualifyingDeltas",
     "parseF1TimingSessionClock",
     "f1TimingLapSeconds",
     "f1TimingSegments",
+    "f1TimingSectorTime",
     "f1TimingStints",
     "f1TimingLatestStint",
     "f1TimingTelemetryFromCarData",
     "parseF1TimingWeatherState",
+    "parseF1TimingRaceControlMessages",
     "parseF1TimingArchiveRows",
   ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
   return { parseF1TimingJsonStream, parseF1TimingArchiveRows };
@@ -111,12 +116,15 @@ async function optionalText(file) {
 
 (async () => {
   assert.ok(Number.isFinite(elapsedSeconds) && elapsedSeconds >= 0, "--elapsed must be a positive number");
-  const [driverListText, timingText, appText, clockText, statusText, weatherText, carText] = await Promise.all([
+  const [driverListText, timingText, appText, clockText, statusText, trackStatusText, raceControlText, lapCountText, weatherText, carText] = await Promise.all([
     optionalText("DriverList.jsonStream"),
     requestText(new URL("TimingData.jsonStream", baseUrl).href),
     optionalText("TimingAppData.jsonStream"),
     optionalText("ExtrapolatedClock.jsonStream"),
     optionalText("SessionStatus.jsonStream"),
+    optionalText("TrackStatus.jsonStream"),
+    optionalText("RaceControlMessages.jsonStream"),
+    optionalText("LapCount.jsonStream"),
     optionalText("WeatherData.jsonStream"),
     optionalText("CarData.z.jsonStream"),
   ]);
@@ -126,6 +134,9 @@ async function optionalText(file) {
     timingAppEntries: appText ? parser.parseF1TimingJsonStream(appText) : [],
     clockEntries: clockText ? parser.parseF1TimingJsonStream(clockText) : [],
     sessionStatusEntries: statusText ? parser.parseF1TimingJsonStream(statusText) : [],
+    trackStatusEntries: trackStatusText ? parser.parseF1TimingJsonStream(trackStatusText) : [],
+    raceControlEntries: raceControlText ? parser.parseF1TimingJsonStream(raceControlText) : [],
+    lapCountEntries: lapCountText ? parser.parseF1TimingJsonStream(lapCountText) : [],
     weatherEntries: weatherText ? parser.parseF1TimingJsonStream(weatherText) : [],
     carDataEntries: carText ? parser.parseF1TimingJsonStream(carText, { zipped: true }) : [],
   };
@@ -149,6 +160,7 @@ async function optionalText(file) {
     timingAnchor,
     diagnostics: parsed.diagnostics,
     sessionClock: parsed.sessionClock,
+    lapCount: parsed.sessionClock?.lapCount,
     richRows,
     weather: parsed.weather,
     rows: parsed.timing.slice(0, Math.max(0, rowLimit)).map((row) => ({

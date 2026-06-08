@@ -4,6 +4,8 @@
   const { Card, Badge, Icon, Switch, Input, Button, SegmentedControl, Avatar, Tabs } = NS;
   const D = window.PW_DATA;
   const AI_MODEL_STORAGE = "pw-ai-model";
+  const SYNC_STORAGE_KEY = "pw-sync-settings";
+  const DEFAULT_WORLD_SYNC_TARGET = 36;
   const DEFAULT_AI_MODEL = "anthropic:claude-sonnet-4-20250514";
   const AI_MODEL_OPTIONS = [
     { value: "anthropic:claude-sonnet-4-20250514", label: "Claude 4" },
@@ -12,6 +14,7 @@
     { value: "grok:grok-4.3", label: "Grok 4.3" },
     { value: "local", label: "Local MLX" },
   ];
+  const { THEME_OPTIONS, applyThemePreference } = window.PW_THEME;
 
   const STYLE_ID = "pw-set-styles";
   {
@@ -49,15 +52,6 @@
     .f1-login__fields { display: grid; gap: var(--space-7); }
     .f1-login__actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-5); margin-top: var(--space-8); }
     .f1-login__note { margin-top: var(--space-6); color: var(--text-tertiary); font-size: var(--text-sm); min-height: 20px; }
-    .f1-login__divider { display: flex; align-items: center; gap: var(--space-6); color: var(--text-tertiary); font-family: var(--font-display); font-weight: 800; text-transform: uppercase; padding: 0 var(--space-9); }
-    .f1-login__divider::before, .f1-login__divider::after { content: ""; height: 1px; background: var(--border-subtle); flex: 1; }
-    .f1-login__alts { padding: var(--space-7) var(--space-9) var(--space-9); display: grid; gap: var(--space-5); }
-    .f1-login__alt { display: grid; grid-template-columns: 42px 1fr; align-items: center; gap: var(--space-6); width: 100%; padding: var(--space-5); border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; text-align: left; cursor: pointer; transition: var(--tr-control); }
-    .f1-login__alt:hover { background: rgba(255,255,255,0.05); }
-    .f1-login__alticon { width: 34px; height: 34px; display: grid; place-items: center; color: var(--text-primary); }
-    .f1-login__chrome { width: 28px; height: 28px; border-radius: 50%; background: conic-gradient(#f7c948 0 25%, #3ab56f 0 50%, #e94235 0 75%, #3478f6 0); box-shadow: inset 0 0 0 8px #3478f6, inset 0 0 0 12px #fff; }
-    .f1-login__alttitle { color: var(--text-primary); font-size: var(--text-md); font-weight: 600; }
-    .f1-login__altsub { color: var(--text-tertiary); font-size: var(--text-sm); line-height: 1.4; margin-top: 2px; }
     .ai-flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-5); }
     .ai-step { padding: var(--space-7); border-radius: var(--radius-md); background: var(--surface-raised); border: 1px solid var(--border-subtle); position: relative; }
     .ai-step__n { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--accent); font-weight: 700; }
@@ -103,11 +97,11 @@
   ];
   const DEFAULT_PREFS = {
     theme: "dark",
-    accent: "#2d7bff",
     reduceMotion: false,
     defaultPreset: "Intelligent",
     rememberLayout: true,
     telemetryDefault: true,
+    f1LiveLatency: DEFAULT_WORLD_SYNC_TARGET,
     notifications: {
       lightsOut: true,
       battles: true,
@@ -116,6 +110,36 @@
       quali: true,
     },
   };
+
+  function clampSyncLatency(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.max(8, Math.min(90, Math.round(number * 10) / 10)) : DEFAULT_WORLD_SYNC_TARGET;
+  }
+
+  function adjustDependentSyncTargets(targets, delta) {
+    const next = { ...(targets || {}) };
+    Object.keys(next).forEach((key) => {
+      if (key !== "WORLD") next[key] = clampSyncLatency(Number(next[key]) + delta);
+    });
+    return next;
+  }
+
+  function updateWorldSyncPreference(value) {
+    const worldTarget = clampSyncLatency(value);
+    try {
+      const saved = JSON.parse(localStorage.getItem(SYNC_STORAGE_KEY) || "{}");
+      const targets = saved.targets && typeof saved.targets === "object" ? saved.targets : {};
+      const previousWorld = clampSyncLatency(saved.worldTarget == null ? targets.WORLD : saved.worldTarget);
+      const shiftedTargets = adjustDependentSyncTargets(targets, worldTarget - previousWorld);
+      localStorage.setItem(SYNC_STORAGE_KEY, JSON.stringify({
+        ...saved,
+        worldTarget,
+        targets: { ...shiftedTargets, WORLD: worldTarget },
+      }));
+    } catch {
+      localStorage.setItem(SYNC_STORAGE_KEY, JSON.stringify({ worldTarget, targets: { WORLD: worldTarget } }));
+    }
+  }
 
   function RankList({ items, onMove, onRemove, kind }) {
     if (items.length === 0) {
@@ -184,7 +208,7 @@
     const [appPrefs, setAppPrefs] = React.useState(() => {
       try {
         const saved = { ...DEFAULT_PREFS, ...(JSON.parse(localStorage.getItem("pw-settings") || "{}")) };
-        return { ...saved, defaultPreset: normalizePresetName(saved.defaultPreset) };
+        return { ...saved, defaultPreset: normalizePresetName(saved.defaultPreset), f1LiveLatency: clampSyncLatency(saved.f1LiveLatency) };
       }
       catch { return DEFAULT_PREFS; }
     });
@@ -198,11 +222,11 @@
     const [f1Status, setF1Status] = React.useState({ authenticated: false, cookieCount: 0 });
     const [f1Busy, setF1Busy] = React.useState(false);
     const [f1Message, setF1Message] = React.useState("");
+    const [f1LiveLatencyDraft, setF1LiveLatencyDraft] = React.useState(() => String(appPrefs.f1LiveLatency));
 
     React.useEffect(() => {
       localStorage.setItem("pw-settings", JSON.stringify(appPrefs));
-      document.documentElement.dataset.theme = appPrefs.theme;
-      document.documentElement.style.setProperty("--accent", appPrefs.accent);
+      applyThemePreference(appPrefs.theme);
     }, [appPrefs]);
 
     React.useEffect(() => {
@@ -216,11 +240,22 @@
     }, [profile.name, (profile.favoriteDrivers || []).join("|"), (profile.favoriteTeams || []).join("|")]);
 
     React.useEffect(() => {
+      setF1LiveLatencyDraft(String(appPrefs.f1LiveLatency));
+    }, [appPrefs.f1LiveLatency]);
+
+    React.useEffect(() => {
       updateProfile({ name: userName, favoriteDrivers: favDrivers, favoriteTeams: favTeams });
     }, [userName, favDrivers.join("|"), favTeams.join("|")]);
 
     function setPref(key, value) {
       setAppPrefs((prefs) => ({ ...prefs, [key]: value }));
+    }
+
+    function commitF1LiveLatency(value) {
+      const nextValue = clampSyncLatency(value);
+      updateWorldSyncPreference(nextValue);
+      setF1LiveLatencyDraft(String(nextValue));
+      setAppPrefs((prefs) => ({ ...prefs, f1LiveLatency: nextValue }));
     }
 
     function setNotification(key, value) {
@@ -341,21 +376,6 @@
         setKeyStatus(`Could not disconnect ${providerLabel(provider)}`);
       } finally {
         setOauthBusy("");
-      }
-    }
-
-    async function refreshF1Status() {
-      const auth = f1TvAuth();
-      if (!auth) {
-        setF1Message("Open PitWall as the macOS app to connect F1 TV.");
-        return;
-      }
-      try {
-        const status = await (auth.probeStatus?.({ timeoutMs: 1600 }) || auth.status());
-        setF1Status(status);
-        setF1Message(status.authenticated ? "F1 TV playback token is active." : status.browserSession ? "F1 TV browser is signed in, but the playback token is still missing." : "No active F1 TV session found.");
-      } catch {
-        setF1Message("Could not check the F1 TV session.");
       }
     }
 
@@ -530,7 +550,7 @@
               const d = D.byCode[code];
               if (!d) return null;
               return { key: code, name: d.name, sub: d.team + " · #" + d.num,
-                avatar: <Avatar initials={d.code} number={d.num} ring={d.color} src={d.image} size="md" /> };
+                avatar: <Avatar initials={d.code} number={d.num} ring={d.color} src={d.remoteImage || d.image} size="md" /> };
             }).filter(Boolean);
             const teamItems = favTeams.map((abbr) => {
               const c = D.constructors.find((x) => x.abbr === abbr);
@@ -626,30 +646,6 @@
                   </div>
                   <div className="f1-login__note">{f1Message || f1Note}</div>
                 </div>
-                <div className="f1-login__divider">Alternatives</div>
-                <div className="f1-login__alts">
-                  <button className="f1-login__alt" type="button" disabled={f1Busy} onClick={() => signInF1Tv("embedded")}>
-                    <span className="f1-login__alticon"><Icon name="maximize" size={24} /></span>
-                    <span>
-                      <span className="f1-login__alttitle">Sign in using embedded browser</span>
-                      <span className="f1-login__altsub">Use PitWall's browser window to complete the F1 TV login flow.</span>
-                    </span>
-                  </button>
-                  <button className="f1-login__alt" type="button" onClick={() => window.open("https://f1tv.formula1.com/", "_blank", "noopener")}>
-                    <span className="f1-login__alticon"><span className="f1-login__chrome" /></span>
-                    <span>
-                      <span className="f1-login__alttitle">Sign in using Google Chrome</span>
-                      <span className="f1-login__altsub">Open F1 TV in your browser if the embedded login needs another check.</span>
-                    </span>
-                  </button>
-                  <button className="f1-login__alt" type="button" disabled={f1Busy} onClick={refreshF1Status}>
-                    <span className="f1-login__alticon"><Icon name="key" size={24} /></span>
-                    <span>
-                      <span className="f1-login__alttitle">Refresh F1 TV session</span>
-                      <span className="f1-login__altsub">Check whether the app already has a valid Formula 1 web session.</span>
-                    </span>
-                  </button>
-                </div>
               </div>
               <div className="row"><div className="row__txt"><div className="row__t">Unofficial companion app</div><div className="row__s">PitWall requires an active F1 TV subscription. Not affiliated with Formula 1.</div></div></div>
             </Card>
@@ -657,10 +653,8 @@
 
           {sec === "appearance" && (
             <Card title="Appearance" subtitle="Theme & display">
-              <div className="row"><div className="row__txt"><div className="row__t">Theme</div><div className="row__s">Dark cockpit is the native default.</div></div>
-                <SegmentedControl value={appPrefs.theme} onChange={(value) => setPref("theme", value)} options={[{ value: "dark", label: "Dark" }, { value: "midnight", label: "Midnight" }]} /></div>
-              <div className="row"><div className="row__txt"><div className="row__t">Accent color</div><div className="row__s">Signal blue used for live & active states.</div></div>
-                <div style={{ display: "flex", gap: 8 }}>{["#2d7bff", "#00e0a4", "#ff3b3b"].map((c) => <span key={c} onClick={() => setPref("accent", c)} style={{ width: 26, height: 26, borderRadius: 7, background: c, border: c === appPrefs.accent ? "2px solid #fff" : "1px solid var(--border-default)", cursor: "pointer" }} />)}</div></div>
+              <div className="row"><div className="row__txt"><div className="row__t">Theme</div><div className="row__s">Changes primary actions, accents, borders, and focus color.</div></div>
+                <SegmentedControl value={appPrefs.theme} onChange={(value) => setPref("theme", value)} options={THEME_OPTIONS} /></div>
               <div className="row"><div className="row__txt"><div className="row__t">Reduce motion</div><div className="row__s">Minimize pulses and transitions.</div></div><Switch checked={appPrefs.reduceMotion} onChange={(value) => setPref("reduceMotion", value)} /></div>
             </Card>
           )}
@@ -684,6 +678,7 @@
               <div className="row"><div className="row__txt"><div className="row__t">Default preset</div><div className="row__s">Applied when you enter Live Racing.</div></div>
                 <SegmentedControl value={appPrefs.defaultPreset} onChange={(value) => setPref("defaultPreset", value)} options={[{ value: "Intelligent", label: "Intelligent" }, { value: "Battle Mode", label: "Battle" }, { value: "Data Overload", label: "Data" }]} /></div>
               <div className="row"><div className="row__txt"><div className="row__t">Remember last layout</div><div className="row__s">Restore your panes, sidebars & sizes next session.</div></div><Switch checked={appPrefs.rememberLayout} onChange={(value) => setPref("rememberLayout", value)} /></div>
+              <div className="row"><div className="row__txt"><div className="row__t">F1 Live sync latency</div><div className="row__s">Baseline delay behind live edge. Other stream targets keep their relative offset when this changes.</div></div><Input label="Seconds" type="number" value={f1LiveLatencyDraft} onChange={(e) => setF1LiveLatencyDraft(e.target.value)} onBlur={(e) => commitF1LiveLatency(e.target.value)} /></div>
               <div className="row"><div className="row__txt"><div className="row__t">Telemetry overlay by default</div><div className="row__s">Show speed, gear, throttle, and gap on every new pane.</div></div><Switch checked={appPrefs.telemetryDefault} onChange={(value) => setPref("telemetryDefault", value)} /></div>
             </Card>
           )}

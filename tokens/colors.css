@@ -77,6 +77,9 @@
   --text-link:      var(--accent);
 
   /* ====== SEMANTIC: signature accent (electric blue) ====== */
+  --primary:            var(--blue-500);
+  --primary-hover:      var(--blue-400);
+  --primary-press:      var(--blue-600);
   --accent:             var(--blue-500);
   --accent-hover:       var(--blue-400);
   --accent-press:       var(--blue-600);

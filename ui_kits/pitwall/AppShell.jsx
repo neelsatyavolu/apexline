@@ -17,6 +17,7 @@
     /* Sidebar */
     .pw-side { display: flex; flex-direction: column; background: var(--bg-base); border-right: 1px solid var(--border-subtle); min-height: 0; }
     .pw-side__brand { display: flex; align-items: center; gap: var(--space-5); min-height: 96px; padding: 52px var(--space-7) 16px; overflow: hidden; }
+    .pw-app--fullscreen .pw-side__brand { min-height: var(--topbar-h); padding: 0 var(--space-7); }
     .pw-side__mark { width: 28px; height: 28px; border-radius: 7px; flex: none; }
     .pw-side__wm { font-family: var(--font-sans); font-weight: 800; font-size: 20px; letter-spacing: 0; color: var(--text-strong); line-height: 1; white-space: nowrap; }
     .pw-side__wm i { font-style: normal; color: var(--accent); }
@@ -68,8 +69,12 @@
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
     { id: "weekend", label: "Weekend", icon: "flag" },
     { id: "live", label: "Live Racing", icon: "play" },
+    { id: "trackmap", label: "Track Map", icon: "pin" },
     { id: "leaderboards", label: "Leaderboards", icon: "trophy" },
     { id: "schedule", label: "Schedule", icon: "calendar", countKey: "schedule" },
+    { sec: "The Grid" },
+    { id: "drivers", label: "Drivers", icon: "user" },
+    { id: "teams", label: "Teams", icon: "grid" },
     { sec: "Explore" },
     { id: "news", label: "News", icon: "news", countKey: "news" },
     { id: "analytics", label: "Analytics", icon: "chart" },
@@ -136,8 +141,8 @@
     const { data: D, dataSource } = window.PW.usePitWall();
     const q = query.trim().toLowerCase();
     const results = q ? [
-      ...(D.drivers || []).map((d) => ({ icon: "user", title: d.name, meta: d.team + " · " + d.code, screen: "leaderboards", driverCode: d.code })),
-      ...(D.constructors || []).map((c) => ({ icon: "trophy", title: c.name, meta: "Constructor · " + c.abbr, screen: "leaderboards" })),
+      ...(D.drivers || []).map((d) => ({ icon: "user", title: d.name, meta: d.team + " · " + d.code, screen: "drivers", driverCode: d.code })),
+      ...(D.constructors || []).map((c) => ({ icon: "trophy", title: c.name, meta: "Constructor · " + c.abbr, screen: "teams", teamAbbr: c.abbr })),
       ...(D.schedule || []).map((r) => ({ icon: "calendar", title: r.name, meta: r.circuit + " · " + r.date, screen: "schedule" })),
       ...(D.news || []).map((n) => ({ icon: "news", title: n.title, meta: n.source + " · " + n.tag, screen: "news" })),
       { icon: "sparkles", title: "Ask AI Copilot", meta: "Strategy, gaps, projections", screen: "copilot" },
@@ -202,8 +207,28 @@
   }
 
   function AppShell({ active, onNavigate, title, crumb, actions, onSearchResult, children }) {
+    const [isFullScreen, setIsFullScreen] = React.useState(false);
+
+    React.useEffect(() => {
+      const windowState = window.pitwall?.windowState;
+      if (!windowState) return undefined;
+      let mounted = true;
+      windowState.get()
+        .then((state) => {
+          if (mounted) setIsFullScreen(Boolean(state?.isFullScreen));
+        })
+        .catch(() => {});
+      const unsubscribe = windowState.onChange((state) => {
+        if (mounted) setIsFullScreen(Boolean(state?.isFullScreen));
+      });
+      return () => {
+        mounted = false;
+        if (typeof unsubscribe === "function") unsubscribe();
+      };
+    }, []);
+
     return (
-      <div className="pw-app">
+      <div className={"pw-app" + (isFullScreen ? " pw-app--fullscreen" : "")}>
         <Sidebar active={active} onNavigate={onNavigate} />
         <main className="pw-main">
           <Topbar title={title} crumb={crumb} actions={actions} onSearchResult={onSearchResult} />

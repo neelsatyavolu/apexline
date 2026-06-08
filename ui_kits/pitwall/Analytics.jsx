@@ -79,6 +79,31 @@
     .results__row:hover { background: var(--surface-hover); }
     .results__pos { font-family: var(--font-display); font-weight: 800; color: var(--text-tertiary); }
     .results__num { font-family: var(--font-mono); font-weight: 700; color: var(--text-primary); text-align: right; font-variant-numeric: tabular-nums; }
+    .trace-list, .compact-list { display: flex; flex-direction: column; gap: var(--space-5); }
+    .trace-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) 68px; gap: var(--space-5); align-items: center; padding: var(--space-5); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-sunken); }
+    .trace-row__code { display: inline-flex; align-items: center; gap: var(--space-4); min-width: 0; color: var(--text-primary); font-family: var(--font-display); font-weight: 800; }
+    .trace-row__swatch { width: 4px; height: 22px; border-radius: 4px; background: var(--_team, var(--accent)); }
+    .trace-row__svg { width: 100%; height: 54px; overflow: visible; }
+    .trace-row__line { fill: none; stroke: var(--_team, var(--accent)); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+    .trace-row__meta { text-align: right; color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+    .compact-row { display: grid; grid-template-columns: 54px repeat(3, minmax(0, 1fr)); gap: var(--space-5); align-items: center; padding: var(--space-5); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-sunken); }
+    .compact-row__code { color: var(--text-primary); font-family: var(--font-display); font-weight: 800; }
+    .compact-stat { min-width: 0; }
+    .compact-stat b { display: block; color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+    .compact-stat small { display: block; margin-top: 2px; color: var(--text-tertiary); font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: 0.04em; }
+    .delta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); }
+    .delta-cell { padding: var(--space-5); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-sunken); }
+    .delta-cell b { display: block; color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-md); font-variant-numeric: tabular-nums; }
+    .delta-cell small { display: block; margin-top: 3px; color: var(--text-tertiary); font-size: var(--text-xs); }
+    .verdict { display: flex; flex-direction: column; gap: var(--space-5); }
+    .verdict__lead { padding: var(--space-6); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--accent) 10%, var(--bg-sunken)); color: var(--text-secondary); line-height: 1.45; }
+    .verdict__lead b { color: var(--text-primary); }
+    .verdict__row { display: grid; grid-template-columns: 1fr auto; gap: var(--space-5); color: var(--text-secondary); font-size: var(--text-sm); }
+    .verdict__row b { color: var(--text-primary); font-family: var(--font-display); }
+    .weather-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-5); }
+    .weather-cell { padding: var(--space-5); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-sunken); }
+    .weather-cell b { display: block; color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-md); }
+    .weather-cell small { color: var(--text-tertiary); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em; }
     .an__presets { display: flex; flex-direction: column; gap: var(--space-4); }
     .an__preset { width: 100%; appearance: none; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); display: grid; grid-template-columns: 18px 1fr 16px; gap: var(--space-5); align-items: center; padding: var(--space-5) var(--space-6); text-align: left; cursor: pointer; }
     .an__preset:hover { background: var(--surface-hover); color: var(--text-primary); }
@@ -220,7 +245,7 @@
         team: driver.team || "",
         teamAbbr: driver.abbr || "",
         color: driver.color || "var(--accent)",
-        image: driver.image || "",
+        image: driver.remoteImage || driver.image || "",
         position: row.position,
         championshipPoints: row.championshipPoints,
         wins: row.wins,
@@ -230,6 +255,10 @@
         sectors: { s1: null, s2: null, s3: null },
         topSpeed: null,
         tyreDeg: null,
+        lapTrace: [],
+        consistency: { medianLap: null, bestFiveAvg: null, spread: null, cleanLapCount: 0 },
+        tyreCurve: [],
+        racecraft: { startPosition: null, endPosition: row.position, positionDelta: null, overtakes: 0, pitStops: 0 },
         stints: [],
         pitStops: 0,
         pitLoss: null,
@@ -247,7 +276,7 @@
         team: row.team || driver.team || "",
         teamAbbr: row.teamAbbr || driver.abbr || "",
         color: row.color || driver.color || "var(--accent)",
-        image: row.image || driver.image || "",
+        image: row.image || driver.remoteImage || driver.image || "",
         number: row.number || driver.num,
       };
     });
@@ -266,6 +295,48 @@
     const clean = rows.filter((row) => num(row[key]) != null);
     if (!clean.length) return null;
     return clean.sort((a, b) => higherBetter ? num(b[key]) - num(a[key]) : num(a[key]) - num(b[key]))[0];
+  }
+
+  function formatCount(value) {
+    const count = num(value);
+    return count == null ? "--" : String(Math.round(count));
+  }
+
+  function formatPositionDelta(value) {
+    const delta = num(value);
+    if (delta == null) return "--";
+    if (delta === 0) return "0";
+    return `${delta > 0 ? "+" : ""}${Math.round(delta)}`;
+  }
+
+  function sparkPoints(points, xKey, yKey, xMax, yMin, yMax) {
+    const width = 100;
+    const height = 40;
+    const xRange = Math.max(1, xMax - 1);
+    const yRange = Math.max(0.001, yMax - yMin);
+    return (points || []).map((point) => {
+      const x = ((num(point[xKey]) || 1) - 1) / xRange * width;
+      const y = 4 + ((num(point[yKey]) - yMin) / yRange) * (height - 8);
+      return `${clamp(x, 0, width).toFixed(2)},${clamp(y, 4, height - 4).toFixed(2)}`;
+    }).join(" ");
+  }
+
+  function metricLeader(rows, key, lowerBetter = true) {
+    const clean = rows.filter((row) => num(key(row)) != null);
+    if (!clean.length) return null;
+    return clean.sort((a, b) => lowerBetter ? num(key(a)) - num(key(b)) : num(key(b)) - num(key(a)))[0];
+  }
+
+  function teammateDelta(rows) {
+    if (rows.length < 2) return null;
+    const [left, right] = rows;
+    return { left, right };
+  }
+
+  function deltaBetween(left, right) {
+    const a = num(left);
+    const b = num(right);
+    return a == null || b == null ? null : a - b;
   }
 
   function Analytics() {
@@ -385,6 +456,9 @@
           meetingKey: loadMeetingKey,
           sessionKind: loadSessionKind,
           season: loadSeason,
+          raceName: selectedRace.name || "",
+          raceStartsAt: selectedRace.startsAt || "",
+          sessionStartsAt: loadSessionMeta?.startsAt || "",
         });
         if (!isCurrentLoad()) return;
         setSessionData(data);
@@ -491,6 +565,34 @@
     });
     const hasSectorComparison = sectorComparisonRows.some((row) => row.entries.length);
     const maxStintLap = Math.max(1, ...chartRows.flatMap((row) => (row.stints || []).map((stint) => num(stint.lapEnd) || 0)));
+    const lapTraceRows = chartRows.filter((row) => row.lapTrace?.length);
+    const traceDurations = lapTraceRows.flatMap((row) => row.lapTrace.map((lap) => num(lap.duration))).filter((value) => value != null);
+    const traceMaxLap = Math.max(1, ...lapTraceRows.flatMap((row) => row.lapTrace.map((lap) => num(lap.lap) || 1)));
+    const traceMin = traceDurations.length ? Math.min(...traceDurations) : null;
+    const traceMax = traceDurations.length ? Math.max(...traceDurations) : null;
+    const tyreCurveRows = chartRows.filter((row) => row.tyreCurve?.length);
+    const tyreDurations = tyreCurveRows.flatMap((row) => row.tyreCurve.map((point) => num(point.duration))).filter((value) => value != null);
+    const tyreMaxAge = Math.max(1, ...tyreCurveRows.flatMap((row) => row.tyreCurve.map((point) => num(point.tyreAge) || 1)));
+    const tyreMin = tyreDurations.length ? Math.min(...tyreDurations) : null;
+    const tyreMax = tyreDurations.length ? Math.max(...tyreDurations) : null;
+    const consistencyRows = chartRows.filter((row) => row.consistency?.cleanLapCount);
+    const racecraftRows = chartRows.filter((row) => row.racecraft);
+    const teammate = teammateDelta(selectedRows.filter((row) => row.teamAbbr && row.teamAbbr === selectedRows[0]?.teamAbbr));
+    const verdictMetrics = [
+      { label: "Best lap", leader: metricLeader(selectedRows, (row) => row.fastestLap, true) },
+      { label: "Average pace", leader: metricLeader(selectedRows, (row) => row.avgLap, true) },
+      { label: "Consistency", leader: metricLeader(selectedRows, (row) => row.consistency?.spread, true) },
+      { label: "Tyre deg", leader: metricLeader(selectedRows, (row) => row.tyreDeg, true) },
+      { label: "Pit loss", leader: metricLeader(selectedRows, (row) => row.pitLoss, true) },
+      { label: "Racecraft", leader: metricLeader(selectedRows, (row) => row.racecraft?.positionDelta, false) },
+    ].filter((item) => item.leader);
+    const verdictCounts = verdictMetrics.reduce((map, item) => {
+      map[item.leader.code] = (map[item.leader.code] || 0) + 1;
+      return map;
+    }, {});
+    const verdictWinnerCode = Object.entries(verdictCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+    const verdictWinner = selectedRows.find((row) => row.code === verdictWinnerCode);
+    const weather = sessionData?.weather || {};
     const dataBadge = sessionData?.source
       ? `${sessionData.source} · ${sessionData.session?.name || selectedSessionKind}`
       : analyticsLibrary?.source ? `${analyticsLibrary.source} · ${analyticsLibrary.season}` : dataSource;
@@ -546,7 +648,7 @@
               </button>
             )) : D.drivers.map((driver) => (
               <button className="an__entity" data-selected={selectedDriverCodes.includes(driver.code)} key={driver.code} onClick={() => toggleDriver(driver.code)} style={{ "--_team": driver.color || "var(--accent)" }}>
-                <Avatar initials={driver.code} number={driver.num} ring={driver.color || "var(--accent)"} src={driver.image} size="sm" />
+                <Avatar initials={driver.code} number={driver.num} ring={driver.color || "var(--accent)"} src={driver.remoteImage || driver.image} size="sm" />
                 <span><b>{driver.code}</b><small>{driver.team}</small></span>
               </button>
             ))}
@@ -619,6 +721,22 @@
               ) : <div className="an-empty">Sector timing numbers unavailable for this selection</div>}
             </Card>
 
+            <Card title="Lap pace trace" subtitle="Clean laps · pit-out laps muted">
+              {lapTraceRows.length && traceMin != null && traceMax != null ? (
+                <div className="trace-list">
+                  {lapTraceRows.map((row) => (
+                    <div className="trace-row" key={`trace-${row.code}`} style={{ "--_team": row.color || "var(--accent)" }}>
+                      <span className="trace-row__code"><span className="trace-row__swatch" />{row.code}</span>
+                      <svg className="trace-row__svg" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+                        <polyline className="trace-row__line" points={sparkPoints(row.lapTrace, "lap", "duration", traceMaxLap, traceMin, traceMax)} />
+                      </svg>
+                      <span className="trace-row__meta">{formatLap(row.avgLap)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <div className="an-empty">Lap traces unavailable for this selection</div>}
+            </Card>
+
             <Card title="Tyre strategy" subtitle={[selectedSessionKind, sessionData?.session?.circuit].filter(Boolean).join(" · ")}>
               {chartRows.some((row) => row.stints?.length) ? (
                 <div>
@@ -641,6 +759,22 @@
                   </div>
                 </div>
               ) : <div className="an-empty">Stint data unavailable for this selection</div>}
+            </Card>
+
+            <Card title="Tyre age curve" subtitle="Lap time by tyre age">
+              {tyreCurveRows.length && tyreMin != null && tyreMax != null ? (
+                <div className="trace-list">
+                  {tyreCurveRows.map((row) => (
+                    <div className="trace-row" key={`tyre-${row.code}`} style={{ "--_team": row.color || "var(--accent)" }}>
+                      <span className="trace-row__code"><span className="trace-row__swatch" />{row.code}</span>
+                      <svg className="trace-row__svg" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+                        <polyline className="trace-row__line" points={sparkPoints(row.tyreCurve, "tyreAge", "duration", tyreMaxAge, tyreMin, tyreMax)} />
+                      </svg>
+                      <span className="trace-row__meta">{formatDeg(row.tyreDeg)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <div className="an-empty">Tyre-age pace data unavailable for this selection</div>}
             </Card>
           </div>
 
@@ -672,6 +806,71 @@
                   })}
                 </div>
               ) : <div className="an-empty">Select two drivers</div>}
+            </Card>
+
+            <Card title="Consistency score" subtitle="Median · best five · clean-lap spread">
+              {consistencyRows.length ? (
+                <div className="compact-list">
+                  {consistencyRows.map((row) => (
+                    <div className="compact-row" key={`consistency-${row.code}`}>
+                      <span className="compact-row__code">{row.code}</span>
+                      <span className="compact-stat"><b>{formatLap(row.consistency?.medianLap)}</b><small>Median</small></span>
+                      <span className="compact-stat"><b>{formatLap(row.consistency?.bestFiveAvg)}</b><small>Best 5</small></span>
+                      <span className="compact-stat"><b>{formatDelta(row.consistency?.spread)}</b><small>{formatCount(row.consistency?.cleanLapCount)} clean</small></span>
+                    </div>
+                  ))}
+                </div>
+              ) : <div className="an-empty">Consistency data unavailable for this selection</div>}
+            </Card>
+
+            <Card title="Teammate delta" subtitle={teammate ? `${teammate.left.team || teammate.left.teamAbbr} · ${teammate.left.code} vs ${teammate.right.code}` : "Select two teammates"}>
+              {teammate ? (
+                <div className="delta-grid">
+                  <div className="delta-cell"><b>{formatDelta(deltaBetween(teammate.left.fastestLap, teammate.right.fastestLap))}</b><small>Best lap · {teammate.left.code} vs {teammate.right.code}</small></div>
+                  <div className="delta-cell"><b>{formatDelta(deltaBetween(teammate.left.avgLap, teammate.right.avgLap))}</b><small>Average pace</small></div>
+                  <div className="delta-cell"><b>{formatPositionDelta(deltaBetween(teammate.left.racecraft?.positionDelta, teammate.right.racecraft?.positionDelta))}</b><small>Net movement delta</small></div>
+                  <div className="delta-cell"><b>{formatDelta(deltaBetween(teammate.left.pitLoss, teammate.right.pitLoss))}</b><small>Pit loss delta</small></div>
+                </div>
+              ) : <div className="an-empty">Select two drivers from the same team</div>}
+            </Card>
+
+            <Card title="Racecraft" subtitle="Movement · overtakes · pit stops">
+              {racecraftRows.length ? (
+                <div className="compact-list">
+                  {racecraftRows.map((row) => (
+                    <div className="compact-row" key={`racecraft-${row.code}`}>
+                      <span className="compact-row__code">{row.code}</span>
+                      <span className="compact-stat"><b>{formatPositionDelta(row.racecraft?.positionDelta)}</b><small>Movement</small></span>
+                      <span className="compact-stat"><b>{formatCount(row.racecraft?.overtakes)}</b><small>Overtakes</small></span>
+                      <span className="compact-stat"><b>{formatCount(row.racecraft?.pitStops)}</b><small>Pit stops</small></span>
+                    </div>
+                  ))}
+                </div>
+              ) : <div className="an-empty">Racecraft data unavailable for this selection</div>}
+            </Card>
+
+            <Card title="Session verdict" subtitle="Local scoring from visible metrics">
+              {verdictMetrics.length ? (
+                <div className="verdict">
+                  <div className="verdict__lead"><b>{verdictWinner?.code || "Split"}</b>{verdictWinner ? ` led ${verdictCounts[verdictWinner.code]} of ${verdictMetrics.length} available comparison signals.` : " signals are evenly split."}</div>
+                  {verdictMetrics.map((metric) => (
+                    <div className="verdict__row" key={metric.label}><span>{metric.label}</span><b>{metric.leader.code}</b></div>
+                  ))}
+                </div>
+              ) : <div className="an-empty">Load session data to score the comparison</div>}
+            </Card>
+
+            <Card title="Weather context" subtitle={sessionData?.session?.location || "OpenF1 weather"}>
+              {Object.values(weather).some(Boolean) ? (
+                <div className="weather-grid">
+                  <div className="weather-cell"><b>{weather.air || "--"}</b><small>Air</small></div>
+                  <div className="weather-cell"><b>{weather.track || "--"}</b><small>Track</small></div>
+                  <div className="weather-cell"><b>{weather.cond || "--"}</b><small>Condition</small></div>
+                  <div className="weather-cell"><b>{weather.rain || "--"}</b><small>Rain</small></div>
+                  <div className="weather-cell"><b>{weather.wind || "--"}</b><small>Wind</small></div>
+                  <div className="weather-cell"><b>{weather.humidity || "--"}</b><small>Humidity</small></div>
+                </div>
+              ) : <div className="an-empty">Weather data unavailable for this session</div>}
             </Card>
 
             <Card title="Session result" subtitle={sessionData?.session?.location || selectedRace.loc || "Selected weekend"} padding="tight">

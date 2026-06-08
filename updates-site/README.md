@@ -17,7 +17,7 @@ The app checks:
 
 Production domain:
 
-`https://apexline-app.vercel.app`
+`https://apexline.io`
 
 Without Apple Developer ID signing, Apexline opens the hosted zip download for
 manual replacement instead of doing a silent install-and-restart update.

@@ -141,10 +141,15 @@
   function normalizeProfileImageUrl(value) {
     const text = String(value || "").trim();
     if (!text) return "";
-    if (text.length > 750000) return "";
+    if (text.length > 3 * 1024 * 1024) return "";
     if (/^(https?:|file:)/i.test(text)) return text;
     if (/^data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,/i.test(text)) return text;
     return /^[./][^<>"]+\.(?:png|jpe?g|gif|webp|svg)(?:[?#].*)?$/i.test(text) ? text : "";
+  }
+
+  function normalizeVideoQuality(value) {
+    const text = String(value || "").trim().toLowerCase();
+    return ["max", "high", "medium", "low"].includes(text) ? text : "";
   }
 
   function normalizeProfile(profile = {}) {
@@ -154,11 +159,12 @@
       favoriteDrivers: Array.isArray(profile.favoriteDrivers) ? profile.favoriteDrivers : [],
       favoriteTeams: Array.isArray(profile.favoriteTeams) ? profile.favoriteTeams : [],
       livePanelSizes: normalizeLivePanelSizes(profile.livePanelSizes),
+      videoQuality: normalizeVideoQuality(profile.videoQuality),
     };
   }
 
   function profileHasContent(profile) {
-    return Boolean(profile?.name || profile?.profileImageUrl || profile?.favoriteDrivers?.length || profile?.favoriteTeams?.length || profile?.livePanelSizes);
+    return Boolean(profile?.name || profile?.profileImageUrl || profile?.favoriteDrivers?.length || profile?.favoriteTeams?.length || profile?.livePanelSizes || profile?.videoQuality);
   }
 
   function persistProfile(profile) {
@@ -324,6 +330,7 @@
             ...local,
             ...persisted,
             livePanelSizes: persisted.livePanelSizes != null ? persisted.livePanelSizes : local.livePanelSizes,
+            videoQuality: persisted.videoQuality != null && persisted.videoQuality !== "" ? persisted.videoQuality : local.videoQuality,
           } : local;
           if (mounted) setProfile(next);
           if (profileHasContent(next)) persistProfile(next);

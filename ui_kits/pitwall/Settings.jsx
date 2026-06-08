@@ -13,6 +13,12 @@
     { value: "grok:grok-4.3", label: "Grok 4.3" },
     { value: "local", label: "Local MLX" },
   ];
+  const VIDEO_QUALITY_OPTIONS = [
+    { value: "max", label: "Max" },
+    { value: "high", label: "High" },
+    { value: "medium", label: "Medium" },
+    { value: "low", label: "Low" },
+  ];
   const { THEME_OPTIONS, applyThemePreference } = window.PW_THEME;
 
   const STYLE_ID = "pw-set-styles";
@@ -105,6 +111,7 @@
     defaultPreset: "Intelligent",
     rememberLayout: true,
     telemetryDefault: true,
+    videoQuality: "medium",
     f1LiveLatency: DEFAULT_WORLD_SYNC_TARGET,
     notifications: {
       lightsOut: true,
@@ -205,11 +212,15 @@
     function normalizePresetName(name) {
       return name === "Driver Focus" ? "Intelligent" : name;
     }
+    function normalizeVideoQualitySetting(value) {
+      return VIDEO_QUALITY_OPTIONS.some((option) => option.value === value) ? value : DEFAULT_PREFS.videoQuality;
+    }
 
     const [appPrefs, setAppPrefs] = React.useState(() => {
       try {
         const saved = { ...DEFAULT_PREFS, ...(JSON.parse(localStorage.getItem("pw-settings") || "{}")) };
-        return { ...saved, defaultPreset: normalizePresetName(saved.defaultPreset), f1LiveLatency: clampSyncLatency(saved.f1LiveLatency) };
+        const videoQuality = normalizeVideoQualitySetting(profile.videoQuality || saved.videoQuality);
+        return { ...saved, defaultPreset: normalizePresetName(saved.defaultPreset), videoQuality, f1LiveLatency: clampSyncLatency(saved.f1LiveLatency) };
       }
       catch { return DEFAULT_PREFS; }
     });
@@ -252,6 +263,18 @@
     React.useEffect(() => {
       updateProfile({ name: userName, profileImageUrl, favoriteDrivers: favDrivers, favoriteTeams: favTeams });
     }, [userName, profileImageUrl, favDrivers.join("|"), favTeams.join("|")]);
+
+    React.useEffect(() => {
+      if (!profile.videoQuality) return;
+      setAppPrefs((prefs) => {
+        const videoQuality = normalizeVideoQualitySetting(profile.videoQuality);
+        return prefs.videoQuality === videoQuality ? prefs : { ...prefs, videoQuality };
+      });
+    }, [profile.videoQuality]);
+
+    React.useEffect(() => {
+      updateProfile({ videoQuality: appPrefs.videoQuality });
+    }, [appPrefs.videoQuality]);
 
     React.useEffect(() => {
       let cancelled = false;
@@ -829,6 +852,8 @@
               <div className="row"><div className="row__txt"><div className="row__t">Default preset</div><div className="row__s">Applied when you enter Live Racing.</div></div>
                 <SegmentedControl value={appPrefs.defaultPreset} onChange={(value) => setPref("defaultPreset", value)} options={[{ value: "Intelligent", label: "Intelligent" }, { value: "Battle Mode", label: "Battle" }, { value: "Data Overload", label: "Data" }]} /></div>
               <div className="row"><div className="row__txt"><div className="row__t">Remember last layout</div><div className="row__s">Restore your panes, sidebars & sizes next session.</div></div><Switch checked={appPrefs.rememberLayout} onChange={(value) => setPref("rememberLayout", value)} /></div>
+              <div className="row"><div className="row__txt"><div className="row__t">Video quality</div><div className="row__s">Max for very strong connections, High for 200 Mbps+, Medium for around 100 Mbps, Low for around 50 Mbps.</div></div>
+                <SegmentedControl value={appPrefs.videoQuality} onChange={(value) => setPref("videoQuality", value)} options={VIDEO_QUALITY_OPTIONS} /></div>
               <div className="row"><div className="row__txt"><div className="row__t">F1 Live sync latency</div><div className="row__s">Baseline delay behind live edge. Other stream targets keep their relative offset when this changes.</div></div><Input label="Seconds" type="number" value={f1LiveLatencyDraft} onChange={(e) => setF1LiveLatencyDraft(e.target.value)} onBlur={(e) => commitF1LiveLatency(e.target.value)} /></div>
               <div className="row"><div className="row__txt"><div className="row__t">Telemetry overlay by default</div><div className="row__s">Show speed, gear, throttle, and gap on every new pane.</div></div><Switch checked={appPrefs.telemetryDefault} onChange={(value) => setPref("telemetryDefault", value)} /></div>
             </Card>

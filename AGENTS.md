@@ -28,7 +28,7 @@ helpers live in `scripts`.
 
 ## Public Site and Updates
 
-- Public landing/download/update site: `https://apexline-app.vercel.app`.
+- Public landing/download/update site: `https://apexline.io`.
   Use the Apexline alias for app update checks after confirming the feed
   returns public JSON.
 - The static Vercel project lives in `updates-site`. It hosts the landing page,

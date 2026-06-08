@@ -186,7 +186,7 @@ assert.match(packageJson.scripts["screenshot:site"] || "", /capture-site-screens
 assert.match(packageJson.scripts["probe:openf1:monaco"], /pitwall-openf1-replay-probe\.cjs/, "Repo should expose a non-UI OpenF1 Monaco replay probe");
 assert.match(packageJson.scripts["probe:f1timing:monaco"] || "", /pitwall-f1timing-replay-probe\.cjs/, "Repo should expose a non-UI Formula 1 livetiming Monaco replay probe");
 assert.equal(packageJson.name, "apexline", "Package metadata should use the Apexline app name");
-assert.equal(packageJson.apexline?.updateBaseUrl, "https://apexline-app.vercel.app", "Packaged apps should use the public Apexline Vercel update domain");
+assert.equal(packageJson.apexline?.updateBaseUrl, "https://apexline.io", "Packaged apps should use the public Apexline update domain");
 assert.ok(fs.existsSync(f1TimingReplayProbePath), "Formula 1 livetiming replay probe should exist for validating rich replay timing");
 assert.match(f1TimingReplayProbe, /livetiming\.formula1\.com/, "Formula 1 replay probe should fetch the official F1 livetiming archive directly");
 assert.match(f1TimingReplayProbe, /CarData\.z\.jsonStream/, "Formula 1 replay probe should decode compressed telemetry feed data");
@@ -273,7 +273,7 @@ assert.doesNotMatch(updateSiteIndex, /Live now|Free during beta|Apple Silicon &a
   const size = readPngSize(assetPath);
   assert.ok(size.width >= 3000 && size.height >= 1800, `${asset} should be a high-resolution screenshot`);
 });
-assert.equal(updateFeed.releases?.[0]?.updateTo?.url, `https://apexline-app.vercel.app/updates/darwin/arm64/Apexline-${packageJson.version}-mac-arm64.zip`, "Update feed should point at the public Apexline Vercel domain");
+assert.equal(updateFeed.releases?.[0]?.updateTo?.url, `https://apexline.io/updates/darwin/arm64/Apexline-${packageJson.version}-mac-arm64.zip`, "Update feed should point at the public Apexline domain");
 assert.match(pitwallIndex, /Drivers\.jsx/, "Apexline app should load the drivers page component");
 assert.match(pitwallIndex, /Teams\.jsx/, "Apexline app should load the teams page component");
 assert.match(pitwallIndex, /trackmap-circuits\.js[\s\S]*TrackMap\.jsx/, "Apexline app should load track map geometry before the Track Map component");
@@ -318,9 +318,19 @@ assert.match(trackMapCircuitsSource, /abudhabi:[\s\S]*North Hairpin[\s\S]*Marsa 
 assert.doesNotMatch(trackMapSource, /const live = timing\.length > 0 && Number\(data\.race\?\.lap\) > 0/, "Track Map live mode should not depend on a missing snapshot race lap field");
 assert.match(trackMapSource, /liveSession[\s\S]*const live = timing\.length > 0 && Boolean/, "Track Map should activate live mode from live timing rows and live session context");
 assert.match(liveRacingSource, /function VolumeControl[\s\S]*aria-label="Volume level"[\s\S]*onInput=/, "Broadcast panes should expose an exact volume level control that updates continuously while dragging");
+assert.match(liveRacingSource, /\.pane:hover \.pane__controls,\s*\.pane:focus-within \.pane__controls \{ opacity: 1; \}/, "Pane controls should remain visible while the volume slider has focus during drag");
+assert.match(liveRacingSource, /\.pane__controls \{[^}]*z-index: 5/, "Pane controls should sit above broadcast pane chrome so the volume slider can receive drag events");
 assert.match(liveRacingSource, /function AudioToggle[\s\S]*aria-label=\{active \? "Mute audio" : "Enable audio"\}/, "Onboard panes should expose a mute/unmute toggle");
 assert.doesNotMatch(liveRacingSource, /function OnboardPane[\s\S]*<VolumeControl/, "Onboard panes should not show a numeric volume slider");
 assert.match(liveRacingSource, /volumeLevel=\{audioVolume\}/, "Live Racing stream players should receive the selected numeric volume level");
+assert.match(liveRacingSource, /PLAYBACK_PROFILES[\s\S]*onboard[\s\S]*maxHeight:\s*540[\s\S]*maxBandwidth:\s*2500000/, "Live Racing should cap small onboard panes to lighter renditions");
+assert.match(liveRacingSource, /VIDEO_QUALITY_PROFILES[\s\S]*max[\s\S]*high[\s\S]*medium[\s\S]*low/, "Live Racing should define app-wide video quality profiles");
+assert.match(liveRacingSource, /function playbackProfileForQuality[\s\S]*videoQuality/, "Live Racing should map the saved video quality setting into pane playback caps");
+assert.match(liveRacingSource, /function buildStreamPlaybackConfig[\s\S]*playbackProfile/, "Live Racing should build player quality and buffer settings from an explicit playback profile");
+assert.doesNotMatch(liveRacingSource, /targetLatency \+ \(replay \? 8 : 4\)/, "Live Racing startup buffer should not scale with sync latency and cause large prefetch bursts");
+assert.doesNotMatch(liveRacingSource, /Math\.max\(profile\.backBufferLength \|\| 20,\s*targetLatency \+ 10\)/, "Live Racing live back buffer should not scale with sync latency");
+assert.match(liveRacingSource, /else if \(!playbackConfig\.hasQualityCap && video\.canPlayType\("application\/vnd\.apple\.mpegurl"\)\)/, "Quality-capped HLS streams should use HLS.js instead of native HLS so caps are enforced");
+assert.match(liveRacingSource, /function OnboardPane[\s\S]*<PitWallStreamPlayer[\s\S]*playbackProfile="onboard"/, "Onboard panes should request the lighter playback profile");
 assert.match(liveRacingSource, /function isPaneSurfaceClickTarget/, "Live Racing should treat bare video-pane clicks as playback surface clicks");
 assert.match(liveRacingSource, /onSurfaceToggle=\{/, "Live Racing panes should route video-surface clicks to playback toggling");
 assert.match(liveRacingSource, /function handleSurfaceClick\(event\)[\s\S]*event\.stopPropagation\(\)/, "Video clicks should not bubble into pane-level playback toggles");
@@ -345,6 +355,7 @@ assert.match(liveRacingSource, /Watch Party/, "Live Racing should expose a Watch
 assert.match(liveRacingSource, /party-tray/, "Live Racing should render a draggable non-modal party tray");
 assert.match(liveRacingSource, /partyTrayPosition/, "Live Racing should persist the draggable party tray position");
 assert.match(liveRacingSource, /partyTab[\s\S]*Engineer[\s\S]*Party/, "Live Racing tray should switch between Engineer and Party tabs");
+assert.match(liveRacingSource, /party-status-card[\s\S]*party-actions[\s\S]*party-details[\s\S]*party-chat__empty/, "Watch Party tray should group status, actions, details, and empty chat guidance into a cleaner layout");
 assert.match(liveRacingSource, /publishHostSync/, "Live Racing should publish host-authoritative watch party sync");
 assert.match(liveRacingSource, /applyRemotePartySync/, "Live Racing should apply matching remote watch party sync");
 assert.match(settingsSource, /Friends/, "Settings should expose a Friends section");
@@ -1002,6 +1013,8 @@ const f1TimingClockSandbox = vm.runInNewContext(`(() => {
     "f1TimingValue",
     "f1TimingDurationSeconds",
     "formatF1TimingDuration",
+    "f1TimingTargetUtcMs",
+    "f1TimingExplicitQualifyingPart",
     "f1TimingQualifyingPart",
     "parseF1TimingLapCount",
     "parseF1TimingSessionClock",
@@ -1058,6 +1071,110 @@ assert.equal(f1TimingClockSandbox.f1TimingQualifyingPart({
     ] } },
   ],
 }, 1300), "Q2", "F1 timing should not recount repeated cumulative qualifying status history");
+assert.equal(f1TimingClockSandbox.f1TimingQualifyingPart({
+  clockEntries: [
+    { seconds: 0, data: { Utc: "2026-06-06T14:00:00Z" } },
+  ],
+  sessionStatusEntries: [
+    { seconds: 1800, data: { Status: "Started", StatusSeries: [
+      { Utc: "2026-06-06T14:00:00Z", SessionStatus: "Started" },
+      { Utc: "2026-06-06T14:18:00Z", SessionStatus: "Finished" },
+      { Utc: "2026-06-06T14:25:00Z", SessionStatus: "Started" },
+      { Utc: "2026-06-06T14:43:00Z", SessionStatus: "Finished" },
+      { Utc: "2026-06-06T14:50:00Z", SessionStatus: "Started" },
+    ] } },
+  ],
+}, 1800), "Q2", "F1 timing should ignore future qualifying restarts included in cumulative status history");
+assert.equal(f1TimingClockSandbox.f1TimingQualifyingPart({
+  clockEntries: [
+    { seconds: Date.parse("2026-06-06T14:10:00Z") / 1000, data: { Utc: "2026-06-06T14:10:00Z" } },
+  ],
+  sessionStatusEntries: [
+    { seconds: Date.parse("2026-06-06T14:10:00Z") / 1000, data: { Status: "Started", StatusSeries: [
+      { Utc: "2026-06-06T14:00:00Z", SessionStatus: "Started" },
+      { Utc: "2026-06-06T14:18:00Z", SessionStatus: "Finished" },
+      { Utc: "2026-06-06T14:25:00Z", SessionStatus: "Started" },
+    ] } },
+  ],
+}, Number.MAX_SAFE_INTEGER), "Q1", "F1 timing latest live qualifying should ignore future Q2 restarts while Q1 is active");
+assert.equal(f1TimingClockSandbox.f1TimingQualifyingPart({
+  clockEntries: [
+    { seconds: Date.parse("2026-06-06T14:30:00Z") / 1000, data: { Utc: "2026-06-06T14:30:00Z" } },
+  ],
+  sessionStatusEntries: [
+    { seconds: Date.parse("2026-06-06T14:30:00Z") / 1000, data: { Status: "Started", StatusSeries: [
+      { Utc: "2026-06-06T14:00:00Z", SessionStatus: "Started" },
+      { Utc: "2026-06-06T14:18:00Z", SessionStatus: "Finished" },
+      { Utc: "2026-06-06T14:25:00Z", SessionStatus: "Started" },
+      { Utc: "2026-06-06T14:43:00Z", SessionStatus: "Finished" },
+      { Utc: "2026-06-06T14:50:00Z", SessionStatus: "Started" },
+    ] } },
+  ],
+}, Number.MAX_SAFE_INTEGER), "Q2", "F1 timing latest live qualifying should ignore future Q3 restarts while Q2 is active");
+assert.equal(f1TimingClockSandbox.f1TimingQualifyingPart({
+  clockEntries: [
+    { seconds: Date.parse("2026-06-06T14:16:00Z") / 1000, data: { Utc: "2026-06-06T14:16:00Z" } },
+  ],
+  sessionDataEntries: [
+    { seconds: Date.parse("2026-06-06T13:45:50Z") / 1000, data: { Series: { 0: { Utc: "2026-06-06T13:45:50Z", QualifyingPart: 0 } } } },
+    { seconds: Date.parse("2026-06-06T13:45:51Z") / 1000, data: { Series: { 1: { Utc: "2026-06-06T13:45:51Z", QualifyingPart: 1 } } } },
+  ],
+  sessionStatusEntries: [
+    { seconds: Date.parse("2026-06-06T14:16:00Z") / 1000, data: { Status: "Started", StatusSeries: [
+      { Utc: "2026-06-06T14:00:00Z", SessionStatus: "Started" },
+      { Utc: "2026-06-06T14:09:00Z", SessionStatus: "Aborted" },
+      { Utc: "2026-06-06T14:13:00Z", SessionStatus: "Started" },
+    ] } },
+  ],
+}, Number.MAX_SAFE_INTEGER), "Q1", "F1 timing should prefer source QualifyingPart over Q1 red-flag restarts");
+assert.equal(f1TimingClockSandbox.f1TimingQualifyingPart({
+  clockEntries: [
+    { seconds: Date.parse("2026-06-06T14:16:00Z") / 1000, data: { Utc: "2026-06-06T14:16:00Z" } },
+  ],
+  sessionStatusEntries: [
+    { seconds: Date.parse("2026-06-06T14:16:00Z") / 1000, data: { Status: "Started", StatusSeries: [
+      { Utc: "2026-06-06T14:00:00Z", SessionStatus: "Started" },
+      { Utc: "2026-06-06T14:09:00Z", SessionStatus: "Aborted" },
+      { Utc: "2026-06-06T14:13:00Z", SessionStatus: "Started" },
+    ] } },
+  ],
+}, Number.MAX_SAFE_INTEGER), "Q1", "F1 timing fallback should not count a red-flag restart as a new qualifying part");
+assert.equal(f1TimingClockSandbox.f1TimingQualifyingPart({
+  clockEntries: [
+    { seconds: Date.parse("2026-06-06T14:31:00Z") / 1000, data: { Utc: "2026-06-06T14:31:00Z" } },
+  ],
+  sessionDataEntries: [
+    { seconds: Date.parse("2026-06-06T13:45:51Z") / 1000, data: { Series: { 1: { Utc: "2026-06-06T13:45:51Z", QualifyingPart: 1 } } } },
+    { seconds: Date.parse("2026-06-06T14:30:59Z") / 1000, data: { Series: { 2: { Utc: "2026-06-06T14:30:59Z", QualifyingPart: 2 } } } },
+  ],
+  sessionStatusEntries: [
+    { seconds: Date.parse("2026-06-06T14:31:00Z") / 1000, data: { Status: "Started", StatusSeries: [
+      { Utc: "2026-06-06T14:00:00Z", SessionStatus: "Started" },
+      { Utc: "2026-06-06T14:09:00Z", SessionStatus: "Aborted" },
+      { Utc: "2026-06-06T14:13:00Z", SessionStatus: "Started" },
+      { Utc: "2026-06-06T14:22:00Z", SessionStatus: "Finished" },
+      { Utc: "2026-06-06T14:29:00Z", SessionStatus: "Started" },
+    ] } },
+  ],
+}, Number.MAX_SAFE_INTEGER), "Q2", "F1 timing should prefer source QualifyingPart over red-flag-shifted Q2 status history");
+assert.equal(f1TimingClockSandbox.f1TimingQualifyingPart({
+  clockEntries: [
+    { seconds: Date.parse("2026-06-06T14:39:00Z") / 1000, data: { Utc: "2026-06-06T14:39:00Z" } },
+  ],
+  sessionDataEntries: [
+    { seconds: Date.parse("2026-06-06T13:45:51Z") / 1000, data: { Series: { 1: { Utc: "2026-06-06T13:45:51Z", QualifyingPart: 1 } } } },
+    { seconds: Date.parse("2026-06-06T14:25:00Z") / 1000, data: { Series: { 2: { Utc: "2026-06-06T14:25:00Z", QualifyingPart: 2 } } } },
+  ],
+  sessionStatusEntries: [
+    { seconds: Date.parse("2026-06-06T14:39:00Z") / 1000, data: { Status: "Started", StatusSeries: [
+      { Utc: "2026-06-06T14:00:00Z", SessionStatus: "Started" },
+      { Utc: "2026-06-06T14:18:00Z", SessionStatus: "Finished" },
+      { Utc: "2026-06-06T14:25:00Z", SessionStatus: "Started" },
+      { Utc: "2026-06-06T14:34:00Z", SessionStatus: "Aborted" },
+      { Utc: "2026-06-06T14:37:00Z", SessionStatus: "Started" },
+    ] } },
+  ],
+}, Number.MAX_SAFE_INTEGER), "Q2", "F1 timing should prefer source QualifyingPart over Q2 red-flag restarts");
 assert.equal(Math.round(f1TimingClockSandbox.f1TimingVideoStartArchiveSeconds(sparseClockSession, { videoStartUtc: "2026-06-06T13:55:46.309Z" })), 600, "Replay timing should convert F1 TV program-date-time into archive elapsed seconds");
 assert.equal(Math.round(f1TimingClockSandbox.f1TimingVideoStartArchiveSeconds(sparseClockSession, { videoStartUtc: "2026-06-06T13:35:46.309Z" })), -600, "Replay timing should preserve F1 TV replay lead-in before the timing archive starts");
 const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
@@ -1072,6 +1189,8 @@ const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
     "f1TimingValue",
     "f1TimingDurationSeconds",
     "formatF1TimingDuration",
+    "f1TimingTargetUtcMs",
+    "f1TimingExplicitQualifyingPart",
     "f1TimingQualifyingPart",
     "fillF1TimingQualifyingDeltas",
     "timingSegmentTone",
@@ -1410,8 +1529,11 @@ assert.match(mainProcess, /pitwall:notify:schedule/, "Electron main should expos
 assert.match(mainProcess, /pitwall:profile:get/, "Electron main should persist the user profile outside random localhost localStorage origins");
 assert.match(mainProcess, /pitwall:profile:set/, "Electron main should save dashboard setup choices to the app profile");
 assert.match(mainProcess, /livePanelSizes/, "Electron profile should persist Live Racing panel sizes outside random localhost localStorage origins");
+assert.match(mainProcess, /videoQuality/, "Electron profile should persist Live Racing video quality outside random localhost localStorage origins");
 assert.match(dataProviderSource, /livePanelSizes/, "Renderer profile should carry persisted Live Racing panel sizes");
+assert.match(dataProviderSource, /videoQuality/, "Renderer profile should carry persisted Live Racing video quality");
 assert.match(dataProviderSource, /persisted\.livePanelSizes\s*!=\s*null[\s\S]*local\.livePanelSizes/, "Renderer profile merge should not let persisted null panel sizes wipe local Live Racing sizes");
+assert.match(dataProviderSource, /persisted\.videoQuality\s*!=\s*null[\s\S]*local\.videoQuality/, "Renderer profile merge should not let missing persisted video quality wipe local Settings quality");
 assert.match(dataProviderSource, /incoming\?\.standings\?\.length \? incoming\.standings : base\?\.standings/, "Renderer live-data merge should preserve previous standings when a refresh source returns no rows");
 assert.match(dataProviderSource, /incoming\?\.constructors\?\.length \? mergeRowsByKey\(base\?\.constructors, incoming\.constructors, "abbr"\) : \(base\?\.constructors/, "Renderer live-data merge should preserve previous constructor standings when a refresh source returns no rows");
 assert.match(dataProviderSource, /incoming\?\.schedule\?\.length \? incoming\.schedule : base\?\.schedule/, "Renderer live-data merge should preserve previous schedule when a refresh source returns no rows");
@@ -1524,9 +1646,10 @@ const liveRacingSmartSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(source["LiveRacing.jsx"], "qualifyingQ1EliminationStart")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "qualifyingQ2EliminationEnd")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "isQualifyingEliminationRow")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "timingDriverStatusState")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "intelligentOnboardCodes")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "liveOnboardCodeForSlot")}
-  return { intelligentOnboardCodes, isQualifyingEliminationRow, liveOnboardCodeForSlot, qualifyingPhaseFromSession, sessionFlagFromClock };
+  return { intelligentOnboardCodes, isQualifyingEliminationRow, liveOnboardCodeForSlot, qualifyingPhaseFromSession, sessionFlagFromClock, timingDriverStatusState };
 })()`);
 function smartOnboardCodes(options) {
   return Array.from(liveRacingSmartSandbox.intelligentOnboardCodes(options));
@@ -1652,13 +1775,32 @@ assert.equal(liveRacingSmartSandbox.isQualifyingEliminationRow({ pos: 11 }, { qu
 assert.equal(liveRacingSmartSandbox.isQualifyingEliminationRow({ pos: 16 }, { qualifyingPhase: "Q2", rowCount: 22 }), true, "2026 Q2 timing should include P16 in the eliminated highlight");
 assert.equal(liveRacingSmartSandbox.isQualifyingEliminationRow({ pos: 17 }, { qualifyingPhase: "Q2", rowCount: 22 }), false, "Q2 timing should not treat stale Q1 eliminated rows as the active Q2 cutoff");
 assert.equal(liveRacingSmartSandbox.isQualifyingEliminationRow({ pos: 10 }, { qualifyingPhase: "Q3", rowCount: 22 }), false, "Q3 timing should not show elimination-row highlights");
+assert.equal(liveRacingSmartSandbox.qualifyingPhaseFromSession({ sessionKind: "Sprint Qualifying", sessionClock: { qualifyingPart: "Q1" }, rowCount: 22 }), "SQ1", "Sprint Qualifying timing should map source Q1 to SQ1");
+assert.equal(liveRacingSmartSandbox.qualifyingPhaseFromSession({ sessionKind: "Sprint Qualifying", sessionClock: { qualifyingPart: "Q2" }, rowCount: 22 }), "SQ2", "Sprint Qualifying timing should map source Q2 to SQ2");
 assert.equal(liveRacingSmartSandbox.qualifyingPhaseFromSession({ sessionKind: "Sprint Qualifying", sessionClock: { qualifyingPart: "SQ2" }, rowCount: 22 }), "SQ2", "Sprint Qualifying timing should preserve SQ phase labels");
+assert.deepEqual(JSON.parse(JSON.stringify(liveRacingSmartSandbox.timingDriverStatusState({ status: "DNF" }))), { inactive: true, lastBadge: "RETIRED" }, "DNFed drivers should dim the row and show retired in last lap");
+assert.deepEqual(JSON.parse(JSON.stringify(liveRacingSmartSandbox.timingDriverStatusState({ status: "KO" }))), { inactive: true, lastBadge: "KO" }, "Knocked-out drivers should dim the row and show KO in last lap");
+assert.deepEqual(JSON.parse(JSON.stringify(liveRacingSmartSandbox.timingDriverStatusState({ status: "KnockedOut" }))), { inactive: true, lastBadge: "KO" }, "KnockedOut timing text should normalize to KO in last lap");
+assert.deepEqual(JSON.parse(JSON.stringify(liveRacingSmartSandbox.timingDriverStatusState({ retired: true }))), { inactive: true, lastBadge: "RETIRED" }, "Retired timing rows should dim even when the feed sends a retired boolean");
+assert.deepEqual(JSON.parse(JSON.stringify(liveRacingSmartSandbox.timingDriverStatusState({ knockedOut: true }))), { inactive: true, lastBadge: "KO" }, "Knocked-out timing rows should dim even when the feed sends a knockout boolean");
+assert.deepEqual(JSON.parse(JSON.stringify(liveRacingSmartSandbox.timingDriverStatusState({ last: "PIT OUT" }))), { inactive: false, lastBadge: "PIT OUT" }, "Pit-out drivers should show a red last-lap badge without dimming the row");
+assert.deepEqual(JSON.parse(JSON.stringify(liveRacingSmartSandbox.timingDriverStatusState({ last: "IN PIT" }))), { inactive: false, lastBadge: "IN PIT" }, "In-pit drivers should show a red last-lap badge without dimming the row");
 assert.deepEqual(JSON.parse(JSON.stringify(liveRacingSmartSandbox.sessionFlagFromClock({ status: "Started" }))), { status: "green", label: "Green flag" }, "Live timing should show green flag from official session status");
 assert.deepEqual(JSON.parse(JSON.stringify(liveRacingSmartSandbox.sessionFlagFromClock({ status: "Started", trackStatus: { status: "2", message: "Yellow" } }))), { status: "yellow", label: "Yellow flag" }, "Live timing should show yellow flag from official track status");
 assert.deepEqual(JSON.parse(JSON.stringify(liveRacingSmartSandbox.sessionFlagFromClock({ status: "Aborted" }))), { status: "red", label: "Red flag" }, "Live timing should show red flag when the official session status stops the session");
 assert.deepEqual(JSON.parse(JSON.stringify(liveRacingSmartSandbox.sessionFlagFromClock({ status: "Started", trackStatus: { status: "5", message: "Red" } }))), { status: "red", label: "Red flag" }, "Live timing should let official track red status override started session status");
 assert.deepEqual(JSON.parse(JSON.stringify(liveRacingSmartSandbox.sessionFlagFromClock({}, { status: "yellow", label: "Replay" }))), { status: "yellow", label: "Replay" }, "Live timing should retain existing fallback flags when official status is missing");
 assert.match(source["LiveRacing.jsx"], /data-elimination/, "Live timing rows should expose an elimination state for subtle qualifying highlights");
+assert.match(source["LiveRacing.jsx"], /data-inactive/, "Live timing rows should expose an inactive state for DNF and KO drivers");
+assert.match(source["LiveRacing.jsx"], /timing-cell--status/, "Live timing last-lap statuses should render as red badges");
+assert.match(source["LiveRacing.jsx"], /statusState\.inactive \? "—" : row\.best/, "Inactive timing rows should dash out best lap");
+assert.match(source["LiveRacing.jsx"], /statusState\.inactive \? "—" : row\.gap/, "Inactive timing rows should dash out gap");
+assert.match(source["LiveRacing.jsx"], /statusState\.inactive \? "—" : row\.interval/, "Inactive timing rows should dash out interval");
+assert.match(mainProcess, /line\?\.PitOut/, "F1 live timing rows should preserve pit-out state for the last-lap badge");
+assert.match(mainProcess, /line\?\.Retired/, "F1 live timing rows should preserve retired state for all retired drivers");
+assert.match(mainProcess, /line\?\.KnockedOut/, "F1 live timing rows should preserve knocked-out state for all knocked-out drivers");
+assert.doesNotMatch(source["LiveRacing.jsx"], /\.timing-tower__row\[data-inactive="true"\] \.timing-driver__code/, "Retired timing rows should keep the driver's team color badge");
+assert.match(source["LiveRacing.jsx"], /\.timing-tower \{[^}]*width: max-content;[\s\S]*\.timing-tower__head, \.timing-tower__row \{[^}]*width: max-content;/, "Live timing horizontal scroll should end at the last real column");
 assert.match(source["LiveRacing.jsx"], /profile\.favoriteDrivers/, "Intelligent layout should read the user's Settings favorite driver for onboard slot 1");
 
 assert.match(source["AppShell.jsx"], /pw-top__searchbox/, "Topbar search should be a real input");
@@ -1787,6 +1929,20 @@ const streamPersistenceSandbox = vm.runInNewContext(`(() => {
   ${["streamDescriptor", "streamRecord", "preferredMainF1TvFeed", "replayTimelineStartSeconds", "replayTargetMediaTime"].map((name) => extractNamedFunction(source["LiveRacing.jsx"], name)).join("\n")}
   return { streamRecord, preferredMainF1TvFeed, replayTimelineStartSeconds, replayTargetMediaTime };
 })()`);
+const onboardResolutionSandbox = vm.runInNewContext(`(() => {
+  let resolvedF1TvContent = { feeds: [] };
+  let timingRows = [];
+  let fallbackCodes = [];
+  ${extractNamedFunction(source["LiveRacing.jsx"], "preferredMainF1TvFeed")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "resolvedOnboardFeedForCode")}
+  function resolve(feeds, code, rows = [], fallbacks = []) {
+    resolvedF1TvContent = { feeds };
+    timingRows = rows;
+    fallbackCodes = fallbacks;
+    return resolvedOnboardFeedForCode(code);
+  }
+  return { resolve };
+})()`);
 assert.equal(
   streamPersistenceSandbox.streamRecord("https://example.test/master.m3u8"),
   "https://example.test/master.m3u8",
@@ -1825,6 +1981,23 @@ assert.equal(
   120,
   "Replay sync should fall back to matching media time when timeline anchors are unavailable"
 );
+assert.equal(
+  onboardResolutionSandbox.resolve([
+    { feedId: "WORLD", kind: "world", label: "F1 Live" },
+    { feedId: "ALB", driverCode: "ALB", kind: "onboard", label: "ALB onboard" },
+  ], "ALB")?.driverCode,
+  "ALB",
+  "Onboard resolver should keep exact driver-tagged F1 TV feeds available"
+);
+assert.equal(
+  onboardResolutionSandbox.resolve([
+    { feedId: "WORLD", kind: "world", label: "F1 Live" },
+    { feedId: "ALB", driverCode: "ALB", kind: "onboard", label: "ALB onboard" },
+    { feedId: "feed-3", kind: "feed", label: "Unlabeled onboard camera" },
+  ], "VER", [{ code: "VER" }, { code: "ALB" }], ["VER", "ALB"]),
+  null,
+  "Onboard resolver should not relabel a different or unidentified camera as the requested driver"
+);
 const syncHelperSandbox = { window: {} };
 vm.createContext(syncHelperSandbox);
 vm.runInContext(fs.readFileSync(path.join(root, "ui_kits/pitwall/sync.js"), "utf8"), syncHelperSandbox, { filename: "ui_kits/pitwall/sync.js" });
@@ -1838,6 +2011,10 @@ assert.match(source["LiveRacing.jsx"], /requestType,/, "Clean F1 TV player shoul
 assert.match(source["LiveRacing.jsx"], /licensePathHint/, "Clean F1 TV player should log sanitized license endpoint hints");
 assert.doesNotMatch(source["Settings.jsx"], /onChange=\{\(\) => \{\}\}/, "Settings segmented controls should not be no-ops");
 assert.match(source["Settings.jsx"], /pw-settings/, "Settings should persist app preferences for Live defaults and appearance");
+assert.match(source["Settings.jsx"], /VIDEO_QUALITY_OPTIONS[\s\S]*value: "max"[\s\S]*value: "high"[\s\S]*value: "medium"[\s\S]*value: "low"/, "Settings should expose Max, High, Medium, and Low video quality choices");
+assert.match(source["Settings.jsx"], /videoQuality: "medium"/, "Settings should default video quality to Medium for roughly 100 Mbps connections");
+assert.match(source["Settings.jsx"], /SegmentedControl[\s\S]*value=\{appPrefs\.videoQuality\}[\s\S]*VIDEO_QUALITY_OPTIONS/, "Settings should persist the selected video quality through app preferences");
+assert.match(source["Settings.jsx"], /updateProfile\(\{[\s\S]*videoQuality: appPrefs\.videoQuality/, "Settings should persist video quality through the Electron profile for app reopen");
 assert.match(source["Settings.jsx"], /applyThemePreference/, "Settings should apply the selected theme through one token helper");
 assert.match(source["Settings.jsx"], /id: "updates"/, "Settings should expose update status");
 assert.match(source["Settings.jsx"], /window\.pitwall\?\.updates/, "Settings should use the Electron update IPC API");
@@ -1863,6 +2040,8 @@ assert.match(source["DataProvider.jsx"], /profileImageUrl/, "Renderer profile sh
 assert.match(source["Settings.jsx"], /profile-image-input/, "Settings should let users choose a profile picture image file");
 assert.match(source["Settings.jsx"], /Clear photo/, "Settings should let users remove their profile picture");
 assert.match(source["AppShell.jsx"], /profile\.profileImageUrl/, "App shell should render the saved profile picture in the sidebar");
+assert.match(source["DataProvider.jsx"], /text\.length > 3 \* 1024 \* 1024/, "Renderer profile normalization should preserve 2 MB profile photos after base64 encoding");
+assert.match(mainProcess, /text\.length > 3 \* 1024 \* 1024/, "Electron profile normalization should preserve 2 MB profile photos after base64 encoding");
 assert.match(mainProcess, /profileImageUrl/, "Electron profile persistence should keep the user profile picture URL");
 assert.match(source["News.jsx"], /readerStory/, "News should keep story reading inside the app");
 assert.match(source["News.jsx"], /news-reader/, "News should render a comfortable in-app article reader");
@@ -1936,6 +2115,7 @@ assert.match(source["LiveRacing.jsx"], /liveWorkspaceReady[\s\S]*\?[\s\S]*<div c
 assert.match(source["LiveRacing.jsx"], /className="live__preload"[\s\S]*renderSessionLibrary\(\{ inline: true \}\)/, "Live mode should show the session library as the pre-load body");
 assert.match(source["LiveRacing.jsx"], /Race weekends/, "Session library should list race weekends in a left rail");
 assert.match(source["LiveRacing.jsx"], /session-library__row/, "Session library should render selectable session rows");
+assert.match(source["LiveRacing.jsx"], /f1TvResolving && active \? "Loading\.\.\."/, "Session library should label active replay loads as loading");
 assert.match(source["LiveRacing.jsx"], /currentF1TvWeekendIndex[\s\S]*slice\(0, currentF1TvWeekendIndex \+ 1\)/, "Session library should show past races through the current weekend, not future weekends");
 assert.match(source["LiveRacing.jsx"], /activeRaceName[\s\S]*selectedF1TvRace\?\.name[\s\S]*replaySetupActive|replaySetupActive[\s\S]*activeRaceName[\s\S]*selectedF1TvRace\?\.name/, "Live Racing top bar should use the selected replay race name while a replay is active");
 const f1TvSessionGateSandbox = vm.runInNewContext(`(() => {
@@ -2083,6 +2263,8 @@ assert.match(source["LiveRacing.jsx"], /const REPLAY_TIMING_POLL_INTERVAL_MS = 2
 assert.match(source["LiveRacing.jsx"], /setInterval\(loadReplayTiming, REPLAY_TIMING_POLL_INTERVAL_MS\)/, "Replay timing should refresh quickly from the local F1 timing cache");
 assert.match(source["LiveRacing.jsx"], /Math\.floor\(timingElapsedSeconds \* 4\)/, "Replay timing should use quarter-second buckets so fast polling is not discarded");
 assert.match(source["LiveRacing.jsx"], /playerRefs\.current\[replaySync\.masterKey \|\| "WORLD"\]/, "Replay timing should read the current master video time directly");
+assert.match(source["LiveRacing.jsx"], /replayPlayingRef\.current/, "Replay players should use the latest paused state when async stream loading finishes");
+assert.match(source["LiveRacing.jsx"], /replaySync\.playing === false[\s\S]*video\.pause\(\)/, "Replay sync should keep every player paused instead of correcting paused panes into loops");
 assert.match(source["LiveRacing.jsx"], /Replay timing unavailable/, "Replay timing errors should surface as a clear short status");
 assert.match(source["LiveRacing.jsx"], /diagnostics: data\?\.diagnostics/, "Replay timing logs should include sanitized data-source row counts");
 assert.match(source["LiveRacing.jsx"], /liveTimingData/, "Live mode should keep fast timing data separate from the dashboard snapshot");
@@ -2104,7 +2286,7 @@ assert.match(source["LiveRacing.jsx"], /TIMING_COLUMN_STORAGE_KEY/, "Live timing
 assert.match(source["LiveRacing.jsx"], /TimingColumnMenu/, "Live timing should expose a configurable column menu");
 assert.match(source["LiveRacing.jsx"], /<Icon name="pencil" size=\{14\} \/>/, "Live timing column editor should use a compact pencil trigger");
 assert.match(source["LiveRacing.jsx"], /\.timing-config \{[\s\S]*right: var\(--space-6\)[\s\S]*width: min\(360px, calc\(100vw - 28px\)\)/, "Live timing column menu should be a narrow right-aligned popover");
-assert.match(source["LiveRacing.jsx"], /\.timing-tower \{ min-width: 640px; \}/, "Live timing tower should be horizontally compact enough to reveal more columns");
+assert.match(source["LiveRacing.jsx"], /\.timing-tower \{[^}]*width: max-content;[^}]*min-width: 100%;/, "Live timing tower should be horizontally compact enough to reveal more columns");
 assert.match(source["LiveRacing.jsx"], /\.timing-tower__head, \.timing-tower__row \{[\s\S]*column-gap: var\(--space-3\)[\s\S]*padding: 0 var\(--space-2\)/, "Live timing columns should use compact spacing with minimal left inset");
 assert.match(source["LiveRacing.jsx"], /\{ id: "last", label: "Last lap", width: "78px" \}/, "Live timing last-lap column should leave room for the fastest-lap pill");
 assert.match(source["LiveRacing.jsx"], /\{ id: "speed", label: "Speed", width: "48px" \}/, "Live timing column menu should expose speed telemetry");
@@ -2124,7 +2306,7 @@ assert.match(source["LiveRacing.jsx"], /DEFAULT_TIMING_COLUMNS = \["driver", "la
 assert.match(source["LiveRacing.jsx"], /MiniSectorBar/, "Live timing should render mini-sector columns");
 assert.match(source["LiveRacing.jsx"], /TimingTowerRow/, "Live timing should use a compact timing row instead of the name-heavy design-system row");
 assert.doesNotMatch(source["LiveRacing.jsx"], /<TimingRowHeader \/>[\s\S]*<TimingRow/, "Live timing rows should not render full driver names from the old TimingRow component");
-assert.match(source["LiveRacing.jsx"], /resolvedOnboardFeedForCode/, "Onboard panes should fall back to resolved non-world F1 TV feeds when driver labels are absent");
+assert.match(source["LiveRacing.jsx"], /resolvedOnboardFeedForCode/, "Onboard panes should resolve F1 TV onboard feeds through driver-tagged descriptors");
 assert.match(source["LiveRacing.jsx"], /\.pane \{[\s\S]*container-type: inline-size/, "Onboard panes should expose container size for adaptive telemetry scaling");
 assert.match(source["LiveRacing.jsx"], /\.pane:not\(\.pane--bc\) \.pane__top \{[\s\S]*position: absolute[\s\S]*top: 0/, "Onboard top chrome should overlay the feed instead of reserving empty top space");
 assert.match(source["LiveRacing.jsx"], /\.live__grid\[data-layout="focus"\] \.pane:not\(\.pane--bc\) \.pane__video \{[\s\S]*object-fit: contain[\s\S]*object-position: center top/, "Driver Focus onboard video should preserve aspect ratio and leave fit space below the image, not above it");
@@ -2234,6 +2416,7 @@ assert.match(source["LiveRacing.jsx"], /liveLatency/, "Live mode should measure 
 assert.match(source["LiveRacing.jsx"], /playbackRate/, "Live mode should expose playback rate in the sync debug overlay");
 assert.match(source["Settings.jsx"], /f1LiveLatency/, "Settings should persist the F1 Live/WORLD sync latency preference");
 assert.match(source["Settings.jsx"], /F1 Live sync latency/, "Settings should expose the F1 Live/WORLD sync latency control");
+assert.match(source["LiveRacing.jsx"], /profile\.videoQuality/, "Live mode should restore video quality from the persisted Electron profile on app open");
 assert.match(source["LiveRacing.jsx"], /syncSettings\.worldTarget/, "Live mode should use the configured F1 Live/WORLD latency as the sync baseline");
 assert.match(source["LiveRacing.jsx"], /adjustDependentSyncTargets/, "Live mode should shift dependent feed latency targets when the F1 Live baseline changes");
 assert.match(source["LiveRacing.jsx"], /maxLiveSyncPlaybackRate: 1\.2/, "Native HLS playback should use a 20% catch-up rate like MultiViewer");

@@ -85,7 +85,8 @@ app.setPath("userData", PITWALL_USER_DATA);
 const KEYCHAIN_SERVICE = "Apexline";
 const LEGACY_KEYCHAIN_SERVICE = "PitWall";
 const KEY_PROVIDERS = new Set(["codex", "grok", "f1tv-email", "f1tv-token"]);
-const DEFAULT_USER_PROFILE = { name: "", profileImageUrl: "", favoriteDrivers: [], favoriteTeams: [], livePanelSizes: null };
+const VIDEO_QUALITY_LEVELS = new Set(["max", "high", "medium", "low"]);
+const DEFAULT_USER_PROFILE = { name: "", profileImageUrl: "", favoriteDrivers: [], favoriteTeams: [], livePanelSizes: null, videoQuality: "" };
 const PROFILE_FILE = "pitwall-profile.json";
 const SOCIAL_FILE = "apexline-social.json";
 const COPILOT_INSIGHTS_FILE = "pitwall-copilot-insights.json";
@@ -97,7 +98,7 @@ const LIVE_SNAPSHOT_CACHE_FILE = "pitwall-live-snapshot-cache.json";
 const F1TV_LIBRARY_CACHE_VERSION = 2;
 const LIVE_SNAPSHOT_CACHE_VERSION = 2;
 const PITWALL_UPDATE_BASE_URL = String(process.env.APEXLINE_UPDATE_BASE_URL || process.env.PITWALL_UPDATE_BASE_URL || appPackage.apexline?.updateBaseUrl || appPackage.pitwall?.updateBaseUrl || "").replace(/\/+$/, "");
-const SOCIAL_API_BASE_URL = String(process.env.APEXLINE_SOCIAL_API_BASE_URL || PITWALL_UPDATE_BASE_URL || "https://apexline-app.vercel.app").replace(/\/+$/, "");
+const SOCIAL_API_BASE_URL = String(process.env.APEXLINE_SOCIAL_API_BASE_URL || PITWALL_UPDATE_BASE_URL || "https://apexline.io").replace(/\/+$/, "");
 const F1TV_HOME_URL = "https://f1tv.formula1.com/";
 const F1TV_LOGIN_URL = "https://account.formula1.com/#/en/login?redirect=https%3A%2F%2Ff1tv.formula1.com%2F";
 const F1TV_AUTH_URL = "https://api.formula1.com/v2/account/subscriber/authenticate/by-password";
@@ -439,10 +440,15 @@ function normalizeLivePanelSizes(saved) {
 function normalizeProfileImageUrl(value) {
   const text = String(value || "").trim();
   if (!text) return "";
-  if (text.length > 750000) return "";
+  if (text.length > 3 * 1024 * 1024) return "";
   if (/^(https?:|file:)/i.test(text)) return text;
   if (/^data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,/i.test(text)) return text;
   return /^[./][^<>"]+\.(?:png|jpe?g|gif|webp|svg)(?:[?#].*)?$/i.test(text) ? text : "";
+}
+
+function normalizeVideoQuality(value) {
+  const text = String(value || "").trim().toLowerCase();
+  return VIDEO_QUALITY_LEVELS.has(text) ? text : "";
 }
 
 function normalizeUserProfile(profile = {}) {
@@ -452,6 +458,7 @@ function normalizeUserProfile(profile = {}) {
     favoriteDrivers: Array.isArray(profile.favoriteDrivers) ? profile.favoriteDrivers.map(String).slice(0, 8) : [],
     favoriteTeams: Array.isArray(profile.favoriteTeams) ? profile.favoriteTeams.map(String).slice(0, 8) : [],
     livePanelSizes: normalizeLivePanelSizes(profile.livePanelSizes),
+    videoQuality: normalizeVideoQuality(profile.videoQuality),
   };
 }
 
@@ -2911,16 +2918,70 @@ function f1TimingSessionStartSeconds(sessionData) {
   return 0;
 }
 
+function f1TimingTargetUtcMs(sessionData, targetSeconds) {
+  const targetValue = finiteNumber(targetSeconds);
+  const latestLiveUtcMs = (() => {
+    if (targetValue == null || targetValue < Number.MAX_SAFE_INTEGER / 2) return null;
+    const secondsValues = [
+      ...(sessionData?.clockEntries || []),
+      ...(sessionData?.sessionStatusEntries || []),
+      ...(sessionData?.sessionDataEntries || []),
+    ].map((entry) => finiteNumber(entry?.seconds)).filter((value) => value != null && value > 1000000000 && value < 10000000000);
+    return secondsValues.length ? Math.max(...secondsValues) * 1000 : null;
+  })();
+  const archiveStartUtcMs = f1TimingArchiveStartUtcMs(sessionData);
+  return latestLiveUtcMs ?? (targetValue == null
+    ? null
+    : Number.isFinite(archiveStartUtcMs)
+      ? archiveStartUtcMs + targetValue * 1000
+      : targetValue > 1000000000 && targetValue < 10000000000
+        ? targetValue * 1000
+        : null);
+}
+
+function f1TimingExplicitQualifyingPart(sessionData, targetSeconds) {
+  const targetValue = finiteNumber(targetSeconds);
+  const targetUtcMs = f1TimingTargetUtcMs(sessionData, targetSeconds);
+  const events = [];
+  const seen = new Set();
+  for (const entry of sessionData?.sessionDataEntries || []) {
+    const seconds = finiteNumber(entry?.seconds) ?? 0;
+    if (targetValue != null && seconds > targetValue) continue;
+    const rawSeries = entry?.data?.Series || entry?.data?.series || [];
+    const seriesValues = Array.isArray(rawSeries) ? rawSeries : Object.values(rawSeries);
+    const values = [entry?.data, ...seriesValues].filter(Boolean);
+    values.forEach((item, index) => {
+      const part = finiteNumber(item?.QualifyingPart ?? item?.qualifyingPart);
+      if (part == null || part < 1 || part > 3) return;
+      const utc = String(item?.Utc || item?.Timestamp || item?.Date || "").trim();
+      const utcMs = Date.parse(utc);
+      if (Number.isFinite(utcMs) && Number.isFinite(targetUtcMs) && utcMs > targetUtcMs) return;
+      const key = utc ? `${utc}:${part}` : `${seconds}:${index}:${part}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      events.push({ part, order: Number.isFinite(utcMs) ? utcMs : seconds * 1000 + index });
+    });
+  }
+  events.sort((a, b) => a.order - b.order);
+  const latest = events.at(-1);
+  return latest ? `Q${latest.part}` : "";
+}
+
 function f1TimingQualifyingPart(sessionData, targetSeconds) {
+  const explicitPart = f1TimingExplicitQualifyingPart(sessionData, targetSeconds);
+  if (explicitPart) return explicitPart;
   const statusText = (item) => String(item?.SessionStatus || item?.Status || item?.Started || "");
+  const eventUtcMs = (item) => Date.parse(item?.Utc || item?.Timestamp || item?.Date || "");
   const eventKey = (item, fallback) => {
     const utc = String(item?.Utc || item?.Timestamp || item?.Date || "").trim();
     return utc ? `${utc}:${statusText(item)}` : fallback;
   };
   const eventOrder = (item, seconds, index) => {
-    const utcMs = Date.parse(item?.Utc || item?.Timestamp || item?.Date || "");
+    const utcMs = eventUtcMs(item);
     return Number.isFinite(utcMs) ? utcMs : seconds * 1000 + index;
   };
+  const targetValue = finiteNumber(targetSeconds);
+  const targetUtcMs = f1TimingTargetUtcMs(sessionData, targetSeconds);
   const events = [];
   for (const entry of sessionData?.sessionStatusEntries || []) {
     const seconds = finiteNumber(entry?.seconds) ?? 0;
@@ -2930,19 +2991,27 @@ function f1TimingQualifyingPart(sessionData, targetSeconds) {
     const values = seriesValues.length ? seriesValues : [entry?.data];
     values.forEach((item, index) => {
       const status = statusText(item);
+      const utcMs = eventUtcMs(item);
+      if (Number.isFinite(utcMs) && Number.isFinite(targetUtcMs) && utcMs > targetUtcMs) return;
       if (status) events.push({ status, key: eventKey(item, `${seconds}:${index}:${status}`), order: eventOrder(item, seconds, index) });
     });
   }
   events.sort((a, b) => a.order - b.order);
   let startedCount = 0;
   let wasStarted = false;
+  let previousStopWasFinished = false;
   const seen = new Set();
   for (const event of events) {
     if (seen.has(event.key)) continue;
     seen.add(event.key);
     const isStarted = event.status === "Started";
-    if (isStarted && !wasStarted) startedCount += 1;
+    if (isStarted && !wasStarted && (startedCount === 0 || previousStopWasFinished)) startedCount += 1;
     wasStarted = isStarted;
+    if (isStarted) {
+      previousStopWasFinished = false;
+    } else {
+      previousStopWasFinished = /Finished|Finalised|Ends/i.test(event.status);
+    }
   }
   return startedCount ? `Q${Math.min(startedCount, 3)}` : "";
 }
@@ -3176,7 +3245,9 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
       lastLapDuration: lastSeconds,
       bestLapDuration: bestSeconds,
       sessionLap,
-      state: line?.InPit ? "PIT" : line?.Stopped ? "STOP" : null,
+      state: line?.KnockedOut ? "KO" : line?.Retired ? "RETIRED" : line?.PitOut ? "PIT OUT" : line?.InPit ? "IN PIT" : line?.Stopped ? "STOP" : null,
+      retired: Boolean(line?.Retired),
+      knockedOut: Boolean(line?.KnockedOut),
       gap: gapValue || (pos === 1 ? "LEADER" : "—"),
       interval: intervalValue || "—",
       trend: "flat",
@@ -3214,6 +3285,7 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
     timingEntries: sessionData.timingEntries?.length || 0,
     timingAppEntries: sessionData.timingAppEntries?.length || 0,
     clockEntries: sessionData.clockEntries?.length || 0,
+    sessionDataEntries: sessionData.sessionDataEntries?.length || 0,
     sessionStatusEntries: sessionData.sessionStatusEntries?.length || 0,
     trackStatusEntries: sessionData.trackStatusEntries?.length || 0,
     raceControlEntries: sessionData.raceControlEntries?.length || 0,
@@ -3252,11 +3324,12 @@ async function getReplayF1TimingSessionData(meetingKey, sessionKind, options = {
   }
   if (!archive) archive = await resolveF1TimingArchiveBase(meeting, selectedSession);
   const baseUrl = archive.baseUrl;
-  const [driverListText, timingText, appText, clockText, statusText, trackStatusText, raceControlText, lapCountText, weatherText, carText] = await Promise.all([
+  const [driverListText, timingText, appText, clockText, sessionDataText, statusText, trackStatusText, raceControlText, lapCountText, weatherText, carText] = await Promise.all([
     f1TimingRequestText(`${baseUrl}DriverList.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}TimingData.jsonStream`),
     f1TimingRequestText(`${baseUrl}TimingAppData.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}ExtrapolatedClock.jsonStream`).catch(() => ""),
+    f1TimingRequestText(`${baseUrl}SessionData.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}SessionStatus.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}TrackStatus.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}RaceControlMessages.jsonStream`).catch(() => ""),
@@ -3274,6 +3347,7 @@ async function getReplayF1TimingSessionData(meetingKey, sessionKind, options = {
     timingEntries: parseF1TimingJsonStream(timingText),
     timingAppEntries: appText ? parseF1TimingJsonStream(appText) : [],
     clockEntries: clockText ? parseF1TimingJsonStream(clockText) : [],
+    sessionDataEntries: sessionDataText ? parseF1TimingJsonStream(sessionDataText) : [],
     sessionStatusEntries: statusText ? parseF1TimingJsonStream(statusText) : [],
     trackStatusEntries: trackStatusText ? parseF1TimingJsonStream(trackStatusText) : [],
     raceControlEntries: raceControlText ? parseF1TimingJsonStream(raceControlText) : [],
@@ -3426,6 +3500,7 @@ function getF1LiveTimingSnapshot(options = {}) {
     timingEntries: entriesByTopic.TimingData || [],
     timingAppEntries: entriesByTopic.TimingAppData || [],
     clockEntries: entriesByTopic.ExtrapolatedClock || [],
+    sessionDataEntries: entriesByTopic.SessionData || [],
     sessionStatusEntries: entriesByTopic.SessionStatus || [],
     trackStatusEntries: entriesByTopic.TrackStatus || [],
     raceControlEntries: entriesByTopic.RaceControlMessages || [],
@@ -3439,6 +3514,7 @@ function getF1LiveTimingSnapshot(options = {}) {
         timingEntries: entriesByTopic.TimingData || [],
         timingAppEntries: entriesByTopic.TimingAppData || [],
         clockEntries: entriesByTopic.ExtrapolatedClock || [],
+        sessionDataEntries: entriesByTopic.SessionData || [],
         sessionStatusEntries: entriesByTopic.SessionStatus || [],
         trackStatusEntries: entriesByTopic.TrackStatus || [],
         raceControlEntries: entriesByTopic.RaceControlMessages || [],

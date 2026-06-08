@@ -8,6 +8,28 @@
   const REPLAY_TIMING_POLL_INTERVAL_MS = 250;
   const CLOCK_TICK_INTERVAL_MS = 250;
   const TIMING_ROW_MOTION_MS = 280;
+  const PLAYBACK_PROFILES = {
+    main: { bufferGoal: 18, replayBufferGoal: 30, backBufferLength: 18 },
+    onboard: { maxHeight: 540, maxBandwidth: 2500000, bufferGoal: 10, replayBufferGoal: 18, backBufferLength: 8 },
+  };
+  const VIDEO_QUALITY_PROFILES = {
+    max: {
+      main: { bufferGoal: 24, replayBufferGoal: 36, backBufferLength: 24 },
+      onboard: { maxHeight: 720, maxBandwidth: 5500000, bufferGoal: 14, replayBufferGoal: 24, backBufferLength: 10 },
+    },
+    high: {
+      main: { maxHeight: 1080, maxBandwidth: 12000000, bufferGoal: 20, replayBufferGoal: 32, backBufferLength: 20 },
+      onboard: { maxHeight: 720, maxBandwidth: 4500000, bufferGoal: 12, replayBufferGoal: 20, backBufferLength: 10 },
+    },
+    medium: {
+      main: { maxHeight: 1080, maxBandwidth: 8000000, bufferGoal: 16, replayBufferGoal: 28, backBufferLength: 14 },
+      onboard: { maxHeight: 540, maxBandwidth: 2500000, bufferGoal: 8, replayBufferGoal: 16, backBufferLength: 6 },
+    },
+    low: {
+      main: { maxHeight: 720, maxBandwidth: 5000000, bufferGoal: 12, replayBufferGoal: 24, backBufferLength: 10 },
+      onboard: { maxHeight: 360, maxBandwidth: 1200000, bufferGoal: 6, replayBufferGoal: 12, backBufferLength: 4 },
+    },
+  };
 
   const STYLE_ID = "pw-live-styles";
   {
@@ -78,13 +100,16 @@
     .timing-status[data-tone="error"] .timing-status__icon { color: var(--danger); animation: none; }
     .timing-status__title { color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-lg); font-weight: 800; line-height: 1; }
     .timing-status__body { max-width: 260px; color: var(--text-tertiary); font-size: var(--text-sm); line-height: 1.4; }
-    .timing-tower { min-width: 640px; }
-    .timing-tower__head, .timing-tower__row { display: grid; align-items: center; column-gap: var(--space-3); padding: 0 var(--space-2); }
+    .timing-tower { width: max-content; min-width: 100%; }
+    .timing-tower__head, .timing-tower__row { display: grid; align-items: center; column-gap: var(--space-3); width: max-content; min-width: 100%; box-sizing: border-box; padding: 0 var(--space-2); }
     .timing-tower__head { position: sticky; top: 0; z-index: 4; height: 32px; background: var(--bg-base); border-bottom: 1px solid var(--border-default); color: var(--text-tertiary); font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: var(--tracking-caps); }
     .timing-tower__head > span, .timing-tower__row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .timing-tower__row { min-height: 40px; border-bottom: 1px solid var(--border-subtle); background: rgba(255,255,255,0.015); color: var(--text-primary); cursor: pointer; transform: translateZ(0); transition-property: background-color, border-color, box-shadow; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
     .timing-tower__row:hover { background: var(--surface-hover); }
     .timing-tower__row[data-selected="true"] { background: var(--accent-quiet); box-shadow: inset 3px 0 0 var(--accent); }
+    .timing-tower__row[data-inactive="true"] { background: rgba(255,255,255,0.008); color: var(--text-tertiary); opacity: 0.58; }
+    .timing-tower__row[data-inactive="true"]:hover { background: rgba(255,255,255,0.035); opacity: 0.72; }
+    .timing-tower__row[data-inactive="true"] .tyre-dot { opacity: 0.58; }
     .timing-tower__row[data-elimination="true"] { background: linear-gradient(90deg, rgba(255,59,59,0.14), rgba(255,59,59,0.035)); box-shadow: inset 3px 0 0 rgba(255,95,95,0.62); }
     .timing-tower__row[data-elimination="true"]:hover { background: linear-gradient(90deg, rgba(255,59,59,0.18), rgba(255,59,59,0.055)); }
     .timing-tower__row[data-elimination="true"] .timing-driver__pos { color: #ff9a9a; }
@@ -94,6 +119,7 @@
     .timing-driver__code { display: inline-grid; place-items: center; min-width: 42px; height: 24px; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--driver-color, var(--accent)); color: #061017; font-family: var(--font-display); font-size: var(--text-sm); font-weight: 900; letter-spacing: 0.02em; transition-property: background-color, color; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
     .timing-cell { font-family: var(--font-mono); font-size: 13px; font-weight: 800; white-space: nowrap; font-variant-numeric: tabular-nums; transition-property: color, background-color; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
     .timing-cell--pill { display: inline-flex; justify-content: center; min-width: 58px; padding: 4px 7px; border-radius: var(--radius-pill); background: rgba(78,186,87,0.92); color: #061017; }
+    .timing-cell--status { display: inline-flex; justify-content: center; min-width: 58px; padding: 4px 7px; border-radius: var(--radius-pill); background: rgba(235,51,64,0.95); color: #fff; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12); }
     .timing-cell--gap { color: var(--text-primary); }
     .mini-sector { display: inline-flex; align-items: center; gap: 1.5px; width: fit-content; min-width: 0; max-width: 100%; overflow: hidden; }
     .mini-sector__seg { width: 3px; height: 15px; border-radius: var(--radius-pill); background: rgba(255,255,255,0.12); transition-property: background-color, opacity; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
@@ -285,8 +311,8 @@
       .pane__tele-lap b { font-size: 13px; }
       .pane__tele-vbar { width: 5px; min-height: 26px; }
     }
-    .pane__controls { position: absolute; top: var(--space-5); right: var(--space-6); z-index: 3; display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity var(--dur-fast) var(--ease-standard); }
-    .pane:hover .pane__controls { opacity: 1; }
+    .pane__controls { position: absolute; top: var(--space-5); right: var(--space-6); z-index: 5; display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity var(--dur-fast) var(--ease-standard); }
+    .pane:hover .pane__controls, .pane:focus-within .pane__controls { opacity: 1; }
     .pane__ctl { appearance: none; -webkit-appearance: none; display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border-radius: var(--radius-xs); background: var(--scrim); backdrop-filter: blur(6px); color: var(--text-secondary); cursor: pointer; border: 1px solid var(--border-default); }
     .pane__ctl:hover { color: var(--text-primary); background: var(--surface-hover); }
     .pane__ctl[data-active="true"] { color: #fff; background: var(--accent); border-color: transparent; }
@@ -405,22 +431,33 @@
     .ai-popup { position: absolute; inset: 0; z-index: 90; display: grid; place-items: center; background: rgba(3,5,8,0.58); backdrop-filter: blur(8px); }
     .ai-popup__panel { position: relative; }
     .ai-popup__close { position: absolute; top: 8px; right: 8px; z-index: 4; }
-    .party-tray { position: absolute; z-index: 88; width: min(430px, calc(100vw - 48px)); height: min(560px, calc(100vh - 96px)); display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; border-radius: var(--radius-md); border: 1px solid var(--border-default); background: color-mix(in srgb, var(--surface-overlay) 94%, transparent); box-shadow: var(--shadow-lg); overflow: hidden; backdrop-filter: blur(12px); }
+    .party-tray { position: absolute; z-index: 88; width: min(430px, calc(100vw - 48px)); height: min(560px, calc(100vh - 96px)); display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; border-radius: var(--radius-md); border: 1px solid var(--border-default); background: linear-gradient(180deg, color-mix(in srgb, var(--surface-overlay) 96%, transparent), color-mix(in srgb, var(--bg-base) 96%, transparent)); box-shadow: var(--shadow-lg); overflow: hidden; backdrop-filter: blur(12px); }
     .party-tray[data-minimized="true"] { height: auto; grid-template-rows: auto; }
     .party-tray__head { display: flex; align-items: center; gap: var(--space-5); min-height: 48px; padding: 0 var(--space-6); border-bottom: 1px solid var(--border-subtle); cursor: grab; user-select: none; }
     .party-tray__title { font-size: var(--text-sm); font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: var(--space-4); }
     .party-tray__meta { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--text-tertiary); }
-    .party-tray__tabs { display: flex; gap: var(--space-3); padding: var(--space-5) var(--space-6); border-bottom: 1px solid var(--border-subtle); }
-    .party-tray__tab { height: 28px; padding: 0 var(--space-5); border-radius: var(--radius-pill); border: 1px solid var(--border-default); background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--text-xs); cursor: pointer; }
-    .party-tray__tab[data-active="true"] { border-color: var(--accent-border); background: var(--accent-quiet); color: var(--text-primary); }
+    .party-tray__tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); padding: var(--space-4) var(--space-6); border-bottom: 1px solid var(--border-subtle); background: rgba(255,255,255,0.018); }
+    .party-tray__tab { height: 30px; padding: 0 var(--space-5); border-radius: var(--radius-sm); border: 1px solid transparent; background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--text-xs); font-weight: 800; cursor: pointer; }
+    .party-tray__tab[data-active="true"] { border-color: var(--accent-border); background: var(--accent-quiet); color: var(--text-primary); box-shadow: inset 0 1px 0 rgba(255,255,255,0.08); }
     .party-tray__body { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-    .party-panel { min-height: 0; overflow-y: auto; padding: var(--space-6); display: flex; flex-direction: column; gap: var(--space-5); }
-    .party-card { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6); border-radius: var(--radius-sm); background: var(--surface-card); border: 1px solid var(--border-subtle); }
-    .party-card__title { font-size: var(--text-sm); font-weight: 700; color: var(--text-primary); }
-    .party-card__copy { font-size: var(--text-xs); color: var(--text-tertiary); line-height: 1.4; }
-    .party-row { display: flex; gap: var(--space-4); align-items: center; }
-    .party-input { flex: 1; min-width: 0; height: 32px; border-radius: var(--radius-sm); border: 1px solid var(--border-default); background: var(--bg-sunken); color: var(--text-primary); padding: 0 var(--space-5); font: inherit; font-size: var(--text-sm); outline: 0; }
-    .party-chat { flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-4); }
+    .party-panel { min-height: 0; overflow-y: auto; padding: var(--space-6); display: grid; grid-template-rows: auto auto auto minmax(120px, 1fr) auto; gap: var(--space-5); }
+    .party-status-card { display: grid; gap: var(--space-4); padding: var(--space-6); border-radius: var(--radius-sm); background: radial-gradient(circle at 18% 0%, var(--accent-soft), transparent 42%), var(--surface-card); border: 1px solid var(--border-subtle); box-shadow: inset 0 1px 0 rgba(255,255,255,0.05); }
+    .party-status-card__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); min-width: 0; }
+    .party-status-card__title { display: flex; align-items: center; gap: var(--space-4); min-width: 0; color: var(--text-primary); font-size: var(--text-sm); font-weight: 800; }
+    .party-status-card__pill { flex: none; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px var(--space-4); border-radius: var(--radius-pill); border: 1px solid var(--accent-border); background: var(--accent-quiet); color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 900; }
+    .party-status-card__copy { color: var(--text-tertiary); font-size: var(--text-xs); line-height: 1.4; }
+    .party-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
+    .party-actions .pw-btn { width: 100%; padding-inline: var(--space-3); }
+    .party-join { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-4); }
+    .party-input { width: 100%; min-width: 0; height: 34px; border-radius: var(--radius-sm); border: 1px solid var(--border-default); background: rgba(3,5,8,0.72); color: var(--text-primary); padding: 0 var(--space-5); font: inherit; font-size: var(--text-sm); outline: 0; box-sizing: border-box; transition: var(--tr-control); }
+    .party-input:focus { border-color: var(--accent-border); box-shadow: var(--glow-accent); }
+    .party-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+    .party-detail { min-width: 0; padding: var(--space-4); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.025); }
+    .party-detail__label { display: block; margin-bottom: 3px; color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 900; text-transform: uppercase; letter-spacing: var(--tracking-caps); }
+    .party-detail__value { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-size: var(--text-xs); font-weight: 800; }
+    .party-chat { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: rgba(3,5,8,0.28); }
+    .party-chat__empty { height: 100%; min-height: 116px; display: grid; place-items: center; padding: var(--space-6); color: var(--text-tertiary); text-align: center; font-size: var(--text-xs); line-height: 1.45; border: 1px dashed var(--border-default); border-radius: var(--radius-sm); background: rgba(255,255,255,0.018); }
+    .party-compose { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-4); align-items: center; }
     .party-msg { max-width: 92%; align-self: flex-start; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); background: var(--surface-card); padding: var(--space-4) var(--space-5); font-size: var(--text-sm); color: var(--text-secondary); }
     .party-msg[data-me="true"] { align-self: flex-end; border-color: var(--accent-border); background: var(--accent-quiet); color: var(--text-primary); }
     .party-msg__name { display: block; margin-bottom: 2px; font-size: var(--text-2xs); color: var(--text-tertiary); font-family: var(--font-mono); }
@@ -858,6 +895,32 @@
     if (parts.length === 2) return (parts[0] * 60) + parts[1];
     return parts[0];
   }
+  function timingDriverStatusState(row) {
+    row = row || {};
+    const statusText = [
+      row.status,
+      row.state,
+      row.reason,
+      row.retired ? "RETIRED" : "",
+      row.knockedOut ? "KO" : "",
+      row.last,
+    ].map((value) => String(value || "").trim().toUpperCase()).filter(Boolean).join(" ");
+    const inactiveBadge = /\b(KO|KNOCKED\s*OUT|ELIMINATED)\b/.test(statusText)
+      ? "KO"
+      : /\bDSQ\b/.test(statusText)
+        ? "DSQ"
+        : /\bDNS\b/.test(statusText)
+          ? "DNS"
+          : /\b(DNF|RETIRED|RET|STOPPED|STOP)\b/.test(statusText)
+            ? "RETIRED"
+            : null;
+    const inactive = Boolean(inactiveBadge);
+    let lastBadge = null;
+    if (inactiveBadge) lastBadge = inactiveBadge;
+    else if (/\bPIT\s*OUT\b/.test(statusText) || row.isPitOutLap) lastBadge = "PIT OUT";
+    else if (/\bIN\s*PIT\b|\bPIT\b/.test(statusText) || row.inPit) lastBadge = "IN PIT";
+    return { inactive, lastBadge };
+  }
   function lapTone(row) {
     const last = telemetryNumber(row?.lastLapDuration) ?? lapSeconds(row?.last);
     const best = telemetryNumber(row?.bestLapDuration) ?? lapSeconds(row?.best);
@@ -1205,14 +1268,16 @@
   }
   function TimingTowerRow({ row, driver, columns, sectorCounts, selected, moving, elimination, registerRow, onClick }) {
     const setRowRef = React.useCallback((node) => registerRow?.(row.code, node), [registerRow, row.code]);
+    const statusState = timingDriverStatusState(row);
+    const lastCellClass = "timing-cell" + (statusState.lastBadge ? " timing-cell--status" : row.last && row.last === row.best ? " timing-cell--pill" : "");
     const cells = {
       driver: <span className="timing-driver"><span className="timing-driver__pos">{row.pos}</span><span className="timing-driver__code" style={{ "--driver-color": driver.color || "var(--accent)" }}>{row.code}</span></span>,
       name: <span className="timing-cell">{driver.name || row.code || "—"}</span>,
       team: <span className="timing-cell" style={{ color: driver.color || "var(--text-secondary)" }}>{driver.abbr || driver.team || "—"}</span>,
-      last: <span className={"timing-cell" + (row.last && row.last === row.best ? " timing-cell--pill" : "")}>{row.last || "—"}</span>,
-      best: <span className="timing-cell">{row.best || "—"}</span>,
-      gap: <span className="timing-cell timing-cell--gap">{row.gap || "—"}</span>,
-      interval: <span className="timing-cell">{row.interval || "—"}</span>,
+      last: <span className={lastCellClass}>{statusState.lastBadge || row.last || "—"}</span>,
+      best: <span className="timing-cell">{statusState.inactive ? "—" : row.best || "—"}</span>,
+      gap: <span className="timing-cell timing-cell--gap">{statusState.inactive ? "—" : row.gap || "—"}</span>,
+      interval: <span className="timing-cell">{statusState.inactive ? "—" : row.interval || "—"}</span>,
       s1: <MiniSectorBar segments={row.sectors?.s1} />,
       s2: <MiniSectorBar segments={row.sectors?.s2} />,
       s3: <MiniSectorBar segments={row.sectors?.s3} />,
@@ -1229,7 +1294,7 @@
       throttle: <span className="timing-cell">{formatPct(row.telemetry?.throttle)}</span>,
       brake: <span className="timing-cell">{formatPct(row.telemetry?.brake)}</span>,
     };
-    return <button ref={setRowRef} type="button" className="timing-tower__row" data-selected={selected} data-elimination={elimination ? "true" : "false"} data-moving={moving ? "true" : "false"} style={timingGridStyle(columns, sectorCounts)} onClick={onClick}>{columns.map((id) => <span key={id}>{cells[id]}</span>)}</button>;
+    return <button ref={setRowRef} type="button" className="timing-tower__row" data-selected={selected} data-elimination={elimination ? "true" : "false"} data-inactive={statusState.inactive ? "true" : "false"} data-moving={moving ? "true" : "false"} style={timingGridStyle(columns, sectorCounts)} onClick={onClick}>{columns.map((id) => <span key={id}>{cells[id]}</span>)}</button>;
   }
   function TimingTowerStatus({ tone = "loading", title, body }) {
     return (
@@ -1585,17 +1650,86 @@
     return clampVolumeLevel(value) / 100;
   }
 
+  function normalizeVideoQuality(videoQuality) {
+    return VIDEO_QUALITY_PROFILES[videoQuality] ? videoQuality : "medium";
+  }
+
+  function playbackProfileForQuality(playbackProfile, videoQuality) {
+    const key = PLAYBACK_PROFILES[playbackProfile] ? playbackProfile : "main";
+    const quality = normalizeVideoQuality(videoQuality);
+    return { ...PLAYBACK_PROFILES[key], ...(VIDEO_QUALITY_PROFILES[quality][key] || {}) };
+  }
+
+  function buildStreamPlaybackConfig(playbackProfile, targetLatency, playbackMode, videoQuality) {
+    const profile = playbackProfileForQuality(playbackProfile, videoQuality);
+    const replay = playbackMode === "replay";
+    const maxBufferLength = replay ? (profile.replayBufferGoal || Math.max(profile.bufferGoal || 12, 24)) : (profile.bufferGoal || 12);
+    const backBufferLength = replay ? Math.max(profile.backBufferLength || 8, 12) : (profile.backBufferLength || 8);
+    const restrictions = {};
+    if (Number.isFinite(profile.maxHeight)) restrictions.maxHeight = profile.maxHeight;
+    if (Number.isFinite(profile.maxBandwidth)) restrictions.maxBandwidth = profile.maxBandwidth;
+    return {
+      restrictions,
+      hasQualityCap: Object.keys(restrictions).length > 0,
+      shaka: {
+        streaming: {
+          lowLatencyMode: !replay,
+          bufferingGoal: maxBufferLength,
+          rebufferingGoal: replay ? 4 : 3,
+          bufferBehind: backBufferLength,
+        },
+        abr: Object.keys(restrictions).length ? { restrictions } : undefined,
+      },
+      hls: {
+        lowLatencyMode: !replay,
+        backBufferLength,
+        liveSyncDuration: targetLatency,
+        liveMaxLatencyDuration: Math.max(targetLatency + 15, targetLatency * 1.5),
+        maxLiveSyncPlaybackRate: 1.2,
+        maxBufferLength,
+        maxMaxBufferLength: Math.max(maxBufferLength, replay ? 60 : 30),
+        startFragPrefetch: false,
+        maxBufferHole: 0.5,
+        capLevelToPlayerSize: true,
+      },
+    };
+  }
+
+  function cappedHlsLevelIndex(levels, restrictions) {
+    if (!Array.isArray(levels) || !levels.length || !restrictions || !Object.keys(restrictions).length) return -1;
+    const allowed = levels
+      .map((level, index) => ({ level, index }))
+      .filter(({ level }) => {
+        const height = Number(level?.height || 0);
+        const bitrate = Number(level?.bitrate || level?.attrs?.BANDWIDTH || 0);
+        const heightOk = !restrictions.maxHeight || !height || height <= restrictions.maxHeight;
+        const bandwidthOk = !restrictions.maxBandwidth || !bitrate || bitrate <= restrictions.maxBandwidth;
+        return heightOk && bandwidthOk;
+      });
+    return (allowed.length ? allowed[allowed.length - 1] : { index: 0 }).index;
+  }
+
   function isPaneSurfaceClickTarget(target) {
     return !target?.closest?.("button, input, select, textarea, a, [role='button'], .pane__controls, .pane__replaybar, .sync-overlay, .pane__top, .pane__playerstatus");
   }
 
-  function PitWallStreamPlayer({ source, muted, volumeLevel = 100, onAudioFocus, onReady, onPlaybackState, sync, replaySync, onReplayToggle }) {
+  function PitWallStreamPlayer({ source, muted, volumeLevel = 100, playbackProfile = "main", videoQuality = "medium", onAudioFocus, onReady, onPlaybackState, sync, replaySync, onReplayToggle }) {
     const videoRef = React.useRef(null);
+    const replayPlaying = replaySync?.playing !== false;
+    const replayPlayingRef = React.useRef(replayPlaying);
+    replayPlayingRef.current = replayPlaying;
     const descriptor = streamDescriptor(source);
     const [status, setStatus] = React.useState("");
     const [ready, setReady] = React.useState(false);
     const manifestUrl = descriptor?.manifestUrl || "";
     const headerSignature = JSON.stringify(descriptor?.headers || {});
+    React.useEffect(() => {
+      const video = videoRef.current;
+      if (!video || replaySync?.mode !== "replay") return;
+      video.playbackRate = 1;
+      if (replaySync.playing === false) video.pause();
+      else video.play().catch(() => {});
+    }, [replaySync?.mode, replaySync?.playing]);
     React.useEffect(() => {
       const video = videoRef.current;
       if (!video || !descriptor?.manifestUrl) return undefined;
@@ -1608,6 +1742,7 @@
       const headers = descriptor.headers || {};
       const licenseServer = descriptor.licenseUrl || descriptor.drm?.licenseUrl || "";
       const licenseDebug = debugUrlParts(licenseServer);
+      const playbackConfig = buildStreamPlaybackConfig(playbackProfile, targetLatency, descriptor.playbackMode, videoQuality);
       setReady(false);
       onPlaybackState?.(false);
       const markReady = () => {
@@ -1667,6 +1802,9 @@
           licenseHost: licenseDebug.host,
           licensePathHint: licenseDebug.pathHint,
           headerNames: Object.keys(headers),
+          playbackProfile,
+          videoQuality: normalizeVideoQuality(videoQuality),
+          qualityCap: playbackConfig.hasQualityCap ? playbackConfig.restrictions : undefined,
         });
         setStatus(descriptor.manifestType === "dash" ? "Loading clean F1 TV DASH player..." : "Loading clean F1 TV stream...");
         if (descriptor.manifestType === "dash" || descriptor.drm?.licenseUrl || descriptor.licenseUrl) {
@@ -1689,7 +1827,8 @@
           await player.attach(video);
           player.configure({
             drm: licenseServer ? { servers: { "com.widevine.alpha": licenseServer } } : {},
-            streaming: { lowLatencyMode: descriptor.playbackMode !== "replay" },
+            streaming: playbackConfig.shaka.streaming,
+            ...(playbackConfig.shaka.abr ? { abr: playbackConfig.shaka.abr } : {}),
           });
           player.getNetworkingEngine()?.registerRequestFilter((type, request) => {
             request.allowCrossSiteCredentials = true;
@@ -1705,20 +1844,22 @@
             duration: Number.isFinite(video.duration) ? video.duration : null,
             readyState: video.readyState,
           });
-        } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        } else if (!playbackConfig.hasQualityCap && video.canPlayType("application/vnd.apple.mpegurl")) {
           video.src = descriptor.manifestUrl;
         } else if (window.Hls && window.Hls.isSupported()) {
           hls = new window.Hls({
-            lowLatencyMode: descriptor.playbackMode !== "replay",
-            backBufferLength: Math.max(30, targetLatency + 15),
-            liveSyncDuration: targetLatency,
-            liveMaxLatencyDuration: Math.max(targetLatency + 15, targetLatency * 1.5),
-            maxLiveSyncPlaybackRate: 1.2,
+            ...playbackConfig.hls,
             xhrSetup: (xhr) => {
               xhr.withCredentials = true;
               Object.entries(headers).forEach(([key, value]) => xhr.setRequestHeader(key, value));
             },
           });
+          const applyHlsCap = () => {
+            const cappedLevel = cappedHlsLevelIndex(hls.levels, playbackConfig.restrictions);
+            if (cappedLevel >= 0) hls.autoLevelCapping = cappedLevel;
+          };
+          hls.on(window.Hls.Events.MANIFEST_PARSED, applyHlsCap);
+          hls.on(window.Hls.Events.LEVELS_UPDATED, applyHlsCap);
           hls.on(window.Hls.Events.ERROR, (_event, data) => {
             logPitWallDebug("player.hls-error", {
               feedId: descriptor.feedId || descriptor.id || "",
@@ -1736,7 +1877,8 @@
         if (!cancelled) {
           setStatus("Buffering F1 TV stream...");
           if (video.readyState >= 2) markReady();
-          if (replaySync?.playing !== false) video.play().catch(() => {});
+          if (replayPlayingRef.current) video.play().catch(() => {});
+          else video.pause();
           timer = setInterval(reportSync, 750);
         }
       }
@@ -1769,7 +1911,7 @@
         video.removeAttribute("src");
         video.load();
       };
-    }, [manifestUrl, descriptor?.licenseUrl, descriptor?.drm?.licenseUrl, headerSignature, sync?.targetLatency]);
+    }, [manifestUrl, descriptor?.licenseUrl, descriptor?.drm?.licenseUrl, headerSignature, playbackProfile, videoQuality, sync?.targetLatency]);
     React.useEffect(() => {
       if (!videoRef.current) return;
       videoRef.current.volume = mediaVolume(volumeLevel);
@@ -2006,7 +2148,7 @@
   function BroadcastPane({ focus, streamUrl, audioActive, audioVolume, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand, visible = true, style, zone,
     hasCurrentLiveSession, replayControls, sessionLibrary, onLoadPastSession, onConnectF1Tv,
     replaySync, onReplayToggle, onReplaySeek, onSurfaceToggle, onSyncAll, onPlayerReady, streamStatus, resolving,
-    syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset, timingRows, sessionKind }) {
+    syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset, timingRows, sessionKind, videoQuality }) {
     const paneRef = React.useRef(null);
     const [tickerCanFitTop15, setTickerCanFitTop15] = React.useState(false);
     const [tickerRowHeight, setTickerRowHeight] = React.useState(46);
@@ -2043,7 +2185,7 @@
         }}>
         <div className="pane__feed" />
         <div className="pane__bcwash" />
-        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle}
+        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} videoQuality={videoQuality} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle}
           onReady={(video) => onPlayerReady?.(syncKey, video)} sync={{ targetLatency: syncTarget, onMetrics: (metrics) => onSyncMetrics?.(syncKey, metrics) }} />}
         <div className="pane__controls">
           <VolumeControl active={audioActive} value={audioVolume} onFocus={onAudioFocus} onChange={onAudioVolumeChange} />
@@ -2119,7 +2261,7 @@
   function OnboardPane({ feed, code, focus, telemetry, streamUrl, audioActive, audioVolume, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand,
     visible = true, style, zone, driverOptions = [], onDriverChange,
     replaySync, onReplayToggle, onSurfaceToggle, onPlayerReady, syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset,
-    timingRows = [], sessionKind = "" }) {
+    timingRows = [], sessionKind = "", videoQuality }) {
     const [telemetryOn, setTelemetryOn] = React.useState(Boolean(telemetry));
     const [streamReady, setStreamReady] = React.useState(false);
     const descriptor = streamDescriptor(streamUrl);
@@ -2139,7 +2281,7 @@
         }}>
         <div className="pane__feed" />
         <div className="pane__scan" />
-        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle}
+        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} playbackProfile="onboard" videoQuality={videoQuality} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle}
           onReady={(video) => onPlayerReady?.(syncKey, video)} onPlaybackState={setStreamReady}
           sync={{ targetLatency: syncTarget, onMetrics: (metrics) => onSyncMetrics?.(syncKey, metrics) }} />}
         <div className="pane__controls">
@@ -2295,6 +2437,7 @@
     const [streamSources, setStreamSources] = React.useState(readStreamSources);
     const layout = LAYOUTS[preset];
     const telemetryDefault = livePrefs.telemetryDefault !== false;
+    const videoQuality = normalizeVideoQuality(profile.videoQuality || livePrefs.videoQuality);
     const currentSeason = String(D.seasonSummary?.season || new Date().getFullYear());
     const selectableSeasons = Array.from(new Set([currentSeason, String(new Date().getFullYear()), String(new Date().getFullYear() - 1), String(new Date().getFullYear() - 2), "2024", "2023", "2022", "2021", "2020", "2019", "2018"])).filter(Boolean);
     const f1TvSessionLibrary = f1TvLibrary || localF1TvLibrary();
@@ -3220,15 +3363,9 @@
     });
     function resolvedOnboardFeedForCode(code) {
       const feeds = resolvedF1TvContent?.feeds || [];
+      if (!code) return null;
       const exact = feeds.find((feed) => feed.driverCode === code || feed.feedId === code);
-      if (exact) return exact;
-      const worldIndex = Math.max(0, feeds.indexOf(preferredMainF1TvFeed(feeds)));
-      const onboardFeeds = feeds.filter((_feed, index) => index !== worldIndex);
-      if (!onboardFeeds.length || !code) return null;
-      const codeOrder = Array.from(new Set(timingRows.map((row) => row.code).concat(fallbackCodes))).filter(Boolean);
-      const feedIndex = Math.max(0, codeOrder.indexOf(code));
-      const fallbackFeed = onboardFeeds[feedIndex % onboardFeeds.length];
-      return fallbackFeed ? { ...fallbackFeed, feedId: code, driverCode: code, kind: "onboard", label: `${code} onboard` } : null;
+      return exact || null;
     }
     function resolvedFeedForKey(key, code) {
       const feeds = resolvedF1TvContent?.feeds || [];
@@ -3372,6 +3509,13 @@
       const timer = setInterval(() => {
         const master = playerRefs.current[replaySync.masterKey || "WORLD"];
         if (!master) return;
+        if (replaySync.playing === false) {
+          Object.values(playerRefs.current).forEach((video) => {
+            video.playbackRate = 1;
+            video.pause();
+          });
+          return;
+        }
         const masterTime = master.currentTime || 0;
         syncReplayPlayers(masterTime);
         setReplaySync((state) => {
@@ -3381,7 +3525,7 @@
         });
       }, REPLAY_TIMING_POLL_INTERVAL_MS);
       return () => clearInterval(timer);
-    }, [replaySync.mode, replaySync.masterKey]);
+    }, [replaySync.mode, replaySync.masterKey, replaySync.playing]);
     React.useEffect(() => {
       if (!autopairs || !battlePair?.a || !battlePair?.b) return;
       if (layout === "focus") return;
@@ -3466,23 +3610,39 @@
     function renderPartyPanel() {
       const identityName = partyIdentity?.displayName || profile.name || "Apexline fan";
       const inviteCode = partyRoom?.code || "";
+      const memberCount = Math.max(1, partyMembers.length || (partyRoom ? 1 : 0));
+      const roomLabel = inviteCode || partyIdentity?.friendCode || "No room";
       return (
         <div className="party-panel">
-          <div className="party-card">
-            <div className="party-card__title">Watch Party</div>
-            <div className="party-card__copy">{partyStatus}</div>
-            <div className="party-row">
-              <Button variant="primary" size="sm" onClick={createWatchParty} iconLeft={<Icon name="radio" size={14} />}>Create</Button>
-              <Button variant="secondary" size="sm" onClick={publishHostSync} disabled={!partyRoom || partySyncRole !== "host"} iconLeft={<Icon name="timer" size={14} />}>Resync</Button>
-              <Button variant="ghost" size="sm" onClick={() => { window.PW_SOCIAL?.leaveRoom?.(); setPartyRoom(null); setPartyMembers([]); }}>Leave</Button>
+          <div className="party-status-card">
+            <div className="party-status-card__top">
+              <div className="party-status-card__title"><Icon name="radio" size={14} /> Watch Party</div>
+              <div className="party-status-card__pill">{roomLabel}</div>
             </div>
-            <div className="party-row">
-              <input className="party-input" value={partyJoinCode} placeholder="Room code" onChange={(e) => setPartyJoinCode(e.target.value.toUpperCase())} onKeyDown={(e) => { if (e.key === "Enter") joinWatchParty(); }} />
-              <Button variant="secondary" size="sm" onClick={joinWatchParty}>Join</Button>
+            <div className="party-status-card__copy">{partyStatus}</div>
+          </div>
+          <div className="party-actions">
+            <Button className="party-action" variant="primary" size="sm" onClick={createWatchParty} iconLeft={<Icon name="radio" size={14} />}>Create</Button>
+            <Button className="party-action" variant="secondary" size="sm" onClick={publishHostSync} disabled={!partyRoom || partySyncRole !== "host"} iconLeft={<Icon name="timer" size={14} />}>Resync</Button>
+            <Button className="party-action" variant="ghost" size="sm" onClick={() => { window.PW_SOCIAL?.leaveRoom?.(); setPartyRoom(null); setPartyMembers([]); }} disabled={!partyRoom}>Leave</Button>
+          </div>
+          <div className="party-join">
+            <input className="party-input" value={partyJoinCode} placeholder="Enter room code" aria-label="Room code" onChange={(e) => setPartyJoinCode(e.target.value.toUpperCase())} onKeyDown={(e) => { if (e.key === "Enter" && partyJoinCode.trim()) joinWatchParty(); }} />
+            <Button variant="secondary" size="sm" onClick={joinWatchParty} disabled={!partyJoinCode.trim()}>Join</Button>
+          </div>
+          <div className="party-details">
+            <div className="party-detail">
+              <span className="party-detail__label">You</span>
+              <span className="party-detail__value">{identityName}</span>
             </div>
-            {inviteCode && <div className="party-card__copy">Invite code: <b>{inviteCode}</b></div>}
-            <div className="party-card__copy">You: {identityName} · Friend code: {partyIdentity?.friendCode || "pending"}</div>
-            <div className="party-card__copy">Role: {partySyncRole === "host" ? "Host sync" : "Guest sync"} · Members: {Math.max(1, partyMembers.length || (partyRoom ? 1 : 0))}</div>
+            <div className="party-detail">
+              <span className="party-detail__label">Role</span>
+              <span className="party-detail__value">{partySyncRole === "host" ? "Host sync" : "Guest sync"}</span>
+            </div>
+            <div className="party-detail">
+              <span className="party-detail__label">Members</span>
+              <span className="party-detail__value">{memberCount}</span>
+            </div>
           </div>
           <div className="party-chat">
             {partyMessages.length ? partyMessages.map((message) => (
@@ -3490,11 +3650,11 @@
                 <span className="party-msg__name">{message.name || "Apexline fan"}</span>
                 {message.text}
               </div>
-            )) : <div className="party-card__copy">Party chat will appear here once the room is connected.</div>}
+            )) : <div className="party-chat__empty">Chat will appear here once the room is connected.</div>}
           </div>
-          <div className="party-row">
-            <input className="party-input" value={partyDraft} placeholder="Chat with the party..." onChange={(e) => setPartyDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendPartyChat(); }} />
-            <IconButton variant="accent" label="Send party chat" onClick={sendPartyChat}><Icon name="chevronRight" size={16} /></IconButton>
+          <div className="party-compose">
+            <input className="party-input" value={partyDraft} placeholder="Chat with the party..." onChange={(e) => setPartyDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && partyRoom && partyDraft.trim()) sendPartyChat(); }} />
+            <IconButton variant="accent" label="Send party chat" onClick={sendPartyChat} disabled={!partyRoom || !partyDraft.trim()}><Icon name="chevronRight" size={16} /></IconButton>
           </div>
         </div>
       );
@@ -3622,7 +3782,7 @@
                               <div className="session-library__when"><Icon name="calendar" size={13} /> {sessionScheduleText(session)}</div>
                             </div>
                             <Button variant={live ? "primary" : "secondary"} onClick={() => loadLibrarySession(selectedF1TvRace, session)} disabled={f1TvResolving || !available} iconLeft={<Icon name="play" size={14} />}>
-                              {!available ? "Not started" : f1TvResolving && active ? "Resolving..." : live ? "Watch live" : "Watch replay"}
+                              {!available ? "Not started" : f1TvResolving && active ? "Loading..." : live ? "Watch live" : "Watch replay"}
                             </Button>
                           </div>
                         );
@@ -3802,6 +3962,7 @@
                     onSyncReset={resetSyncTarget}
                     timingRows={timingRows}
                     sessionKind={activeSessionKind}
+                    videoQuality={videoQuality}
                     expanded={expandedPane === paneKey}
                     onExpand={() => setExpandedPane(expandedPane === paneKey ? null : paneKey)} />
                 );

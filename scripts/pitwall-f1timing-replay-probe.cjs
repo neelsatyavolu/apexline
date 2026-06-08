@@ -45,6 +45,8 @@ const parser = vm.runInNewContext(`(() => {
     "f1TimingDurationSeconds",
     "formatF1TimingDuration",
     "f1TimingSessionStartSeconds",
+    "f1TimingTargetUtcMs",
+    "f1TimingExplicitQualifyingPart",
     "f1TimingQualifyingPart",
     "parseF1TimingLapCount",
     "fillF1TimingQualifyingDeltas",
@@ -116,11 +118,12 @@ async function optionalText(file) {
 
 (async () => {
   assert.ok(Number.isFinite(elapsedSeconds) && elapsedSeconds >= 0, "--elapsed must be a positive number");
-  const [driverListText, timingText, appText, clockText, statusText, trackStatusText, raceControlText, lapCountText, weatherText, carText] = await Promise.all([
+  const [driverListText, timingText, appText, clockText, sessionDataText, statusText, trackStatusText, raceControlText, lapCountText, weatherText, carText] = await Promise.all([
     optionalText("DriverList.jsonStream"),
     requestText(new URL("TimingData.jsonStream", baseUrl).href),
     optionalText("TimingAppData.jsonStream"),
     optionalText("ExtrapolatedClock.jsonStream"),
+    optionalText("SessionData.jsonStream"),
     optionalText("SessionStatus.jsonStream"),
     optionalText("TrackStatus.jsonStream"),
     optionalText("RaceControlMessages.jsonStream"),
@@ -133,6 +136,7 @@ async function optionalText(file) {
     timingEntries: parser.parseF1TimingJsonStream(timingText),
     timingAppEntries: appText ? parser.parseF1TimingJsonStream(appText) : [],
     clockEntries: clockText ? parser.parseF1TimingJsonStream(clockText) : [],
+    sessionDataEntries: sessionDataText ? parser.parseF1TimingJsonStream(sessionDataText) : [],
     sessionStatusEntries: statusText ? parser.parseF1TimingJsonStream(statusText) : [],
     trackStatusEntries: trackStatusText ? parser.parseF1TimingJsonStream(trackStatusText) : [],
     raceControlEntries: raceControlText ? parser.parseF1TimingJsonStream(raceControlText) : [],

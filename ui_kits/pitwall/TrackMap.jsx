@@ -310,7 +310,7 @@
     const nameForTurn = (num) => Array.isArray(turnNames) ? turnNames[num - 1] : turnNames[num];
     const turns = cornersRaw.map((c, ci) => {
       const o = outwardAt(c.apex);
-      return { n: ci + 1, name: nameForTurn(ci + 1) || "", x: pts[c.apex][0], y: pts[c.apex][1], lx: pts[c.apex][0] + o[0] * LABEL_GAP, ly: pts[c.apex][1] + o[1] * LABEL_GAP };
+      return { n: ci + 1, name: nameForTurn(ci + 1) || "", x: pts[c.apex][0], y: pts[c.apex][1], o, lx: pts[c.apex][0] + o[0] * LABEL_GAP, ly: pts[c.apex][1] + o[1] * LABEL_GAP, showName: false, nameX: 0, nameY: 0, nameHalfW: 0 };
     });
 
     // ---- sectors: thirds of the lap from S/F ----
@@ -331,11 +331,81 @@
     // ---- start / finish ----
     const startNode = { pt: pts[sfIndex], out: outwardAt(sfIndex) };
 
+    // ---- corner-name placement: collision-aware, outward-biased -----------
+    // Each name is laid out one at a time. It tries a ring of candidate boxes
+    // around its badge — most-outward direction first — and takes the first
+    // that clears every badge, every fixed marker (START / sector / DRS), the
+    // road itself, and every name already placed. Consecutive turns sharing a
+    // name (chicanes) are labelled once across the run. If nothing fits, the
+    // name is dropped and only the numbered badge remains.
+    const NAME_H = 14, BADGE_R = 11;
+    const nameHalfW = (s) => Math.max(11, (s.length * 5.6 + 8) / 2);
+    const rectsHit = (a, b, m) => Math.abs(a.x - b.x) < a.hw + b.hw + m && Math.abs(a.y - b.y) < a.hh + b.hh + m;
+    const ptHit = (px, py, r, m) => Math.abs(px - r.x) < r.hw + m && Math.abs(py - r.y) < r.hh + m;
+
+    const trackSamples = [];
+    { const step = Math.max(1, Math.floor(n / 200)); for (let i = 0; i < n; i += step) trackSamples.push(pts[i]); }
+
+    const badgeRects = turns.map((t) => ({ x: t.lx, y: t.ly, hw: BADGE_R + 2, hh: BADGE_R + 2 }));
+    const fixedRects = [];
+    if (startNode) fixedRects.push({ x: startNode.pt[0] + startNode.out[0] * 34, y: startNode.pt[1] + startNode.out[1] * 34, hw: 27, hh: 13 });
+    sectors.forEach((s) => fixedRects.push({ x: s.x + s.out[0] * 24, y: s.y + s.out[1] * 24, hw: 13, hh: 10 }));
+    drsLabels.forEach((dl) => fixedRects.push({ x: dl.x, y: dl.y, hw: 20, hh: 10 }));
+
+    const DIRS = [[0, 1], [0.71, 0.71], [-0.71, 0.71], [1, 0], [-1, 0], [0.71, -0.71], [-0.71, -0.71], [0, -1]];
+    const placedNames = [];
+
+    let gi = 0;
+    while (gi < turns.length) {
+      const nm = turns[gi].name;
+      if (!nm) { gi++; continue; }
+      let gj = gi;
+      while (gj + 1 < turns.length && turns[gj + 1].name === nm) gj++;
+      const members = turns.slice(gi, gj + 1);
+      let ax = 0, ay = 0, ox = 0, oy = 0;
+      members.forEach((m) => { ax += m.lx; ay += m.ly; ox += m.o[0]; oy += m.o[1]; });
+      ax /= members.length; ay /= members.length;
+      const om = Math.hypot(ox, oy) || 1; ox /= om; oy /= om;
+      const hw = nameHalfW(nm), hh = NAME_H / 2;
+
+      const cands = [];
+      for (const dvec of DIRS) {
+        const align = dvec[0] * ox + dvec[1] * oy;
+        for (const ext of [0, 9, 20]) {
+          const reach = BADGE_R + 6 + ext + Math.abs(dvec[0]) * hw + Math.abs(dvec[1]) * hh;
+          cands.push({ box: { x: ax + dvec[0] * reach, y: ay + dvec[1] * reach, hw, hh }, align, ext });
+        }
+      }
+      cands.sort((a, b) => (b.align - a.align) || (a.ext - b.ext));
+
+      let chosen = null;
+      for (const c of cands) {
+        let bad = false;
+        for (const r of badgeRects) { if (rectsHit(c.box, r, 1)) { bad = true; break; } }
+        if (!bad) for (const r of fixedRects) { if (rectsHit(c.box, r, 1)) { bad = true; break; } }
+        if (!bad) for (const r of placedNames) { if (rectsHit(c.box, r, 2)) { bad = true; break; } }
+        if (!bad) for (const s of trackSamples) { if (ptHit(s[0], s[1], c.box, 2)) { bad = true; break; } }
+        if (!bad) { chosen = c.box; break; }
+      }
+      members.forEach((m) => { m.showName = false; });
+      if (chosen) {
+        placedNames.push(chosen);
+        members[0].showName = true;
+        members[0].nameX = chosen.x;
+        members[0].nameY = chosen.y;
+        members[0].nameHalfW = hw;
+      }
+      gi = gj + 1;
+    }
+
     // ---- viewBox fit (track + outward labels) ----
     let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
     const acc = (x, y) => { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); };
     pts.forEach((p) => acc(p[0], p[1]));
-    turns.forEach((t) => { acc(t.lx, t.ly); acc(t.lx, t.ly + 22); });
+    turns.forEach((t) => {
+      acc(t.lx - BADGE_R, t.ly - BADGE_R); acc(t.lx + BADGE_R, t.ly + BADGE_R);
+      if (t.showName) { acc(t.nameX - t.nameHalfW, t.nameY - NAME_H / 2); acc(t.nameX + t.nameHalfW, t.nameY + NAME_H / 2); }
+    });
     const pad = 34;
     const vb = `${(minX - pad).toFixed(1)} ${(minY - pad).toFixed(1)} ${(maxX - minX + pad * 2).toFixed(1)} ${(maxY - minY + pad * 2).toFixed(1)}`;
 
@@ -453,8 +523,10 @@
               <g transform={`translate(${t.lx}, ${t.ly})`}>
                 <circle r="11" className="tm-turn__badge" />
                 <text x="0" y="1" className="tm-turn__num" textAnchor="middle" dominantBaseline="middle">{t.n}</text>
-                {showNames && t.name && <text x="0" y="22" className="tm-turn__name" textAnchor="middle" dominantBaseline="middle">{t.name}</text>}
               </g>
+              {showNames && t.showName && t.name && (
+                <text x={t.nameX} y={t.nameY} className="tm-turn__name" textAnchor="middle" dominantBaseline="middle">{t.name}</text>
+              )}
             </g>
           );
         })}

@@ -5,7 +5,8 @@
     TyreBadge, DriverTag, GapDelta, Switch, Avatar } = NS;
   const D = window.PW_DATA;
   const LIVE_TIMING_POLL_INTERVAL_MS = 500;
-  const REPLAY_TIMING_POLL_INTERVAL_MS = 250;
+  const REPLAY_TIMING_POLL_INTERVAL_MS = 100;
+  const REPLAY_TIMING_REQUEST_TIMEOUT_MS = 15000;
   const CLOCK_TICK_INTERVAL_MS = 250;
   const TIMING_ROW_MOTION_MS = 280;
   const PLAYBACK_PROFILES = {
@@ -75,6 +76,8 @@
     .live__body[data-layout="focus"] .live__center { grid-column: 1; grid-row: 1; }
     .live__timing { position: relative; display: flex; flex-direction: column; background: var(--bg-base); border-right: 1px solid var(--border-subtle); min-height: 0; min-width: 0; container-type: inline-size; }
     .live__timinghd { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--space-5); padding: var(--space-6) var(--space-7); border-bottom: 1px solid var(--border-subtle); }
+    .live__timinghd--loading { grid-template-columns: 1fr; justify-items: center; }
+    .live__timingloadingtitle { color: var(--text-strong); font-family: var(--font-display); font-size: 15px; font-weight: 800; letter-spacing: 0; line-height: 1; }
     .live__timingtitle { display: flex; align-items: center; gap: var(--space-5); min-width: 0; }
     .live__timingclockgroup { justify-self: center; display: inline-flex; align-items: baseline; gap: var(--space-4); min-width: 0; white-space: nowrap; }
     .live__timinglap { color: #f3f5f9; font-family: var(--font-mono); font-size: 17px; font-weight: 800; line-height: 0.95; letter-spacing: 0; font-variant-numeric: tabular-nums; }
@@ -123,17 +126,18 @@
     .timing-cell--status { display: inline-flex; justify-content: center; min-width: 58px; padding: 4px 7px; border-radius: var(--radius-pill); background: rgba(235,51,64,0.95); color: #fff; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12); }
     .timing-cell--gap { color: var(--text-primary); }
     .mini-sector { display: inline-flex; align-items: center; gap: 1.5px; width: fit-content; min-width: 0; max-width: 100%; overflow: hidden; }
-    .mini-sector__seg { width: 3px; height: 15px; border-radius: var(--radius-pill); background: rgba(255,255,255,0.12); transition-property: background-color, opacity; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
+    .mini-sector__seg { width: 3px; height: 15px; border-radius: var(--radius-pill); background: rgba(255,255,255,0.24); transition-property: background-color, opacity; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
     .mini-sector__seg[data-tone="yellow"] { background: #ffd83d; }
     .mini-sector__seg[data-tone="green"] { background: #4eba57; }
     .mini-sector__seg[data-tone="purple"] { background: #b640d8; }
+    .mini-sector__seg[data-tone="blue"] { background: #4c9bff; }
     .tyre-dot { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--tyre-ring, var(--border-default)); color: var(--text-primary); font-family: var(--font-display); font-weight: 900; font-size: var(--text-sm); background: #070a0f; text-transform: uppercase; transition-property: border-color, color; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
 
     /* Center column: grid + insights */
     .live__center { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
     .live__grid { position: relative; flex: 1; display: grid; gap: 6px; padding: 6px; min-height: 0; background: var(--bg-app); }
     .live__grid[data-layout="focus"] { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: minmax(150px, var(--focus-onboard-h, 220px)) minmax(260px, 1fr); grid-template-areas: "ob1 ob2 ob3" "world world world"; }
-    .live__grid[data-layout="focus"] .pane:not(.pane--bc) .pane__video { object-fit: contain; object-position: center top; }
+    .live__grid[data-layout="focus"] .pane:not(.pane--bc) .pane__video { object-fit: contain; object-position: center bottom; }
     .live__grid[data-layout="focus"] .pane--bc .pane__video { object-position: center bottom; }
     .live__grid[data-layout="battle"] { grid-template-columns: minmax(0, var(--battle-a, 50%)) minmax(0, var(--battle-b, 50%)); grid-template-rows: 1fr; }
     .live__grid[data-layout="quad"] { grid-template-columns: minmax(0, var(--quad-col, 50%)) minmax(0, 1fr); grid-template-rows: minmax(0, var(--quad-row, 50%)) minmax(0, 1fr); }
@@ -196,54 +200,55 @@
     .pane__switching b { font-family: var(--font-display); color: var(--text-primary); letter-spacing: 0.04em; }
     @keyframes pw-stream-warm { from { transform: translateX(0) skewX(-18deg); opacity: 0; } 20% { opacity: 0.58; } to { transform: translateX(390%) skewX(-18deg); opacity: 0; } }
     .pane__car { font-family: var(--font-display); font-weight: 800; font-size: 62px; color: rgba(255,255,255,0.05); letter-spacing: -0.02em; }
-    .pane:not(.pane--bc) .pane__telemetry { margin-top: auto; }
-    .pane__telemetry { position: relative; z-index: 2; padding: 0 var(--space-6) var(--space-6); background: linear-gradient(0deg, rgba(6,8,12,0.78), rgba(6,8,12,0.38) 58%, transparent); }
-    .pane__telemetry--broadcast { display: flex; justify-content: center; overflow: hidden; }
-    .pane__tele-panel { --tele-scale: 1.2; --tele-preferred-width: 560px; display: flex; align-items: stretch; flex: 0 0 auto; width: min(var(--tele-preferred-width), calc(100% / var(--tele-scale))); min-width: min(max-content, calc(100% / var(--tele-scale))); max-width: calc(100% / var(--tele-scale)); overflow: hidden; transform: scale(var(--tele-scale)); transform-origin: bottom center; border: 1px solid var(--border-default); border-top-color: var(--border-strong); border-radius: var(--radius-md); background: linear-gradient(180deg, rgba(15,19,27,0.86), rgba(8,11,17,0.93)); box-shadow: var(--shadow-lg), var(--inset-top-light); backdrop-filter: blur(14px); }
-    .pane__tele-id { display: flex; align-items: center; gap: var(--space-5); padding: 0 var(--space-6) 0 0; background: linear-gradient(90deg, color-mix(in srgb, var(--tele-team, var(--accent)) 90%, #000), color-mix(in srgb, var(--tele-team, var(--accent)) 58%, #000)); flex: none; }
-    .pane__tele-idpos { align-self: stretch; display: grid; place-items: center; min-width: 46px; padding: 0 var(--space-5); background: rgba(0,0,0,0.22); color: #fff; font-family: var(--font-mono); font-size: 21px; font-weight: 800; font-variant-numeric: tabular-nums; }
-    .pane__tele-code { color: #fff; font-family: var(--font-display); font-size: 23px; font-weight: 800; letter-spacing: 0.02em; }
-    .pane__tele-seg { display: flex; align-items: center; gap: var(--space-7); min-width: 0; padding: 10px var(--space-7); border-left: 1px solid var(--line-2); }
-    .pane__tele-metric, .pane__tele-lap { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
-    .pane__tele-metric--gear { align-items: center; text-align: center; }
-    .pane__tele-metric b { color: var(--text-strong); font-family: var(--font-mono); font-size: 28px; font-weight: 600; line-height: 0.95; font-variant-numeric: tabular-nums; transition: color var(--dur-fast) var(--ease-standard); }
-    .pane__tele-k { color: var(--text-tertiary); font-size: 9px; font-weight: 800; letter-spacing: var(--tracking-caps); text-transform: uppercase; white-space: nowrap; }
-    .pane__tele-bars { display: flex; align-self: stretch; gap: 4px; padding: 4px 0; }
-    .pane__tele-vbar { display: flex; align-items: flex-end; width: 6px; min-height: 34px; overflow: hidden; border-radius: 3px; background: var(--ink-700); }
-    .pane__tele-vbar i { display: block; width: 100%; border-radius: 3px; transition: height 90ms linear, background-color 90ms linear; }
-    .pane__tele-lap { min-width: 72px; }
-    .pane__tele-lap b { color: var(--text-strong); font-family: var(--font-mono); font-size: 16px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; transition: color var(--dur-fast) var(--ease-standard); }
-    .pane__tele-lap b[data-tone="personal"], .pane__tele-lap b[data-tone="drs"] { color: var(--t-personal); }
-    .pane__tele-lap b[data-tone="fastest"] { color: var(--t-fastest); }
-    .pane__tele-stack { display: grid; gap: 5px; min-width: 0; }
-    .pane__tele-lap.pane__tele-row { display: grid; grid-template-columns: 30px minmax(0, max-content); align-items: center; column-gap: 7px; min-width: max-content; }
-    .pane__tele-lap.pane__tele-row b { white-space: nowrap; }
-    .pane__tele-seg--sectors { gap: 5px; }
-    .pane__tele-seg--gaps { flex-shrink: 0; min-width: 74px; }
-    .pane__tele-sector { display: flex; align-items: center; gap: 3px; min-width: 0; }
-    .pane__tele-sector .mini-sector { width: auto; min-width: 0; max-width: none; gap: 1px; }
-    .pane__tele-sector .mini-sector__seg { width: 2px; height: 12px; }
-    .live__grid[data-layout="focus"] .pane__telemetry { padding: 0 2px 3px; }
-    .live__grid[data-layout="focus"] .pane__tele-panel { border-radius: var(--radius-sm); }
-    .live__grid[data-layout="focus"] .pane__tele-id { gap: var(--space-3); padding-right: var(--space-3); }
-    .live__grid[data-layout="focus"] .pane__tele-idpos { min-width: 28px; padding: 0 var(--space-3); font-size: 14px; }
-    .live__grid[data-layout="focus"] .pane__tele-code { font-size: 14px; }
-    .live__grid[data-layout="focus"] .pane__tele-seg { flex: 1 1 0; gap: 3px; padding: 4px 4px; }
-    .live__grid[data-layout="focus"] .pane__tele-seg--drive { flex: 0 0 auto; }
-    .live__grid[data-layout="focus"] .pane__tele-seg--laps { flex: 0 1 auto; }
-    .live__grid[data-layout="focus"] .pane__tele-seg--sectors { flex: 0 1 auto; gap: 4px; margin-left: 5px; }
-    .live__grid[data-layout="focus"] .pane__tele-seg--gaps { flex: 0 0 auto; justify-content: flex-start; }
-    .live__grid[data-layout="focus"] .pane__tele-metric b { font-size: 16px; }
-    .live__grid[data-layout="focus"] .pane__tele-metric { flex: 0 0 auto; }
-    .live__grid[data-layout="focus"] .pane__tele-k { font-size: 7px; }
-    .live__grid[data-layout="focus"] .pane__tele-bars { gap: 3px; }
-    .live__grid[data-layout="focus"] .pane__tele-vbar { width: 4px; min-height: 20px; }
-    .live__grid[data-layout="focus"] .pane__tele-lap { min-width: 0; flex: 1 1 0; }
-    .live__grid[data-layout="focus"] .pane__tele-lap b { font-size: 11px; }
-    .live__grid[data-layout="focus"] .pane__tele-stack { gap: 4px; }
-    .live__grid[data-layout="focus"] .pane__tele-lap.pane__tele-row { grid-template-columns: 24px minmax(0, max-content); column-gap: 5px; }
-    .live__grid[data-layout="focus"] .pane__tele-sector .mini-sector { width: auto; min-width: 0; max-width: none; }
-    .live__grid[data-layout="focus"] .pane__tele-sector .mini-sector__seg { width: 2px; height: 10px; }
+    /* ===== Onboard live stats — Multiviewer Bar (variant E) ================
+       Full-bleed timing strip pinned to the onboard's top edge. Every
+       dimension is a multiple of --u, a single scaling unit: --u = min(1cqw,
+       CAP). Below CAP*100px wide it equals 1cqw, so the whole bar scales down
+       with the onboard; past the threshold --u freezes at CAP, content stops
+       growing, and the flexible .obE__spacer absorbs the slack — opening empty
+       space between the timing block and the mini-sectors. The .pane ancestor
+       supplies the container-query context (container-type: inline-size). */
+    .pane:not(.pane--bc) .pane__obar { position: absolute; top: 0; left: 0; right: 0; z-index: 3; pointer-events: none; font-family: var(--font-sans); }
+    .pane[data-telemetry="true"]:not(.pane--bc) .pane__tag { display: none; }
+    .obE { --u: min(0.92cqw, 7.6px); }
+    .obE__bar { position: relative; display: flex; align-items: stretch; width: 100%; gap: calc(var(--u) * 1.6); padding: calc(var(--u) * 1.1) calc(var(--u) * 1.4) calc(var(--u) * 1.5); box-sizing: border-box; overflow: hidden; background: linear-gradient(180deg, rgba(10,13,19,0.93), rgba(6,8,13,0.97)); border-bottom: max(1px, calc(var(--u) * 0.12)) solid var(--line-2); box-shadow: 0 calc(var(--u) * 0.6) calc(var(--u) * 2.4) rgba(0,0,0,0.5); backdrop-filter: blur(calc(var(--u) * 1.4)); font-variant-numeric: tabular-nums; }
+    .obE__div { width: max(1px, calc(var(--u) * 0.1)); align-self: stretch; margin: calc(var(--u) * 0.2) 0; background: var(--line-2); flex: none; }
+    .obE__id { display: flex; align-items: stretch; border-radius: calc(var(--u) * 0.7); overflow: hidden; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); flex: none; }
+    .obE__pos { font-family: var(--font-mono); font-weight: 700; color: #fff; background: var(--c, var(--accent)); display: grid; place-items: center; padding: 0 calc(var(--u) * 1.5); font-size: calc(var(--u) * 3.4); line-height: 1; min-width: calc(var(--u) * 5); font-variant-numeric: tabular-nums; }
+    .obE__code { font-family: var(--font-display); font-weight: 800; color: #fff; background: color-mix(in srgb, var(--c, var(--accent)) 70%, #000); box-shadow: inset calc(var(--u) * 0.12) 0 0 rgba(0,0,0,0.28); display: grid; place-items: center; padding: 0 calc(var(--u) * 1.5); font-size: calc(var(--u) * 3.2); letter-spacing: 0.01em; }
+    .obE__drive { display: flex; align-items: center; gap: calc(var(--u) * 1.2); flex: none; }
+    .obE__gear { position: relative; width: calc(var(--u) * 5.2); height: calc(var(--u) * 5.2); flex: none; display: grid; place-items: center; }
+    .obE__gear::before { content: ""; position: absolute; inset: 0; border-radius: 50%; border: calc(var(--u) * 0.45) solid rgba(255,255,255,0.12); border-top-color: rgba(255,255,255,0.28); border-right-color: rgba(255,255,255,0.22); }
+    .obE__gearChar { font-family: var(--font-display); font-weight: 800; font-size: calc(var(--u) * 2.9); color: rgba(255,255,255,0.92); line-height: 1; }
+    .obE__speed { display: flex; flex-direction: column; align-items: flex-start; line-height: 0.9; }
+    .obE__speed b { font-family: var(--font-mono); font-weight: 700; font-size: calc(var(--u) * 4.4); color: #fff; letter-spacing: -0.01em; }
+    .obE__speed span { font-size: calc(var(--u) * 1.15); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); margin-top: calc(var(--u) * 0.3); }
+    .obE__stack { display: flex; flex-direction: column; justify-content: center; gap: calc(var(--u) * 0.55); flex: none; }
+    .obE__line { display: flex; align-items: baseline; gap: calc(var(--u) * 0.9); }
+    .obE__lk { font-size: calc(var(--u) * 1.15); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); width: calc(var(--u) * 3.4); flex: none; }
+    .obE__lv { font-family: var(--font-mono); font-weight: 600; font-size: calc(var(--u) * 2.5); color: var(--text-strong); line-height: 1; font-variant-numeric: tabular-nums; transition: color var(--dur-fast) var(--ease-standard); }
+    .obE__lv--sm { font-size: calc(var(--u) * 2.2); color: var(--text-secondary); }
+    .obE__lv[data-tone="personal"], .obE__lv[data-tone="drs"] { color: var(--t-personal); }
+    .obE__lv[data-tone="fastest"] { color: var(--t-fastest); }
+    .obE__spacer { flex: 1 1 auto; min-width: calc(var(--u) * 0.5); }
+    .obE__perf { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--u) * 0.7); flex: none; }
+    .obE__mini { display: flex; gap: calc(var(--u) * 1); }
+    .obE__miniGroup { display: flex; gap: calc(var(--u) * 0.22); }
+    .obE__seg { width: calc(var(--u) * 0.7); height: calc(var(--u) * 1.7); border-radius: calc(var(--u) * 0.16); background: rgba(255,255,255,0.09); }
+    .obE__seg[data-tone="yellow"] { background: var(--t-slower); box-shadow: 0 0 calc(var(--u) * 0.7) rgba(255,210,61,0.5); }
+    .obE__seg[data-tone="green"] { background: var(--t-personal); box-shadow: 0 0 calc(var(--u) * 0.7) rgba(43,208,122,0.55); }
+    .obE__seg[data-tone="purple"] { background: var(--t-fastest); box-shadow: 0 0 calc(var(--u) * 0.7) rgba(177,92,255,0.6); }
+    .obE__seg[data-tone="live"], .obE__seg[data-tone="blue"] { background: var(--info); box-shadow: 0 0 calc(var(--u) * 0.9) rgba(89,176,255,0.85); }
+    .obE__sectors { display: flex; flex-direction: column; gap: calc(var(--u) * 0.35); }
+    .obE__secRow { display: grid; grid-template-columns: repeat(3, calc(var(--u) * 6.4)); gap: calc(var(--u) * 0.6); justify-items: center; }
+    .obE__sec { font-family: var(--font-mono); font-weight: 600; font-size: calc(var(--u) * 1.75); line-height: 1; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+    .obE__sec--best { color: var(--text-tertiary); }
+    .obE__tyre { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--u) * 0.25); flex: none; }
+    .obE__tyreC { width: calc(var(--u) * 4.2); height: calc(var(--u) * 4.2); border-radius: 50%; border: calc(var(--u) * 0.42) solid var(--ty, var(--border-default)); color: #fff; display: grid; place-items: center; font-family: var(--font-display); font-weight: 800; font-size: calc(var(--u) * 2.2); line-height: 1; }
+    .obE__tyreAge { font-family: var(--font-mono); font-weight: 700; font-size: calc(var(--u) * 1.5); color: var(--text-secondary); }
+    .obE__pedals { position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--u) * 0.55); background: rgba(255,255,255,0.06); }
+    .obE__pedals .thr { position: absolute; left: 0; bottom: 0; height: 100%; background: linear-gradient(90deg, color-mix(in srgb, var(--throttle) 55%, #000), var(--throttle)); box-shadow: 0 0 calc(var(--u) * 0.7) rgba(43,208,122,0.5); transition: width 90ms linear; }
+    .obE__pedals .brk { position: absolute; left: 0; bottom: 0; height: 100%; background: linear-gradient(90deg, color-mix(in srgb, var(--brake) 60%, #000), var(--brake)); box-shadow: 0 0 calc(var(--u) * 0.7) rgba(255,59,59,0.55); transition: width 70ms linear; }
     @media (max-width: 1600px) {
       .live__bar { grid-template-columns: minmax(0, 1fr) auto auto; column-gap: var(--space-4); padding: 0 var(--space-5); }
       .live__barleft { gap: var(--space-5); }
@@ -260,14 +265,6 @@
     @media (max-width: 1180px) {
       .live__grid[data-layout="focus"] { grid-template-rows: minmax(120px, clamp(120px, 22vh, 180px)) minmax(320px, 1fr); }
       .live__grid[data-layout="focus"] .pane--bc .pane__video { object-fit: contain; object-position: center center; }
-      .pane__telemetry { padding: 0 var(--space-4) var(--space-4); }
-      .pane__tele-idpos { min-width: 34px; font-size: 16px; padding: 0 var(--space-4); }
-      .pane__tele-code { font-size: 17px; }
-      .pane__tele-seg { gap: var(--space-5); padding: 7px var(--space-5); }
-      .pane__tele-metric b { font-size: 21px; }
-      .pane__tele-lap { min-width: 58px; }
-      .pane__tele-lap b { font-size: 13px; }
-      .pane__tele-vbar { width: 5px; min-height: 26px; }
     }
     @media (max-width: 980px) {
       .live__race-name { display: none; }
@@ -289,125 +286,11 @@
       .pane:not(.pane--bc) .pane__tag .pw-avatar__num { min-width: 13px; height: 13px; font-size: 8px; }
       .pane:not(.pane--bc) .pane__pos { font-size: 9px; }
       .pane:not(.pane--bc) .pane__tagcode { font-size: 12px; }
-      .pane__telemetry { padding: 0 2px 2px; }
-      .pane__tele-panel { --tele-scale: 1.1; }
-      .pane__tele-id { gap: var(--space-2); padding-right: var(--space-2); }
-      .pane__tele-idpos { min-width: 25px; padding: 0 var(--space-2); font-size: 13px; }
-      .pane__tele-code { font-size: 13px; }
-      .pane__tele-seg { gap: 2px; padding: 3px 4px; }
-      .pane__tele-seg--drive { flex: 0 0 auto; }
-      .pane__tele-seg--laps { flex: 0 1 auto; }
-      .pane__tele-seg--sectors { flex: 0 1 auto; gap: 4px; margin-left: 4px; }
-      .pane__tele-seg--gaps { flex: 0 1 auto; }
-      .pane__tele-metric b { font-size: 15px; }
-      .pane__tele-k { font-size: 7px; letter-spacing: 0.04em; }
-      .pane__tele-bars { gap: 2px; }
-      .pane__tele-vbar { width: 3px; min-height: 18px; }
-      .pane__tele-lap { min-width: 0; }
-      .pane__tele-lap b { font-size: 10px; }
-      .pane__tele-stack { gap: 3px; }
-      .pane__tele-lap.pane__tele-row { grid-template-columns: 21px minmax(0, max-content); column-gap: 4px; }
-      .pane__tele-sector { gap: 2px; }
-      .pane__tele-sector .mini-sector { width: auto; min-width: 0; max-width: none; }
-      .pane__tele-sector .mini-sector__seg { width: 2px; height: 9px; }
     }
     @container (max-width: 500px) {
       .pane:not(.pane--bc) .pane__tag .pw-avatar { --_s: 20px; }
       .pane:not(.pane--bc) .pane__pos { font-size: 8px; }
       .pane:not(.pane--bc) .pane__tagcode { font-size: 11px; }
-      .pane__tele-panel { --tele-scale: 1; }
-      .pane__tele-idpos { min-width: 22px; padding: 0 5px; font-size: 12px; }
-      .pane__tele-code { font-size: 12px; }
-      .pane__tele-seg { padding: 3px; }
-      .pane__tele-seg--drive { flex: 0 0 auto; }
-      .pane__tele-metric b { font-size: 13px; }
-      .pane__tele-k { font-size: 6px; letter-spacing: 0.02em; }
-      .pane__tele-vbar { width: 3px; min-height: 16px; }
-      .pane__tele-lap b { font-size: 9px; }
-      .pane__tele-sector .pane__tele-k { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-      .pane__tele-sector .mini-sector { width: auto; min-width: 0; max-width: none; }
-    }
-    @container (max-width: 420px) {
-      .pane__tele-panel { --tele-scale: 0.82; }
-      .pane__tele-idpos { min-width: 20px; padding: 0 4px; font-size: 11px; }
-      .pane__tele-code { font-size: 11px; }
-      .pane__tele-seg { padding: 2px; }
-      .pane__tele-metric b { font-size: 12px; }
-      .pane__tele-k { font-size: 5px; }
-      .pane__tele-vbar { width: 2px; min-height: 14px; }
-      .pane__tele-lap b { font-size: 8px; }
-      .pane__tele-lap.pane__tele-row { grid-template-columns: 18px minmax(0, max-content); column-gap: 3px; }
-      .pane__tele-sector .mini-sector { width: auto; min-width: 0; max-width: none; }
-      .pane__tele-sector .mini-sector__seg { width: 2px; height: 8px; }
-    }
-    @container (min-width: 360px) {
-      .live__grid[data-layout="focus"] .pane__telemetry { padding: 0 8px 8px; }
-      .live__grid[data-layout="focus"] .pane__telemetry--broadcast { justify-content: center; }
-      .live__grid[data-layout="focus"] .pane__tele-panel { --tele-scale: 1; --tele-preferred-width: 720px; width: fit-content; min-width: 0; max-width: 100%; }
-      .live__grid[data-layout="focus"] .pane__tele-id { gap: 5px; padding-right: 5px; }
-      .live__grid[data-layout="focus"] .pane__tele-idpos { min-width: 27px; padding: 0 5px; font-size: 14px; }
-      .live__grid[data-layout="focus"] .pane__tele-code { font-size: 14px; }
-      .live__grid[data-layout="focus"] .pane__tele-seg { gap: 4px; padding: 4px 5px; }
-      .live__grid[data-layout="focus"] .pane__tele-seg--drive,
-      .live__grid[data-layout="focus"] .pane__tele-seg--laps,
-      .live__grid[data-layout="focus"] .pane__tele-seg--gaps { flex: 0 0 auto; }
-      .live__grid[data-layout="focus"] .pane__tele-seg--sectors { flex: 0 0 auto; justify-content: flex-start; margin-left: 0; }
-      .live__grid[data-layout="focus"] .pane__tele-sector { flex: 0 0 auto; justify-content: center; }
-      .live__grid[data-layout="focus"] .pane__tele-sector .mini-sector { width: auto; justify-content: flex-start; }
-      .live__grid[data-layout="focus"] .pane__tele-metric b { font-size: 17px; }
-      .live__grid[data-layout="focus"] .pane__tele-k { font-size: 6px; }
-      .live__grid[data-layout="focus"] .pane__tele-bars { gap: 3px; }
-      .live__grid[data-layout="focus"] .pane__tele-vbar { width: 4px; min-height: 21px; }
-      .live__grid[data-layout="focus"] .pane__tele-stack { gap: 4px; }
-      .live__grid[data-layout="focus"] .pane__tele-lap b { font-size: 10px; }
-      .live__grid[data-layout="focus"] .pane__tele-lap.pane__tele-row { grid-template-columns: 22px minmax(0, max-content); column-gap: 5px; }
-      .live__grid[data-layout="focus"] .pane__tele-sector .mini-sector__seg { width: 2px; height: 10px; }
-    }
-    @container (min-width: 360px) and (max-width: 420px) {
-      .live__grid[data-layout="focus"] .pane__tele-id { gap: 2px; padding-right: 3px; }
-      .live__grid[data-layout="focus"] .pane__tele-idpos { min-width: 24px; padding: 0 3px; font-size: 13px; }
-      .live__grid[data-layout="focus"] .pane__tele-code { font-size: 13px; }
-      .live__grid[data-layout="focus"] .pane__tele-seg { gap: 2px; padding: 4px 3px; }
-      .live__grid[data-layout="focus"] .pane__tele-metric b { font-size: 15px; }
-      .live__grid[data-layout="focus"] .pane__tele-k { font-size: 6px; }
-      .live__grid[data-layout="focus"] .pane__tele-bars { gap: 2px; }
-      .live__grid[data-layout="focus"] .pane__tele-vbar { width: 3px; min-height: 21px; }
-      .live__grid[data-layout="focus"] .pane__tele-stack { gap: 3px; }
-      .live__grid[data-layout="focus"] .pane__tele-lap b { font-size: 10px; }
-      .live__grid[data-layout="focus"] .pane__tele-lap.pane__tele-row { grid-template-columns: 20px minmax(0, max-content); column-gap: 3px; }
-      .live__grid[data-layout="focus"] .pane__tele-sector .mini-sector__seg { height: 8px; }
-    }
-    @container (max-width: 340px) {
-      .pane__tele-panel { --tele-scale: 0.66; }
-      .pane__tele-id { gap: 1px; padding-right: 2px; }
-      .pane__tele-idpos { min-width: 18px; padding: 0 3px; font-size: 10px; }
-      .pane__tele-code { font-size: 10px; }
-      .pane__tele-seg { gap: 1px; padding: 1px 2px; }
-      .pane__tele-seg--sectors { gap: 1px; margin-left: 0; }
-      .pane__tele-metric b { font-size: 11px; }
-      .pane__tele-k { font-size: 5px; letter-spacing: 0; }
-      .pane__tele-bars { gap: 1px; }
-      .pane__tele-vbar { width: 2px; min-height: 12px; }
-      .pane__tele-lap b { font-size: 8px; }
-      .pane__tele-stack { gap: 1px; }
-      .pane__tele-lap.pane__tele-row { grid-template-columns: 14px minmax(0, max-content); column-gap: 2px; }
-      .pane__tele-sector { gap: 1px; }
-      .pane__tele-sector .mini-sector { gap: 0; }
-      .pane__tele-sector .mini-sector__seg { width: 1px; height: 6px; }
-    }
-    @container (max-width: 260px) {
-      .pane__tele-panel { --tele-scale: 0.58; }
-      .pane__tele-idpos { min-width: 16px; padding: 0 2px; font-size: 9px; }
-      .pane__tele-code { font-size: 9px; }
-      .pane__tele-metric b { font-size: 10px; }
-      .pane__tele-k { font-size: 4px; }
-      .pane__tele-lap b { font-size: 7px; }
-      .pane__tele-lap.pane__tele-row { grid-template-columns: 12px minmax(0, max-content); column-gap: 1px; }
-      .pane__tele-vbar { width: 1px; min-height: 10px; }
-      .pane__tele-sector .mini-sector__seg { width: 1px; height: 5px; }
-    }
-    @container (max-width: 200px) {
-      .pane__tele-panel { --tele-scale: 0.47; }
     }
     .pane__controls { position: absolute; top: var(--space-5); right: var(--space-6); z-index: 5; display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity var(--dur-fast) var(--ease-standard); }
     .pane:hover .pane__controls, .pane:focus-within .pane__controls { opacity: 1; }
@@ -1037,6 +920,11 @@
     if (number == null) return "—";
     return number >= 60 ? `${Math.floor(number / 60)}:${(number % 60).toFixed(3).padStart(6, "0")}` : number.toFixed(3);
   }
+  function formatTimingAge(value) {
+    if (value == null) return "—";
+    if (typeof value === "string" && !value.trim()) return "—";
+    return value;
+  }
   function isQualifyingSessionKind(sessionKind) {
     return /qualifying|shootout/i.test(String(sessionKind || ""));
   }
@@ -1062,6 +950,35 @@
     if (age == null) return compound;
     return `${compound} ${Math.round(age)}`;
   }
+  // Best-lap sector splits aren't always present on every row (the live F1
+  // timing feed carries line.BestSectors, but other sources don't), so we also
+  // accumulate each driver's fastest split from the live sectorTimes stream and
+  // fall back to it. Reset whenever the session identity changes.
+  const bestSectorAccum = { key: "", byCode: new Map() };
+  function noteBestSectors(rows, sessionKey) {
+    if (sessionKey !== bestSectorAccum.key) {
+      bestSectorAccum.key = sessionKey;
+      bestSectorAccum.byCode.clear();
+    }
+    (rows || []).forEach((row) => {
+      if (!row?.code) return;
+      const current = row.sectorTimes || {};
+      const best = bestSectorAccum.byCode.get(row.code) || { s1: null, s2: null, s3: null };
+      ["s1", "s2", "s3"].forEach((key) => {
+        const value = telemetryNumber(current[key]);
+        if (value != null && value > 0 && (best[key] == null || value < best[key])) best[key] = value;
+      });
+      bestSectorAccum.byCode.set(row.code, best);
+    });
+  }
+  function resolveBestSectorTimes(code, feedBest) {
+    const accum = bestSectorAccum.byCode.get(code) || {};
+    return ["s1", "s2", "s3"].reduce((out, key) => {
+      const feed = telemetryNumber(feedBest?.[key]);
+      out[key] = feed != null && feed > 0 ? feed : (accum[key] ?? null);
+      return out;
+    }, {});
+  }
   function telemetryForCode(rows, code, sessionKind = "") {
     const row = (rows || []).find((item) => item.code === code) || {};
     return {
@@ -1078,11 +995,11 @@
       lastTone: lapTone(row),
       best: row.best || "—",
       sectors: row.sectors,
+      sectorTimes: row.sectorTimes,
+      bestSectorTimes: resolveBestSectorTimes(code, row.bestSectorTimes),
+      comp: row.comp,
+      age: row.age,
     };
-  }
-  function vbar(value, color) {
-    const pct = telemetryPct(value) || 0;
-    return <i style={{ height: pct + "%", background: color }} />;
   }
   function streamDescriptor(source) {
     if (!source) return null;
@@ -1359,10 +1276,16 @@
       </div>
     );
   }
-  function MiniSectorBar({ segments = [], compact = false }) {
-    const tones = segments.length ? segments.slice(0, MINI_SECTOR_MAX_COUNT) : Array.from({ length: MINI_SECTOR_FALLBACK_COUNT }, () => "off");
-    const displayTones = compact ? Array.from({ length: 6 }, (_, index) => tones[index] || "off") : tones;
-    return <span className="mini-sector">{displayTones.map((tone, index) => <i className="mini-sector__seg" data-tone={tone || "off"} key={index} />)}</span>;
+  function MiniSectorBar({ segments = [], compact = false, slots }) {
+    // Always render a fixed set of slots (the column's per-sector count) so the
+    // ticks stay present and fill in place as tones arrive — instead of popping
+    // in one by one. Not-yet-run micro-sectors render as "off"; out-lap segments
+    // arrive as "blue".
+    const count = Math.min(
+      compact ? 6 : (slots || (segments.length ? segments.length : MINI_SECTOR_FALLBACK_COUNT)),
+      MINI_SECTOR_MAX_COUNT
+    );
+    return <span className="mini-sector">{Array.from({ length: count }, (_, index) => <i className="mini-sector__seg" data-tone={segments[index] || "off"} key={index} />)}</span>;
   }
   function TimingTowerHeader({ columns, sectorCounts }) {
     return (
@@ -1383,15 +1306,15 @@
       best: <span className="timing-cell">{statusState.inactive ? "—" : row.best || "—"}</span>,
       gap: <span className="timing-cell timing-cell--gap">{statusState.inactive ? "—" : row.gap || "—"}</span>,
       interval: <span className="timing-cell">{statusState.inactive ? "—" : row.interval || "—"}</span>,
-      s1: <MiniSectorBar segments={row.sectors?.s1} />,
-      s2: <MiniSectorBar segments={row.sectors?.s2} />,
-      s3: <MiniSectorBar segments={row.sectors?.s3} />,
+      s1: <MiniSectorBar segments={row.sectors?.s1} slots={sectorCounts.s1} />,
+      s2: <MiniSectorBar segments={row.sectors?.s2} slots={sectorCounts.s2} />,
+      s3: <MiniSectorBar segments={row.sectors?.s3} slots={sectorCounts.s3} />,
       s1Time: <span className="timing-cell">{formatSectorTime(row.sectorTimes?.s1)}</span>,
       s2Time: <span className="timing-cell">{formatSectorTime(row.sectorTimes?.s2)}</span>,
       s3Time: <span className="timing-cell">{formatSectorTime(row.sectorTimes?.s3)}</span>,
       tyre: <span className="tyre-dot" style={{ "--tyre-ring": tyreRing(row.comp) }}>{tyreLetter(row.comp)}</span>,
       compound: <span className="timing-cell">{row.comp || "—"}</span>,
-      age: <span className="timing-cell">{row.age || "—"}</span>,
+      age: <span className="timing-cell">{formatTimingAge(row.age)}</span>,
       pits: <span className="timing-cell">{row.pits || "0"}</span>,
       stints: <span className="timing-cell">{Array.isArray(row.stints) && row.stints.length ? row.stints.length : "—"}</span>,
       speed: <span className="timing-cell">{formatSpeed(row.telemetry?.speed)}</span>,
@@ -2413,9 +2336,11 @@
     const d = D.byCode[code] || {};
     const driverImage = d.remoteImage || d.image;
     const telemetryData = telemetryForCode(timingRows, code, sessionKind);
+    const sectorSlots = timingSectorCounts(timingRows);
     const streaming = Boolean(descriptor);
     return (
       <div className="pane" data-focus={focus} data-expanded={expanded} data-visible={String(visible)} data-zone={zone}
+        data-telemetry={String(telemetryOn)}
         data-streaming={String(streaming)} data-stream-ready={String(!streaming || streamReady)} style={style}
         onClick={(event) => {
           if (!descriptor || !isPaneSurfaceClickTarget(event.target)) return;
@@ -2452,35 +2377,59 @@
           {streaming && <span className="pane__switching"><b>{code || "DRIVER"}</b><span>Warming onboard</span></span>}
         </div>
         {telemetryOn && (
-          <div className="pane__telemetry pane__telemetry--broadcast">
-            <div className="pane__tele-panel">
-              <div className="pane__tele-id" style={{ "--tele-team": d.color || "var(--accent)" }}>
-                <span className="pane__tele-idpos">{formatPosition(telemetryData.pos)}</span>
-                <span className="pane__tele-code">{code}</span>
-              </div>
-              <div className="pane__tele-seg pane__tele-seg--drive">
-                <span className="pane__tele-metric"><b>{formatSpeed(telemetryData.speed)}</b><span className="pane__tele-k">km/h</span></span>
-                <span className="pane__tele-metric pane__tele-metric--gear"><b>{formatGear(telemetryData.gear)}</b><span className="pane__tele-k">gear</span></span>
-                <span className="pane__tele-bars">
-                  <span className="pane__tele-vbar">{vbar(telemetryData.throttle, "var(--throttle)")}</span>
-                  <span className="pane__tele-vbar">{vbar(telemetryData.brake, "var(--brake)")}</span>
-                </span>
-              </div>
-              <div className="pane__tele-seg pane__tele-seg--laps">
-                <span className="pane__tele-stack">
-                  <span className="pane__tele-lap pane__tele-row"><span className="pane__tele-k">Last</span><b data-tone={telemetryData.lastTone}>{telemetryData.last}</b></span>
-                  <span className="pane__tele-lap pane__tele-row"><span className="pane__tele-k">Best</span><b>{telemetryData.best}</b></span>
-                </span>
-              </div>
-              <div className="pane__tele-seg pane__tele-seg--sectors">
-                <span className="pane__tele-sector"><span className="pane__tele-k">S1</span><MiniSectorBar compact segments={telemetryData.sectors?.s1} /></span>
-                <span className="pane__tele-sector"><span className="pane__tele-k">S2</span><MiniSectorBar compact segments={telemetryData.sectors?.s2} /></span>
-                <span className="pane__tele-sector"><span className="pane__tele-k">S3</span><MiniSectorBar compact segments={telemetryData.sectors?.s3} /></span>
-              </div>
-              <div className="pane__tele-seg pane__tele-seg--gaps">
-                <span className="pane__tele-stack">
-                  <span className="pane__tele-lap pane__tele-row"><span className="pane__tele-k">Int</span><b data-tone={telemetryData.intervalTone}>{telemetryData.interval}</b></span>
-                  <span className="pane__tele-lap pane__tele-row"><span className="pane__tele-k">Ldr</span><b>{telemetryData.leaderGap}</b></span>
+          <div className="pane__obar">
+            <div className="obE">
+              <div className="obE__bar" style={{ "--c": d.color || "var(--accent)" }}>
+                <div className="obE__id">
+                  <span className="obE__pos">{telemetryData.pos == null ? "—" : telemetryData.pos}</span>
+                  <span className="obE__code">{code}</span>
+                </div>
+                <div className="obE__drive">
+                  <span className="obE__gear"><span className="obE__gearChar">{formatGear(telemetryData.gear)}</span></span>
+                  <span className="obE__speed"><b>{formatSpeed(telemetryData.speed)}</b><span>km/h</span></span>
+                </div>
+                <span className="obE__div" />
+                <div className="obE__stack">
+                  <div className="obE__line"><span className="obE__lk">Last</span><span className="obE__lv" data-tone={telemetryData.lastTone}>{telemetryData.last}</span></div>
+                  <div className="obE__line"><span className="obE__lk">Best</span><span className="obE__lv obE__lv--sm" data-tone="fastest">{telemetryData.best}</span></div>
+                </div>
+                <span className="obE__div" />
+                <div className="obE__stack">
+                  <div className="obE__line"><span className="obE__lk">Int</span><span className="obE__lv" data-tone={telemetryData.intervalTone}>{telemetryData.interval}</span></div>
+                  <div className="obE__line"><span className="obE__lk">Ldr</span><span className="obE__lv obE__lv--sm">{telemetryData.leaderGap}</span></div>
+                </div>
+                <span className="obE__spacer" />
+                <div className="obE__perf">
+                  <div className="obE__mini">
+                    {["s1", "s2", "s3"].map((key) => (
+                      <span className="obE__miniGroup" key={key}>
+                        {Array.from({ length: sectorSlots[key] || MINI_SECTOR_FALLBACK_COUNT }, (_, index) => (
+                          <span className="obE__seg" data-tone={(telemetryData.sectors?.[key] || [])[index] || "off"} key={index} />
+                        ))}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="obE__sectors">
+                    <div className="obE__secRow">
+                      {["s1", "s2", "s3"].map((key) => (
+                        <span className="obE__sec" key={key}>{formatSectorTime(telemetryData.sectorTimes?.[key])}</span>
+                      ))}
+                    </div>
+                    <div className="obE__secRow obE__secRow--best">
+                      {["s1", "s2", "s3"].map((key) => (
+                        <span className="obE__sec obE__sec--best" key={key}>{formatSectorTime(telemetryData.bestSectorTimes?.[key])}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <span className="obE__div" />
+                <div className="obE__tyre" style={{ "--ty": tyreRing(telemetryData.comp) }}>
+                  <span className="obE__tyreC">{tyreLetter(telemetryData.comp) || "—"}</span>
+                  {telemetryData.age != null && telemetryData.age !== "" && <span className="obE__tyreAge">L{telemetryData.age}</span>}
+                </div>
+                <span className="obE__pedals">
+                  <i className="thr" style={{ width: (telemetryPct(telemetryData.throttle) || 0) + "%" }} />
+                  <i className="brk" style={{ width: (telemetryPct(telemetryData.brake) || 0) + "%" }} />
                 </span>
               </div>
             </div>
@@ -2561,6 +2510,7 @@
     const profilePanelSizesKeyRef = React.useRef("");
     const replayClockRef = React.useRef(0);
     const replayTimingRequestRef = React.useRef(0);
+    const replayTimingInFlightRef = React.useRef(false);
     const liveTimingRequestRef = React.useRef(0);
     const liveTimingInFlightRef = React.useRef(false);
     const partyDragRef = React.useRef(null);
@@ -2835,6 +2785,7 @@
 
     function startPartyTrayDrag(event) {
       if (event.button != null && event.button !== 0) return;
+      if (event.target?.closest?.("button, input, textarea, select, [role='button']")) return;
       const start = {
         pointerId: event.pointerId,
         x: event.clientX,
@@ -3466,6 +3417,7 @@
     const activeSessionKind = replaySync.mode === "replay"
       ? (replayTimingData?.sessionKind || f1TvSessionKind)
       : liveSessionKind;
+    noteBestSectors(timingRows, `${replaySync.mode}|${activeRaceName}|${activeSessionKind}`);
     const sessionClock = replaySync.mode === "replay" ? replayTimingData?.sessionClock : liveTimingData?.sessionClock;
     const activeTimingData = replaySync.mode === "replay" ? replayTimingData : liveTimingData;
     const timingUnavailable = !timingHasRealRows && activeTimingData?.ok === false;
@@ -3634,13 +3586,18 @@
         const videoStartUtc = timingFeed.videoStartUtc || resolvedF1TvContent?.videoStartUtc || "";
         const videoStartArchiveSeconds = Number.isFinite(Number(timingFeed.videoStartArchiveSeconds)) ? Number(timingFeed.videoStartArchiveSeconds) : null;
         const videoStartKey = videoStartUtc || (videoStartArchiveSeconds != null ? String(Math.round(videoStartArchiveSeconds)) : "");
-        const bucket = `${meetingKey}:${f1TvSessionKind}:${Math.floor(timingElapsedSeconds * 4)}:${replayTimingOffset}:${videoStartKey}`;
+        const bucket = `${meetingKey}:${f1TvSessionKind}:${Math.floor(timingElapsedSeconds * 10)}:${replayTimingOffset}:${videoStartKey}`;
         if (bucket === lastBucket) return;
+        if (replayTimingInFlightRef.current) return;
         lastBucket = bucket;
         const requestId = replayTimingRequestRef.current + 1;
         replayTimingRequestRef.current = requestId;
+        replayTimingInFlightRef.current = true;
         try {
-          const data = await window.pitwall.data.replayTiming({ meetingKey, sessionKind: f1TvSessionKind, elapsedSeconds: timingElapsedSeconds, videoStartUtc, videoStartArchiveSeconds });
+          const data = await Promise.race([
+            window.pitwall.data.replayTiming({ meetingKey, sessionKind: f1TvSessionKind, elapsedSeconds: timingElapsedSeconds, videoStartUtc, videoStartArchiveSeconds }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Replay timing request timed out.")), REPLAY_TIMING_REQUEST_TIMEOUT_MS)),
+          ]);
           if (cancelled || requestId !== replayTimingRequestRef.current) return;
           setReplayTimingData((current) => hasRealTimingRows(data?.timing) ? data : hasRealTimingRows(current?.timing) ? current : data || null);
           logPitWallDebug("replay.timing", {
@@ -3658,6 +3615,8 @@
           if (cancelled || requestId !== replayTimingRequestRef.current) return;
           setReplayTimingData({ ok: false, timing: [], weather: {}, sourceLabel: "Replay timing unavailable", message: "OpenF1 replay timing is unavailable." });
           logPitWallDebug("replay.timing-error", { meetingKey, sessionKind: f1TvSessionKind, message: error?.message || String(error || "") });
+        } finally {
+          if (requestId === replayTimingRequestRef.current) replayTimingInFlightRef.current = false;
         }
       };
       loadReplayTiming();
@@ -3665,6 +3624,7 @@
       return () => {
         cancelled = true;
         replayTimingRequestRef.current += 1;
+        replayTimingInFlightRef.current = false;
         clearInterval(timer);
       };
     }, [replaySync.mode, selectedF1TvRace?.meetingKey, f1TvSessionKind, replayTimingOffset, resolvedF1TvContent?.contentId, resolvedF1TvContent?.feeds]);
@@ -4013,7 +3973,8 @@
         <div className="live__body" data-layout={layout} ref={bodyRef} style={panelStyle}>
           {/* Live timing sidebar */}
           <aside className="live__timing">
-            <div className="live__timinghd">
+            <div className={"live__timinghd" + (timingLoading ? " live__timinghd--loading" : "")}>
+              {timingLoading ? <span className="live__timingloadingtitle">Live Timing</span> : <>
               <span className="live__timingtitle">
                 <FlagStatus status={timingFlag.status} label={timingFlag.label} />
               </span>
@@ -4027,6 +3988,7 @@
                 <Badge tone="outline">P1–12</Badge>
                 <IconButton variant={timingConfigOpen ? "accent" : "ghost"} size="sm" label="Edit timing columns" onClick={() => setTimingConfigOpen((open) => !open)}><Icon name="pencil" size={14} /></IconButton>
               </span>
+              </>}
             </div>
             {timingConfigOpen && <TimingColumnMenu columns={timingColumns} onToggle={toggleTimingColumn} />}
             <div className="live__timingscroll">

@@ -88,6 +88,30 @@ function friendshipKey(a, b) {
 
 async function friends(body) {
   const userId = clean(body.userId, 80);
+  const db = await sql();
+  await ensureSchema(db);
+  if (db && userId) {
+    const result = await db`
+      SELECT f.a, f.b, f.status, f.created_at, u.id AS friend_id, u.friend_code, u.display_name
+      FROM apexline_friendships f
+      JOIN apexline_users u ON u.id = CASE WHEN f.a = ${userId} THEN f.b ELSE f.a END
+      WHERE f.a = ${userId} OR f.b = ${userId}
+      ORDER BY f.created_at DESC
+    `;
+    return {
+      friends: result.rows.map((row) => ({
+        a: row.a,
+        b: row.b,
+        status: row.status,
+        createdAt: Number(row.created_at) || Date.now(),
+        friend: {
+          userId: row.friend_id,
+          friendCode: row.friend_code,
+          displayName: row.display_name || "Apexline fan",
+        },
+      })),
+    };
+  }
   const rows = [];
   for (const [key, value] of memory.friendships) {
     if (!key.split(":").includes(userId)) continue;
@@ -99,10 +123,27 @@ async function friends(body) {
 
 async function addFriend(body) {
   const userId = clean(body.userId, 80);
-  const targetId = memory.codeToUser.get(clean(body.friendCode, 16).toUpperCase());
+  const code = clean(body.friendCode, 16).toUpperCase();
+  const db = await sql();
+  await ensureSchema(db);
+  let targetId = "";
+  if (db) {
+    const target = await db`SELECT id, friend_code, display_name FROM apexline_users WHERE friend_code = ${code}`;
+    targetId = clean(target.rows[0]?.id, 80);
+  } else {
+    targetId = memory.codeToUser.get(code);
+  }
   if (!userId || !targetId || userId === targetId) return { ok: false, message: "Friend code not found." };
-  const value = { a: userId, b: targetId, status: "accepted", createdAt: Date.now() };
-  memory.friendships.set(friendshipKey(userId, targetId), value);
+  const [a, b] = [userId, targetId].sort();
+  const value = { a, b, status: "accepted", createdAt: Date.now() };
+  if (db) {
+    await db`
+      INSERT INTO apexline_friendships (a, b, status, created_at)
+      VALUES (${a}, ${b}, ${value.status}, ${value.createdAt})
+      ON CONFLICT (a, b) DO UPDATE SET status = ${value.status}, created_at = ${value.createdAt}
+    `;
+  }
+  memory.friendships.set(friendshipKey(a, b), value);
   return { ok: true, friendship: value };
 }
 

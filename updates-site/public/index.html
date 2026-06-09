@@ -143,19 +143,48 @@
   }
   .meta .sep { color: var(--text-disabled); }
 
-  /* ===== Real app screenshot ===== */
-  .showcase { position: relative; padding: 40px 0 96px; }
-  .window {
-    position: relative; z-index: 2;
-    max-width: 1080px; margin: 0 auto;
-    background: var(--bg-base);
+  /* ===== Live Racing ===== */
+  .live-section { position: relative; padding: 40px 0 104px; }
+  .live-section .wrap { max-width: 1480px; }
+  .live-glow { position: absolute; left: 50%; top: 48px; transform: translateX(-50%); width: 70%; height: 360px; background: radial-gradient(60% 80% at 50% 0%, rgba(45,123,255,.20), transparent 70%); filter: blur(20px); z-index: 1; pointer-events: none; }
+  .live-explain { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(280px, 420px) 1fr; gap: 34px; align-items: center; }
+  .live-copy h2 {
+    margin: 14px 0 0;
+    font-family: var(--font-display);
+    font-weight: var(--fw-black);
+    font-size: clamp(34px, 4.8vw, 62px);
+    line-height: 0.98;
+    letter-spacing: var(--tracking-tight);
+    text-wrap: balance;
+  }
+  .live-copy p {
+    margin: 18px 0 0;
+    color: var(--text-secondary);
+    font-size: var(--text-lg);
+    line-height: var(--lh-relaxed);
+    text-wrap: pretty;
+  }
+  .live-points { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+  .live-points span {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-pill);
+    background: var(--surface-card);
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: var(--text-3xs);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: 7px 10px;
+  }
+  .live-window {
+    position: relative;
+    overflow: hidden;
     border: 1px solid var(--border-default);
     border-radius: var(--radius-lg);
-    overflow: hidden;
+    background: var(--bg-base);
     box-shadow: var(--shadow-xl, 0 40px 120px -30px rgba(0,0,0,.8)), 0 0 0 1px rgba(255,255,255,.03) inset, 0 1px 0 rgba(255,255,255,.05) inset;
   }
-  .app-shot { display: block; width: 100%; height: auto; background: var(--bg-base); }
-  .win-glow { position: absolute; left: 50%; top: 30px; transform: translateX(-50%); width: 70%; height: 320px; background: radial-gradient(60% 80% at 50% 0%, rgba(45,123,255,.20), transparent 70%); filter: blur(20px); z-index: 1; pointer-events: none; }
+  .live-shot { display: block; width: 100%; height: auto; background: var(--bg-base); }
 
   /* ===== Screen tour ===== */
   .screen-tour { padding: 0 0 96px; }
@@ -379,6 +408,8 @@
     .card.wide { grid-column: span 2; }
     .stats { grid-template-columns: 1fr 1fr; }
     .win-body { grid-template-columns: 200px 1fr; }
+    .live-explain { grid-template-columns: 1fr; gap: 24px; }
+    .live-copy { max-width: 720px; }
     .screen-story { grid-template-columns: 1fr; gap: 22px; padding: 42px 0; }
     .screen-copy { max-width: 640px; }
   }
@@ -412,7 +443,7 @@
         <a class="navlink" href="#screens">Screens</a>
         <a class="navlink" href="#live">Live Racing</a>
         <a class="navlink" href="#download">Download</a>
-        <a class="btn btn-primary" href="/updates/darwin/arm64/Apexline-1.0.8-mac-arm64.zip" download>
+        <a class="btn btn-primary" href="/updates/darwin/arm64/Apexline-1.0.9-mac-arm64.zip" download>
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.5 1.5c.1 1-.3 2-1 2.8-.7.8-1.8 1.4-2.8 1.3-.1-1 .4-2 1-2.7.7-.8 1.9-1.4 2.8-1.4ZM19.6 17.2c-.5 1.2-.8 1.7-1.5 2.7-.9 1.4-2.3 3.2-3.9 3.2-1.5 0-1.8-1-3.8-1-1.9 0-2.3 1-3.8 1-1.6 0-2.8-1.6-3.8-3C-.2 16.5-.5 11 1.5 8.2 2.8 6.3 4.9 5.2 6.9 5.2c2 0 3.2 1.1 4.8 1.1 1.5 0 2.5-1.1 4.8-1.1 1.7 0 3.6.9 4.9 2.5-4.3 2.4-3.6 8.5-1.8 9.5Z"></path></svg>
           Download
         </a>
@@ -423,11 +454,11 @@
   <!-- ===== Hero ===== -->
   <section class="hero" id="top">
     <div class="wrap">
-      <span class="badge-pill"><span class="dot"></span>Version 1.0.8</span>
-      <h1 class="title">Apexline for <em>every race.</em></h1>
-      <p class="sub">A native macOS cockpit for serious Formula&nbsp;1 fans — live timing, multi-view onboards, AI race insights, schedules and standings, all in one broadcast-grade window.</p>
+      <span class="badge-pill"><span class="dot"></span>Version 1.0.9</span>
+      <h1 class="title">Apexline for <em>race weekends.</em></h1>
+      <p class="sub">An Apple Silicon macOS app for F1 TV sessions, replay sync, live timing, onboards, schedules, standings, and race notes in one window.</p>
       <div class="cta-row">
-        <a class="btn btn-primary btn-lg" href="/updates/darwin/arm64/Apexline-1.0.8-mac-arm64.zip" download>
+        <a class="btn btn-primary btn-lg" href="/updates/darwin/arm64/Apexline-1.0.9-mac-arm64.zip" download>
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.5 1.5c.1 1-.3 2-1 2.8-.7.8-1.8 1.4-2.8 1.3-.1-1 .4-2 1-2.7.7-.8 1.9-1.4 2.8-1.4ZM19.6 17.2c-.5 1.2-.8 1.7-1.5 2.7-.9 1.4-2.3 3.2-3.9 3.2-1.5 0-1.8-1-3.8-1-1.9 0-2.3 1-3.8 1-1.6 0-2.8-1.6-3.8-3C-.2 16.5-.5 11 1.5 8.2 2.8 6.3 4.9 5.2 6.9 5.2c2 0 3.2 1.1 4.8 1.1 1.5 0 2.5-1.1 4.8-1.1 1.7 0 3.6.9 4.9 2.5-4.3 2.4-3.6 8.5-1.8 9.5Z"></path></svg>
           Download for macOS
         </a>
@@ -436,20 +467,34 @@
         </a>
       </div>
       <div class="meta">
-        <span>Manual macOS install</span><span class="sep">·</span>
-        <span>macOS 13+</span><span class="sep">·</span>
-        <span>Apple Silicon</span><span class="sep">·</span>
-        <span>v1.0.8 · 134 MB</span>
+        <span>Manual install and updates</span><span class="sep">·</span>
+        <span>Apple Silicon macOS</span><span class="sep">·</span>
+        <span>F1 TV subscription required for streams</span><span class="sep">·</span>
+        <span>v1.0.9 · 134 MB</span>
       </div>
     </div>
   </section>
 
-  <!-- ===== App window showcase ===== -->
-  <section class="showcase" id="live">
-    <div class="win-glow"></div>
+  <!-- ===== Live Racing ===== -->
+  <section class="live-section" id="live">
+    <div class="live-glow"></div>
     <div class="wrap">
-      <div class="window">
-        <img class="app-shot" src="./assets/apexline-app-screenshot.png" alt="Apexline Dashboard showing the next race, championship standings, track conditions, news, and favorites" width="3224" height="2222">
+      <div class="live-explain">
+        <div class="live-copy">
+          <span class="eyebrow">Live Racing</span>
+          <h2>Video, onboards, and timing in one race view.</h2>
+          <p>Apexline keeps the world feed, selected driver onboards, timing tower, sector micro-splits, race control, tyre age, and replay position visible in the same window.</p>
+          <div class="live-points">
+            <span>Multi-view video</span>
+            <span>22-car timing</span>
+            <span>Race control</span>
+            <span>Replay sync</span>
+            <span>Resizable layout</span>
+          </div>
+        </div>
+        <div class="live-window">
+          <img class="live-shot" src="./assets/apexline-live-racing-current.png" alt="Apexline Live Racing screen with onboard cameras, F1 TV world feed, timing tower, race control, and replay controls" width="3600" height="2264">
+        </div>
       </div>
     </div>
   </section>
@@ -459,15 +504,15 @@
     <div class="wrap">
       <div class="screen-tour__head">
         <span class="eyebrow">Apexline screens</span>
-        <h2>Every race view gets its own station.</h2>
-        <p>Real app screens captured at 3600px wide, using deterministic Apexline data so the landing page stays sharp, accurate, and private-repo safe.</p>
+        <h2>The main race tools, shown directly.</h2>
+        <p>These are high-resolution captures of Apexline screens. Some views use seeded data so the site can show the interface without exposing a private account or live credentials.</p>
       </div>
 
       <article class="screen-story">
         <div class="screen-copy">
           <span class="screen-kicker">Track Map</span>
           <h3>See the circuit and timing rail together.</h3>
-          <p>Track Map pairs real circuit geometry with a live-style timing rail, tyre compounds, gaps, battles, DRS markers, sector labels, and circuit facts.</p>
+          <p>Track Map pairs packaged circuit geometry with a timing rail, tyre compounds, gaps, battles, DRS markers, sector labels, and circuit facts.</p>
           <div class="screen-points"><span>Circuit geometry</span><span>Timing rail</span><span>Battle context</span></div>
         </div>
         <div class="screen-window">
@@ -479,7 +524,7 @@
         <div class="screen-copy">
           <span class="screen-kicker">AI Copilot</span>
           <h3>Next-weekend prep without leaving the app.</h3>
-          <p>The Copilot next-weekend tab turns the loaded schedule, standings, timing, and news snapshot into a compact race preview with prediction boards and watch points.</p>
+          <p>The Copilot next-weekend tab uses the loaded schedule, standings, timing, and news snapshot to build a compact race preview with prediction boards and watch points.</p>
           <div class="screen-points"><span>Next weekend</span><span>Projection board</span><span>Watchlist</span></div>
         </div>
         <div class="screen-window">
@@ -490,8 +535,8 @@
       <article class="screen-story">
         <div class="screen-copy">
           <span class="screen-kicker">Analytics</span>
-          <h3>Compare ANT vs HAM from the Monaco Race.</h3>
-          <p>Analytics loads a Monaco Race comparison with ANT and HAM selected, then breaks down sector pace, fastest lap, average pace, tyre degradation, top speed, and head-to-head deltas.</p>
+          <h3>Compare ANT vs HAM from a Monaco Race sample.</h3>
+          <p>Analytics can load a Monaco Race comparison with ANT and HAM selected, then break down sector pace, fastest lap, average pace, tyre degradation, top speed, and head-to-head deltas.</p>
           <div class="screen-points"><span>ANT vs HAM</span><span>Monaco Race</span><span>Sector deltas</span></div>
         </div>
         <div class="screen-window">
@@ -502,8 +547,8 @@
       <article class="screen-story">
         <div class="screen-copy">
           <span class="screen-kicker">News</span>
-          <h3>Paddock reading in the same cockpit.</h3>
-          <p>News keeps a dense feed of F1 stories, trend cards, saved items, source labels, and an in-app reader so the race workspace stays focused.</p>
+          <h3>Paddock reading in the same app.</h3>
+          <p>News keeps F1 stories, trend cards, saved items, source labels, and an in-app reader next to the rest of the race workspace.</p>
           <div class="screen-points"><span>Headlines</span><span>Saved items</span><span>Reader</span></div>
         </div>
         <div class="screen-window">
@@ -514,8 +559,8 @@
       <article class="screen-story">
         <div class="screen-copy">
           <span class="screen-kicker">Drivers</span>
-          <h3>The 22-car grid, browsable by profile.</h3>
-          <p>Drivers combines championship position, points, team identity, career stats, recent form, profile details, and teammate links in one fast roster view.</p>
+          <h3>The 22-driver roster, browsable by profile.</h3>
+          <p>Drivers combines championship position, points, team identity, career stats, recent form, profile details, and teammate links in one roster view.</p>
           <div class="screen-points"><span>22 drivers</span><span>Profile stats</span><span>Recent form</span></div>
         </div>
         <div class="screen-window">
@@ -538,7 +583,7 @@
       <article class="screen-story">
         <div class="screen-copy">
           <span class="screen-kicker">Schedule</span>
-          <h3>The season calendar in your race window.</h3>
+          <h3>The season calendar in the app.</h3>
           <p>Schedule shows upcoming and completed race weekends, session rows, local timing context, countdowns, and quick navigation into the Weekend view.</p>
           <div class="screen-points"><span>Season calendar</span><span>Session times</span><span>Countdowns</span></div>
         </div>
@@ -551,7 +596,7 @@
         <div class="screen-copy">
           <span class="screen-kicker">Leaderboards</span>
           <h3>Driver and constructor tables at a glance.</h3>
-          <p>Leaderboards keeps the championship picture compact: driver points, wins, movement, constructor points, team colors, and filters for quick comparison.</p>
+          <p>Leaderboards shows driver points, wins, movement, constructor points, team colors, and filters for quick comparison.</p>
           <div class="screen-points"><span>Driver table</span><span>Constructor table</span><span>Filters</span></div>
         </div>
         <div class="screen-window">
@@ -563,7 +608,7 @@
         <div class="screen-copy">
           <span class="screen-kicker">Weekend</span>
           <h3>Race-weekend status from sessions to recap.</h3>
-          <p>Weekend gathers the selected Grand Prix, session steps, countdown, weather, race-control context, and recap-ready timing data into the working race page.</p>
+          <p>Weekend gathers the selected Grand Prix, session steps, countdown, weather, race-control context, and timing data into the working race page.</p>
           <div class="screen-points"><span>Session steps</span><span>Weekend weather</span><span>Recap data</span></div>
         </div>
         <div class="screen-window">
@@ -577,48 +622,48 @@
   <section class="features" id="features">
     <div class="wrap">
       <div class="sec-head">
-        <span class="eyebrow">One window · everything F1</span>
-        <h2>Built like a race engineer's screen.</h2>
-        <p>Quiet until it matters, then it lights up. Apexline pulls every feed, timing line and data point into a single dense, calm cockpit.</p>
+        <span class="eyebrow">One window · race data</span>
+        <h2>Built for dense race watching.</h2>
+        <p>Apexline puts video, timing, schedule, standings, news, and analysis tools in one dark macOS workspace.</p>
       </div>
       <div class="grid">
         <div class="card">
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"></path><path d="m13.4 12.6 3.6-3.6"></path><path d="M3.3 16a9 9 0 1 1 17.4 0"></path></svg></div>
           <h3>Live Timing</h3>
-          <p>The full 22-car tower with gaps, intervals, sector splits and tyre compounds — purple for session best, green for personal best, exactly like the broadcast.</p>
+          <p>A 22-car timing tower with gaps, intervals, sector splits, mini-sector tones, tyre compounds, and tyre age.</p>
         </div>
         <div class="card">
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5"></rect><rect x="13" y="3" width="8" height="8" rx="1.5"></rect><rect x="3" y="13" width="8" height="8" rx="1.5"></rect><rect x="13" y="13" width="8" height="8" rx="1.5"></rect></svg></div>
           <h3>Multi-view onboards</h3>
-          <p>Pair any combination of onboard cameras and the world feed in one resizable window. Intelligent pairing surfaces the battle worth watching.</p>
+          <p>Arrange the world feed and selected onboard cameras in a resizable window, with saved layouts for race and replay viewing.</p>
         </div>
         <div class="card">
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3Z"></path><path d="M19 15v4"></path><path d="M5 5v3"></path><path d="M17.5 17h3"></path><path d="M3.5 6.5h3"></path></svg></div>
           <h3>AI race insights</h3>
-          <p>Undercut windows, battle alerts and strategy calls — surfaced as analysis, not noise. Confident, terse, actionable. Never breathless.</p>
+          <p>When AI is configured, Apexline can summarize race context, battle notes, strategy windows, and weekend previews from the app's loaded data.</p>
         </div>
         <div class="card">
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2"></rect><path d="M3 9h18M8 2.5v4M16 2.5v4"></path></svg></div>
           <h3>Schedule &amp; standings</h3>
-          <p>Every session in your timezone with a lights-out countdown, plus live driver and constructor standings the moment the flag drops.</p>
+          <p>Session times, weekend status, countdowns, driver standings, and constructor standings in the same app.</p>
         </div>
         <div class="card">
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V4a1 1 0 0 1 1-1h0a1 1 0 0 1 1 1v17"></path><path d="M6 4c3-1.5 6 1.5 9 0v8c-3 1.5-6-1.5-9 0"></path></svg></div>
           <h3>News &amp; analytics</h3>
-          <p>Headlines from the paddock and deep post-session analytics — pace deltas, stint comparisons, tyre degradation — without leaving the app.</p>
+          <p>F1 news, saved stories, and post-session comparisons for pace deltas, stints, tyres, and driver head-to-heads.</p>
         </div>
         <div class="card">
           <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4"></path><circle cx="12" cy="12" r="4"></circle></svg></div>
           <h3>Native &amp; fast</h3>
-          <p>A real macOS app, not a browser tab. Native windows, system notifications, and a racing workspace that scales to your display.</p>
+          <p>An Electron macOS app with a packaged renderer, system notifications, and window layouts that adapt to common laptop and desktop sizes.</p>
         </div>
       </div>
 
       <div class="stats">
-        <div class="stat"><div class="n">22</div><div class="l">Cars tracked live</div></div>
+        <div class="stat"><div class="n">22</div><div class="l">Driver timing rows</div></div>
         <div class="stat"><div class="n">F1</div><div class="l">Calendar, news, timing</div></div>
-        <div class="stat"><div class="n"><em>0</em></div><div class="l">Browser tabs needed</div></div>
-        <div class="stat"><div class="n">1</div><div class="l">Window, full cockpit</div></div>
+        <div class="stat"><div class="n">1</div><div class="l">Manual download feed</div></div>
+        <div class="stat"><div class="n">1</div><div class="l">macOS race window</div></div>
       </div>
     </div>
   </section>
@@ -627,24 +672,24 @@
   <section class="download" id="download">
     <div class="wrap">
       <div class="dl-card">
-        <span class="eyebrow">Lights out</span>
+        <span class="eyebrow">Download</span>
         <h2>Get Apexline for macOS.</h2>
-        <p>Download Version 1.0.8 for macOS. Streams require your own active F1 TV subscription. Apexline checks the public Vercel feed for future releases without exposing the private source repo.</p>
+        <p>Download Version 1.0.9 for Apple Silicon macOS. Video streams require your own active F1 TV subscription. Because this build is not Apple Developer ID signed or notarized, updates are manual downloads from the public update feed.</p>
         <div class="cta-row">
-          <a class="btn btn-primary btn-lg" href="/updates/darwin/arm64/Apexline-1.0.8-mac-arm64.zip" download>
+          <a class="btn btn-primary btn-lg" href="/updates/darwin/arm64/Apexline-1.0.9-mac-arm64.zip" download>
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.5 1.5c.1 1-.3 2-1 2.8-.7.8-1.8 1.4-2.8 1.3-.1-1 .4-2 1-2.7.7-.8 1.9-1.4 2.8-1.4ZM19.6 17.2c-.5 1.2-.8 1.7-1.5 2.7-.9 1.4-2.3 3.2-3.9 3.2-1.5 0-1.8-1-3.8-1-1.9 0-2.3 1-3.8 1-1.6 0-2.8-1.6-3.8-3C-.2 16.5-.5 11 1.5 8.2 2.8 6.3 4.9 5.2 6.9 5.2c2 0 3.2 1.1 4.8 1.1 1.5 0 2.5-1.1 4.8-1.1 1.7 0 3.6.9 4.9 2.5-4.3 2.4-3.6 8.5-1.8 9.5Z"></path></svg>
             Download for macOS
           </a>
         </div>
         <div class="reqs">
-          <div class="req"><span class="rk">Version</span><span class="rv">1.0.8</span></div>
+          <div class="req"><span class="rk">Version</span><span class="rv">1.0.9</span></div>
           <div class="req"><span class="rk">Requires</span><span class="rv">macOS on Apple Silicon</span></div>
           <div class="req"><span class="rk">Chip</span><span class="rv">Apple Silicon</span></div>
           <div class="req"><span class="rk">Size</span><span class="rv">134 MB</span></div>
           <div class="req"><span class="rk">Feed</span><span class="rv"><a href="/updates/darwin/arm64/releases.json">releases.json</a></span></div>
         </div>
       </div>
-      <p class="disclaim">Apexline is an unofficial companion app and is not affiliated with, endorsed by, or associated with Formula 1, the FIA, or any constructor.<br>Driver, team and timing data shown is illustrative.</p>
+      <p class="disclaim">Apexline is an unofficial companion app and is not affiliated with, endorsed by, or associated with Formula 1, F1 TV, the FIA, or any constructor.<br>Screenshots may show replay or seeded data. Live video and timing availability depends on the user's subscription, credentials, event availability, and upstream data sources.</p>
     </div>
   </section>
 

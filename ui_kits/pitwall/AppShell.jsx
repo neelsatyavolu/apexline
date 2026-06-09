@@ -2,7 +2,7 @@
    Exposes window.PW.AppShell. Reads window.PitWallDesignSystem_698fe6. */
 (function () {
   const NS = window.PitWallDesignSystem_698fe6;
-  const { Icon, Badge, Avatar } = NS;
+  const { Icon, Badge, Avatar, Button } = NS;
 
   const STYLE_ID = "pw-shell-styles";
   {
@@ -61,6 +61,10 @@
     .pw-top-pop__item:first-of-type { border-top: 0; }
     .pw-body { flex: 1; overflow-y: auto; min-height: 0; }
     .pw-body__inner { padding: var(--space-10) var(--space-12); margin: 0; }
+    .pw-update-pop { position: fixed; right: 24px; bottom: 24px; z-index: 120; width: min(340px, calc(100vw - 48px)); border-radius: var(--radius-md); border: 1px solid var(--border-default); background: var(--surface-overlay); box-shadow: var(--shadow-lg); padding: var(--space-7); }
+    .pw-update-pop__head { display: flex; align-items: center; gap: var(--space-5); color: var(--text-primary); font-size: var(--text-sm); font-weight: 700; }
+    .pw-update-pop__body { margin-top: var(--space-4); color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.4; }
+    .pw-update-pop__actions { display: flex; justify-content: flex-end; gap: var(--space-4); margin-top: var(--space-6); }
     `;
   }
 
@@ -208,6 +212,9 @@
 
   function AppShell({ active, onNavigate, title, crumb, actions, onSearchResult, children }) {
     const [isFullScreen, setIsFullScreen] = React.useState(false);
+    const [updatePrompt, setUpdatePrompt] = React.useState({ status: "idle", update: null, message: "" });
+    const [updateBusy, setUpdateBusy] = React.useState(false);
+    const updateCheckStarted = React.useRef(false);
 
     React.useEffect(() => {
       const windowState = window.pitwall?.windowState;
@@ -227,6 +234,40 @@
       };
     }, []);
 
+    React.useEffect(() => {
+      const updates = window.pitwall?.updates;
+      if (active !== "dashboard" || updateCheckStarted.current || !updates?.check) return undefined;
+      updateCheckStarted.current = true;
+      let mounted = true;
+      updates.check()
+        .then((status) => {
+          if (mounted && status?.status === "available" && status.update?.url) {
+            setUpdatePrompt({
+              status: "available",
+              update: status.update,
+              message: status.update?.version ? "Apexline " + status.update.version + " is ready to install." : status.message || "A new Apexline update is available.",
+            });
+          }
+        })
+        .catch(() => {});
+      return () => { mounted = false; };
+    }, [active]);
+
+    async function installUpdateAndRestart() {
+      const updates = window.pitwall?.updates;
+      const url = updatePrompt.update?.url;
+      if (!updates?.install || !url) return;
+      setUpdateBusy(true);
+      setUpdatePrompt((current) => ({ ...current, message: "Downloading update. Apexline will restart when installation is ready." }));
+      try {
+        await updates.install(url);
+        setUpdatePrompt((current) => ({ ...current, message: "Installing update and restarting Apexline." }));
+      } catch (error) {
+        setUpdatePrompt((current) => ({ ...current, message: error?.message || "Could not install the update." }));
+        setUpdateBusy(false);
+      }
+    }
+
     return (
       <div className={"pw-app" + (isFullScreen ? " pw-app--fullscreen" : "")}>
         <Sidebar active={active} onNavigate={onNavigate} />
@@ -236,6 +277,18 @@
             <div className="pw-body__inner">{children}</div>
           </div>
         </main>
+        {updatePrompt.status === "available" && (
+          <div className="pw-update-pop" role="status" aria-live="polite">
+            <div className="pw-update-pop__head"><Icon name="arrowDown" size={16} /> Update available</div>
+            <div className="pw-update-pop__body">
+              {updatePrompt.message}
+            </div>
+            <div className="pw-update-pop__actions">
+              <Button variant="ghost" size="sm" disabled={updateBusy} onClick={() => setUpdatePrompt({ status: "dismissed", update: null, message: "" })}>Later</Button>
+              <Button variant="secondary" size="sm" disabled={updateBusy} onClick={installUpdateAndRestart}>{updateBusy ? "Installing..." : "Install & Restart"}</Button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

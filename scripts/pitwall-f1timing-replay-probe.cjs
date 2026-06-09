@@ -24,6 +24,7 @@ function extractNamedFunction(source, name) {
 }
 
 const parser = vm.runInNewContext(`(() => {
+  const f1TimingTelemetrySampleCache = new WeakMap();
   ${[
     "finiteNumber",
     "groupRowsByDriverNumber",
@@ -56,7 +57,10 @@ const parser = vm.runInNewContext(`(() => {
     "f1TimingSectorTime",
     "f1TimingStints",
     "f1TimingLatestStint",
+    "f1TimingKnownCompoundsByNumber",
     "f1TimingTelemetryFromCarData",
+    "f1TimingTelemetrySamples",
+    "f1TimingTelemetryRowsAt",
     "parseF1TimingWeatherState",
     "parseF1TimingRaceControlMessages",
     "parseF1TimingArchiveRows",
@@ -66,7 +70,7 @@ const parser = vm.runInNewContext(`(() => {
 
 function option(name, fallback = "") {
   const prefix = `--${name}=`;
-  const found = process.argv.slice(2).find((arg) => arg.startsWith(prefix));
+  const found = process.argv.slice(2).filter((arg) => arg.startsWith(prefix)).at(-1);
   return found ? found.slice(prefix.length) : fallback;
 }
 
@@ -170,6 +174,7 @@ async function optionalText(file) {
     rows: parsed.timing.slice(0, Math.max(0, rowLimit)).map((row) => ({
       pos: row.pos,
       code: row.code,
+      number: row.number,
       last: row.last,
       best: row.best,
       gap: row.gap,

@@ -3553,7 +3553,7 @@
           });
         } catch (error) {
           if (cancelled || requestId !== liveTimingRequestRef.current) return;
-          setLiveTimingData({ ok: false, timing: [], weather: {}, sourceLabel: "Live timing unavailable", message: "OpenF1 live timing is unavailable." });
+          setLiveTimingData({ ok: false, timing: [], weather: {}, sourceLabel: "Live timing unavailable", message: "Formula 1 live timing is unavailable." });
           logPitWallDebug("live.timing-error", { message: error?.message || String(error || "") });
         } finally {
           if (requestId === liveTimingRequestRef.current) liveTimingInFlightRef.current = false;

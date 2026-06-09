@@ -1,9 +1,9 @@
 /* Apexline — Track Map screen. window.PW.TrackMap
    Circuit map with live driver positions when a session is on, fully labelled
-   turns / DRS / sectors otherwise. Renders the body only; AppShell supplies the
+   turns and sectors otherwise. Renders the body only; AppShell supplies the
    sidebar + topbar chrome. All race data comes from usePitWall() (the Electron
    bridge); circuit outlines are real OSM centerlines (window.PW_TRACKMAP_CIRCUITS,
-   see trackmap-circuits.js). Start/finish, sectors, DRS zones and numbered corners
+   see trackmap-circuits.js). Start/finish, sectors and numbered corners
    are derived from the path geometry; corner names are not part of the dataset. */
 (function () {
   const { useRef, useState, useEffect, useMemo } = React;
@@ -16,6 +16,8 @@
   const TYRE = { S: "var(--tyre-soft)", M: "var(--tyre-medium)", H: "var(--tyre-hard)", I: "var(--tyre-inter)", W: "var(--tyre-wet)" };
   const FLAG_LABEL = { green: "GREEN FLAG", yellow: "YELLOW FLAG", sc: "SAFETY CAR", vsc: "VIRTUAL SC", red: "RED FLAG", chequered: "CHEQUERED" };
   const FLAG_VAR = { green: "var(--flag-green)", yellow: "var(--flag-yellow, #ffd23f)", sc: "var(--flag-yellow, #ffd23f)", vsc: "var(--flag-yellow, #ffd23f)", red: "var(--live)", chequered: "var(--text-1)" };
+  const TRACK_MAP_LIVE_TIMING_POLL_INTERVAL_MS = 250;
+  const TRACK_MAP_REPLAY_TIMING_POLL_INTERVAL_MS = 100;
 
   /* ====================================================================== */
   /* Styles (ported from the design's Track Map.html, chrome rules dropped). */
@@ -38,6 +40,13 @@
     .tm-raceselect__select { appearance: none; -webkit-appearance: none; flex: 1; min-width: 0; height: 100%; padding: 0 22px 0 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font-family: var(--font-sans); font-size: var(--text-sm); font-weight: 700; cursor: pointer; }
     .tm-raceselect__select option { color: var(--text-primary); background: var(--bg-base); }
     .tm-raceselect__chev { position: absolute; right: var(--space-5); pointer-events: none; color: var(--text-tertiary); }
+    .tm-head__actions { display: inline-flex; align-items: center; gap: var(--space-5); }
+    .tm-replayscrub { display: inline-flex; align-items: center; gap: 8px; width: 190px; height: 34px; padding: 0 10px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text-secondary); box-shadow: var(--inset-top-light); }
+    .tm-replayscrub__label { flex: none; min-width: 62px; font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; color: var(--text-primary); }
+    .tm-replayscrub__range { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
+    .tm-replaybtn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid var(--accent-border); border-radius: var(--radius-sm); background: var(--accent-quiet); color: var(--text-primary); font-family: var(--font-sans); font-size: var(--text-sm); font-weight: 800; cursor: pointer; }
+    .tm-replaybtn:hover { border-color: var(--accent); background: var(--surface-hover); }
+    .tm-replaybtn:disabled { cursor: default; opacity: 0.55; }
     .tm-statline { display: flex; flex-direction: column; gap: var(--space-4); align-items: flex-end; }
     .tm-livebadge { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 8px; }
     .tm-livedot { width: 7px; height: 7px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 0 var(--live-glow); animation: tm-pulse 1.4s infinite; }
@@ -77,7 +86,6 @@
     .tm-turn:hover .tm-turn__badge { stroke: var(--accent); }
     .tm-sectext { font-family: var(--font-mono); font-weight: 700; font-size: 10px; fill: var(--accent); }
     .tm-sftext { font-family: var(--font-mono); font-weight: 700; font-size: 10px; fill: var(--text-1); letter-spacing: 0.12em; }
-    .tm-drstext { font-family: var(--font-mono); font-weight: 700; font-size: 9.5px; fill: var(--drs-open); letter-spacing: 0.05em; }
 
     .tm-car { cursor: pointer; transition: opacity 0.2s; }
     .tm-car[data-dim="true"] { opacity: 0.34; }
@@ -93,6 +101,7 @@
     .tm-ctlbtn { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 11px; border-radius: var(--radius-pill); border: 1px solid var(--border-default); background: color-mix(in srgb, var(--bg-3) 86%, transparent); backdrop-filter: blur(8px); color: var(--text-secondary); font-family: var(--font-sans); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
     .tm-ctlbtn:hover { color: var(--text-primary); border-color: var(--border-strong); }
     .tm-ctlbtn--clear { color: var(--accent); border-color: var(--accent-border); }
+    .tm-replayclock { display: inline-flex; align-items: center; height: 30px; padding: 0 10px; border-radius: var(--radius-pill); border: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--bg-2) 76%, transparent); color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 800; }
     .tm-legend { position: absolute; bottom: var(--space-7); left: var(--space-7); display: flex; flex-wrap: wrap; gap: var(--space-7); padding: 8px 12px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--bg-2) 82%, transparent); backdrop-filter: blur(8px); border: 1px solid var(--border-subtle); }
     .tm-legend__it { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-2xs); color: var(--text-secondary); }
     .tm-legend__sw { width: 12px; height: 4px; border-radius: 2px; }
@@ -146,6 +155,16 @@
     .tm-turnrow__n { font-family: var(--font-mono); font-weight: 700; font-size: var(--text-xs); color: var(--accent); width: 18px; text-align: center; flex: none; }
     .tm-turnrow__nm { font-size: var(--text-xs); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .tm-empty { margin-top: var(--space-7); display: flex; align-items: center; gap: var(--space-5); padding: var(--space-6); border-radius: var(--radius-md); background: var(--bg-sunken); border: 1px dashed var(--border-default); font-size: var(--text-xs); color: var(--text-tertiary); line-height: 1.4; }
+    .tm-modal { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: var(--space-9); background: rgba(3,5,9,0.62); backdrop-filter: blur(8px); }
+    .tm-modal__panel { width: min(420px, 100%); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-overlay); box-shadow: var(--shadow-lg); padding: var(--space-8); }
+    .tm-modal__head { display: flex; justify-content: space-between; align-items: start; gap: var(--space-6); }
+    .tm-modal__title { font-family: var(--font-display); font-weight: 800; font-size: var(--text-2xl); color: var(--text-strong); }
+    .tm-modal__sub { margin-top: 4px; color: var(--text-tertiary); font-size: var(--text-sm); }
+    .tm-modal__choices { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); margin-top: var(--space-8); }
+    .tm-modal__choice { min-height: 74px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text-primary); cursor: pointer; text-align: left; padding: var(--space-6); }
+    .tm-modal__choice:hover { border-color: var(--accent-border); background: var(--accent-quiet); }
+    .tm-modal__kind { display: block; font-family: var(--font-display); font-size: var(--text-xl); font-weight: 800; }
+    .tm-modal__meta { display: block; margin-top: 4px; color: var(--text-tertiary); font-size: var(--text-xs); }
     `;
   }
 
@@ -166,6 +185,49 @@
   function raceLabel(race) {
     const round = race?.rnd ? `R${race.rnd} · ` : "";
     return `${round}${race?.name || race?.circuit || "Race weekend"}`;
+  }
+  function sessionLabel(session) {
+    return [session?.day, session?.time].filter(Boolean).join(" ") || "Official livetiming archive";
+  }
+  function trackMapReplaySessionOptions(race) {
+    const sessions = Array.isArray(race?.sessions) ? race.sessions : [];
+    const sprint = sessions.find((session) => /^sprint$/i.test(session.kind || ""));
+    const grandPrix = sessions.find((session) => /^race$/i.test(session.kind || ""));
+    const options = [sprint, grandPrix].filter(Boolean);
+    if (options.length) return options;
+    return [{ kind: "Race", status: race?.status || "unknown", startsAt: race?.startsAt || "" }];
+  }
+  function canLoadReplayRace(race) {
+    return Boolean(race && (race.status === "done" || trackMapReplaySessionOptions(race).some((session) => session.status === "done")));
+  }
+  function formatReplayClock(seconds) {
+    const value = Math.max(0, Math.floor(Number(seconds || 0)));
+    const h = Math.floor(value / 3600);
+    const m = Math.floor((value % 3600) / 60);
+    const s = value % 60;
+    return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+  }
+  function viewBoxRect(vb) {
+    const parts = String(vb || "").split(/\s+/).map(Number);
+    return parts.length === 4 && parts.every(Number.isFinite) ? { x: parts[0], y: parts[1], w: parts[2], h: parts[3] } : null;
+  }
+  function officialPositionProjector(cars, geom) {
+    const vb = viewBoxRect(geom?.vb);
+    const points = cars
+      .map((car) => car.trackPosition)
+      .filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y));
+    if (!vb || points.length < 3) return null;
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+    const srcW = Math.max(1, maxX - minX), srcH = Math.max(1, maxY - minY);
+    const pad = 42;
+    const scale = Math.min((vb.w - pad * 2) / srcW, (vb.h - pad * 2) / srcH);
+    if (!Number.isFinite(scale) || scale <= 0) return null;
+    const usedW = srcW * scale, usedH = srcH * scale;
+    const ox = vb.x + (vb.w - usedW) / 2 - minX * scale;
+    const oy = vb.y + (vb.h - usedH) / 2 - minY * scale;
+    return (point) => ({ x: point.x * scale + ox, y: point.y * scale + oy });
   }
 
   /* ====================================================================== */
@@ -193,7 +255,7 @@
   /* Geometry: build the drawable map from a real circuit outline.          */
   /*   - road path is the actual centerline polyline (closed)               */
   /*   - corners detected by path curvature, capped to the official count   */
-  /*   - main straight / start-finish, sector thirds and DRS zones derived  */
+  /*   - main straight / start-finish and sector thirds derived             */
   /* ====================================================================== */
   function linePath(pts, closed) {
     if (!pts.length) return "";
@@ -294,7 +356,7 @@
     const maxC = circuit.facts && circuit.facts.corners;
     if (maxC && cornersRaw.length > maxC) cornersRaw = cornersRaw.slice().sort((a, b) => b.bend - a.bend).slice(0, maxC);
 
-    // ---- straights (low curvature runs) -> main straight, S/F, DRS ----
+    // ---- straights (low curvature runs) -> main straight, S/F ----
     const sc = clusters(n, (i) => Math.abs(defl[i]) < 3);
     const straights = sc.runs.map((r) => {
       let len = 0; for (let k = r.startK; k <= r.endK; k++) len += seg[idxAt(k)];
@@ -322,19 +384,13 @@
     }
     const sectors = [2, 3].map((s) => { const idx = idxAtDistance((s - 1) / 3); return { s, x: pts[idx][0], y: pts[idx][1], out: outwardAt(idx) }; });
 
-    // ---- DRS zones along the longest straights ----
-    const dzN = Math.max(1, (circuit.facts && circuit.facts.drsZones) || 1);
-    const drsRuns = straights.slice(0, dzN);
-    const drs = drsRuns.map((r) => linePath(sliceIdx(pts, r.startIdx, r.endIdx), false));
-    const drsLabels = drsRuns.map((r, di) => { const o = outwardAt(r.midIdx); return { name: dzN > 1 ? "DRS " + (di + 1) : "DRS", x: pts[r.midIdx][0] + o[0] * 16, y: pts[r.midIdx][1] + o[1] * 16 }; });
-
     // ---- start / finish ----
     const startNode = { pt: pts[sfIndex], out: outwardAt(sfIndex) };
 
     // ---- corner-name placement: collision-aware, outward-biased -----------
     // Each name is laid out one at a time. It tries a ring of candidate boxes
     // around its badge — most-outward direction first — and takes the first
-    // that clears every badge, every fixed marker (START / sector / DRS), the
+    // that clears every badge, every fixed marker (START / sector), the
     // road itself, and every name already placed. Consecutive turns sharing a
     // name (chicanes) are labelled once across the run. If nothing fits, the
     // name is dropped and only the numbered badge remains.
@@ -350,7 +406,6 @@
     const fixedRects = [];
     if (startNode) fixedRects.push({ x: startNode.pt[0] + startNode.out[0] * 34, y: startNode.pt[1] + startNode.out[1] * 34, hw: 27, hh: 13 });
     sectors.forEach((s) => fixedRects.push({ x: s.x + s.out[0] * 24, y: s.y + s.out[1] * 24, hw: 13, hh: 10 }));
-    drsLabels.forEach((dl) => fixedRects.push({ x: dl.x, y: dl.y, hw: 20, hh: 10 }));
 
     const DIRS = [[0, 1], [0.71, 0.71], [-0.71, 0.71], [1, 0], [-1, 0], [0.71, -0.71], [-0.71, -0.71], [0, -1]];
     const placedNames = [];
@@ -409,7 +464,7 @@
     const pad = 34;
     const vb = `${(minX - pad).toFixed(1)} ${(minY - pad).toFixed(1)} ${(maxX - minX + pad * 2).toFixed(1)} ${(maxY - minY + pad * 2).toFixed(1)}`;
 
-    return { d, turns, sectors, startNode, drs, drsLabels, vb };
+    return { d, turns, sectors, startNode, vb };
   }
 
   /* ====================================================================== */
@@ -430,10 +485,14 @@
       const place = (u) => {
         const path = pathRef.current, L = path && path.getTotalLength();
         if (!L) return false;
+        const projectOfficialPosition = officialPositionProjector(cars, geom);
         cars.forEach((c) => {
-          const cu = (u - c.frac + 1) % 1, el = carRefs.current[c.code];
+          const el = carRefs.current[c.code];
           if (!el) return;
-          const pt = path.getPointAtLength(cu * L), back = path.getPointAtLength(((cu - 0.009 + 1) % 1) * L);
+          const officialPoint = projectOfficialPosition && c.trackPosition ? projectOfficialPosition(c.trackPosition) : null;
+          const cu = (u - c.frac + 1) % 1;
+          const pt = officialPoint || path.getPointAtLength(cu * L);
+          const back = officialPoint ? pt : path.getPointAtLength(((cu - 0.009 + 1) % 1) * L);
           el.style.transform = `translate(${pt.x.toFixed(2)}px, ${pt.y.toFixed(2)}px)`;
           const trail = el.querySelector(".tm-car__trail");
           if (trail) { trail.setAttribute("x2", (back.x - pt.x).toFixed(2)); trail.setAttribute("y2", (back.y - pt.y).toFixed(2)); }
@@ -454,7 +513,7 @@
       return () => { killed = true; cancelAnimationFrame(raf); clearTimeout(timer); };
     }, [cars, mode, speed, paused, geom]);
 
-    const { turns: showTurns, names: showNames, drs: showDrs, sectors: showSectors } = layers;
+    const { turns: showTurns, names: showNames, sectors: showSectors } = layers;
     const roadW = 15, surfW = 10.5;
 
     return (
@@ -465,20 +524,10 @@
           </filter>
         </defs>
 
-        {showDrs && geom.drs.map((d, i) => (
-          <path key={"drsu" + i} d={d} fill="none" stroke="var(--drs-open)" strokeWidth={roadW + 9} strokeLinecap="round" strokeLinejoin="round" opacity="0.16" />
-        ))}
-
         <path ref={pathRef} d={geom.d} fill="none" stroke="#000" strokeWidth={roadW + 6} strokeLinejoin="round" opacity="0.55" />
         <path d={geom.d} fill="none" stroke="var(--ink-500)" strokeWidth={roadW} strokeLinejoin="round" strokeLinecap="round" />
         <path d={geom.d} fill="none" stroke="#0c0f15" strokeWidth={surfW} strokeLinejoin="round" strokeLinecap="round" />
         <path d={geom.d} fill="none" stroke="rgba(244,246,251,0.22)" strokeWidth="1.4" strokeDasharray="1.5 11" strokeLinecap="round" />
-
-        {showDrs && geom.drs.map((d, i) => (
-          <path key={"drso" + i} d={d} fill="none" stroke="var(--drs-open)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="9 7" opacity="0.95">
-            <animate attributeName="stroke-dashoffset" from="0" to="-32" dur="0.9s" repeatCount="indefinite" />
-          </path>
-        ))}
 
         {showSectors && geom.sectors.map((s, i) => (
           <g key={"sec" + i}>
@@ -506,13 +555,6 @@
             </g>
           );
         })()}
-
-        {showDrs && geom.drsLabels.map((dl, i) => (
-          <g key={"drsl" + i} transform={`translate(${dl.x}, ${dl.y})`}>
-            <rect x="-19" y="-9" width="38" height="18" rx="5" fill="rgba(43,208,122,0.14)" stroke="var(--drs-open)" strokeWidth="1" />
-            <text x="0" y="1" className="tm-drstext" textAnchor="middle" dominantBaseline="middle">{dl.name}</text>
-          </g>
-        ))}
 
         {showTurns && geom.turns.map((t) => {
           const active = selectedTurn === t.n;
@@ -589,7 +631,19 @@
     );
   }
 
-  function Header({ round, gp, name, loc, live, race, countdownTarget, raceStartLabel, races, selectedRaceKey, onSelectRace }) {
+  function ReplayLapScrubber({ replay, lap, laps, onSeekLap }) {
+    const currentLap = Number(lap);
+    const totalLaps = Number(laps);
+    if (!replay || !Number.isFinite(currentLap) || !Number.isFinite(totalLaps) || totalLaps < 2) return null;
+    return (
+      <label className="tm-replayscrub">
+        <span className="tm-replayscrub__label">Lap {currentLap}/{totalLaps}</span>
+        <input className="tm-replayscrub__range" type="range" aria-label="Replay lap" min="1" max={totalLaps} step="1" value={currentLap} onChange={(event) => onSeekLap(event.target.value)} />
+      </label>
+    );
+  }
+
+  function Header({ round, gp, name, loc, live, replay, replayLoading, race, countdownTarget, raceStartLabel, races, selectedRaceKey, onSelectRace, canLoadReplay, onLoadReplay, replayLap, replayLaps, onSeekReplayLap }) {
     const cd = useCountdown(countdownTarget);
     const wx = (race && race.weather) || {};
     const flag = (race && race.flag) || "green";
@@ -601,11 +655,19 @@
           <div className="tm-head__circuit"><Icon name="pin" size={13} /> {[name, loc].filter(Boolean).join(" · ")}</div>
         </div>
         <div className="tm-head__status">
-          <RaceSelector races={races} selectedRaceKey={selectedRaceKey} onSelectRace={onSelectRace} />
+          <div className="tm-head__actions">
+            <ReplayLapScrubber replay={replay} lap={replayLap} laps={replayLaps} onSeekLap={onSeekReplayLap} />
+            <RaceSelector races={races} selectedRaceKey={selectedRaceKey} onSelectRace={onSelectRace} />
+            {canLoadReplay && (
+              <button className="tm-replaybtn" type="button" onClick={onLoadReplay} disabled={replayLoading}>
+                <Icon name="play" size={14} /> {replayLoading ? "Loading..." : "Load Replay"}
+              </button>
+            )}
+          </div>
           {live ? (
             <>
               <div className="tm-statline">
-                <span className="pw-badge pw-badge--live tm-livebadge"><span className="tm-livedot" />LIVE</span>
+                <span className="pw-badge pw-badge--live tm-livebadge"><span className="tm-livedot" />{replay ? "REPLAY" : "LIVE"}</span>
                 <span className="tm-flag" style={{ color: FLAG_VAR[flag] || "var(--flag-green)" }}>{FLAG_LABEL[flag] || "GREEN FLAG"}</span>
               </div>
               <div className="tm-lap">
@@ -645,12 +707,14 @@
           {rows.map((row) => {
             const d = byCode[row.code] || {};
             const foc = focusCode === row.code, lead = row.pos === 1;
+            const color = d.color || row.color || "var(--accent)";
+            const number = d.num || row.number || "";
             return (
               <div key={row.code} className="tm-trow" data-foc={foc} data-dim={focusCode && !foc}
                 onClick={() => onFocus(foc ? null : row.code)}>
                 <span className="tm-trow__pos">{row.pos}</span>
-                <span className="tm-trow__bar" style={{ background: d.color }} />
-                <span className="tm-trow__code">{row.code}<i>{d.num}</i></span>
+                <span className="tm-trow__bar" style={{ background: color }} />
+                <span className="tm-trow__code">{row.code}<i>{number}</i></span>
                 <span className="tm-trow__tyre" style={{ "--tc": TYRE[tyreLetter(row.comp)] || "var(--text-tertiary)" }}>{tyreLetter(row.comp)}</span>
                 <span className={"tm-trow__gap" + (lead ? " is-lead" : "")}>{lead ? "INTERVAL" : row.interval}</span>
               </div>
@@ -682,7 +746,7 @@
     const f = circuit.facts;
     const facts = [
       { k: "Lap length", v: f.length, icon: "pin" }, { k: "Race laps", v: f.laps, icon: "flag" },
-      { k: "Corners", v: f.corners, icon: "gauge" }, { k: "DRS zones", v: f.drsZones, icon: "zap" },
+      { k: "Corners", v: f.corners, icon: "gauge" },
       { k: "Direction", v: f.direction, icon: "timer" }, { k: "First GP", v: f.firstGp, icon: "calendar" },
     ];
     return (
@@ -727,12 +791,14 @@
       </svg>
     );
   }
-  function MapControls({ paused, setPaused, focusCode, onClear }) {
+  function MapControls({ paused, setPaused, focusCode, onClear, replay, elapsedSeconds, onStopReplay }) {
     return (
       <div className="tm-mapctl">
         <button className="tm-ctlbtn" onClick={() => setPaused(!paused)}>
           {paused ? <Icon name="play" size={14} /> : <PauseGlyph size={14} />} {paused ? "Resume" : "Pause"}
         </button>
+        {replay && <span className="tm-replayclock">REPLAY {formatReplayClock(elapsedSeconds)}</span>}
+        {replay && <button className="tm-ctlbtn tm-ctlbtn--clear" onClick={onStopReplay}><Icon name="close" size={13} /> Exit replay</button>}
         {focusCode && (
           <button className="tm-ctlbtn tm-ctlbtn--clear" onClick={onClear}><Icon name="close" size={13} /> {focusCode}</button>
         )}
@@ -741,7 +807,6 @@
   }
   function MapLegend({ live, layers, carCount }) {
     const items = [];
-    if (layers.drs) items.push({ c: "var(--drs-open)", l: "DRS zone" });
     if (layers.sectors) items.push({ c: "var(--accent)", l: "Sector split" });
     items.push({ c: "#f4f6fb", l: "Start / finish" });
     if (live) items.push({ c: "var(--live)", l: `${carCount} cars on track` });
@@ -771,26 +836,203 @@
     const [selTurn, setSelTurn] = useState(null);
     const [paused, setPaused] = useState(false);
     const [selectedRaceKey, setSelectedRaceKey] = useState("");
-
-    const timing = Array.isArray(data.timing) ? data.timing : [];
+    const [liveTimingData, setLiveTimingData] = useState(null);
+    const [replay, setReplay] = useState({ active: false, playing: false, loading: false, raceKey: "", sessionKind: "Race", session: null, elapsedSeconds: 0, data: null, error: "", needsInitialLapStart: false });
+    const [replayChoiceRace, setReplayChoiceRace] = useState(null);
+    const liveTimingInFlightRef = useRef(false);
+    const replayRequestRef = useRef(0);
+    const replayTimingInFlightRef = useRef(false);
 
     const races = Array.isArray(data.schedule) ? data.schedule : [];
     const liveRace = useMemo(() => races.find((r) => r.status === "live") || null, [races]);
     const liveSession = useMemo(() => (Array.isArray(data.sessions) ? data.sessions : []).find((s) => s.status === "live") || null, [data.sessions]);
-    const live = timing.length > 0 && Boolean(liveRace || liveSession);
     const upcomingRace = useMemo(() => races.find((r) => r.status === "upcoming") || null, [races]);
     const latestCompletedRace = useMemo(() => races.filter((r) => r.status === "done").at(-1) || null, [races]);
     const autoRace = liveRace || upcomingRace || latestCompletedRace || races[0] || null;
     const liveRaceKey = raceKey(liveRace);
     const selectedRace = selectedRaceKey ? races.find((race) => raceKey(race) === selectedRaceKey) || autoRace : autoRace;
     const selectedRaceValue = raceKey(selectedRace);
-    const mapLive = live && (!selectedRaceKey || selectedRaceKey === liveRaceKey);
+    const replayActive = replay.active && replay.raceKey === selectedRaceValue;
+    const timing = Array.isArray(liveTimingData?.timing) && !replayActive
+        ? liveTimingData.timing
+        : replayActive && Array.isArray(replay.data?.timing)
+          ? replay.data.timing
+          : [];
+    const live = !replayActive && timing.length > 0;
+    const mapLive = !replayActive && live && liveRaceKey && (!selectedRaceKey || selectedRaceKey === liveRaceKey);
+    const mapTracking = mapLive || replayActive;
 
     useEffect(() => {
       if (selectedRaceKey && !races.some((race) => raceKey(race) === selectedRaceKey)) setSelectedRaceKey("");
     }, [selectedRaceKey, races]);
+    useEffect(() => {
+      if (replayActive || !window.pitwall?.data?.liveTiming) {
+        if (replayActive) setLiveTimingData(null);
+        return undefined;
+      }
+      let cancelled = false;
+      const loadLiveTiming = async () => {
+        if (liveTimingInFlightRef.current) return;
+        liveTimingInFlightRef.current = true;
+        try {
+          const result = await window.pitwall.data.liveTiming({ source: "f1", targetLatencySeconds: 0 });
+          if (!cancelled) setLiveTimingData(result || null);
+        } catch (error) {
+          if (!cancelled) setLiveTimingData({ ok: false, timing: [], weather: {}, message: error?.message || "Formula 1 live timing is unavailable." });
+        } finally {
+          liveTimingInFlightRef.current = false;
+        }
+      };
+      loadLiveTiming();
+      const timer = setInterval(loadLiveTiming, TRACK_MAP_LIVE_TIMING_POLL_INTERVAL_MS);
+      return () => {
+        cancelled = true;
+        liveTimingInFlightRef.current = false;
+        clearInterval(timer);
+      };
+    }, [replayActive]);
+    useEffect(() => {
+      if (replay.active && replay.raceKey && replay.raceKey !== selectedRaceValue) {
+        setReplay((current) => ({ ...current, active: false, playing: false }));
+      }
+    }, [replay.active, replay.raceKey, selectedRaceValue]);
 
-    const headerRace = mapLive ? { ...(data.race || {}), lap: data.race?.lap || "-", laps: data.race?.laps || "-" } : selectedRace;
+    useEffect(() => {
+      if (!replayActive || !replay.playing) return undefined;
+      let prev = Date.now();
+      const timer = setInterval(() => {
+        const now = Date.now();
+        const delta = Math.max(0, Math.min(2, (now - prev) / 1000));
+        prev = now;
+        setReplay((current) => current.active && current.playing ? { ...current, elapsedSeconds: current.elapsedSeconds + delta } : current);
+      }, TRACK_MAP_REPLAY_TIMING_POLL_INTERVAL_MS);
+      return () => clearInterval(timer);
+    }, [replayActive, replay.playing]);
+
+    useEffect(() => {
+      if (!replayActive || !selectedRace || !window.pitwall?.data?.replayTiming) return undefined;
+      let cancelled = false;
+      let lastBucket = "";
+      const loadReplayTiming = async () => {
+        if (replayTimingInFlightRef.current) return;
+        const elapsedSeconds = Math.max(0, replay.elapsedSeconds || 0);
+        const bucket = `${selectedRaceValue}:${replay.sessionKind}:${Math.floor(elapsedSeconds * 10)}`;
+        if (bucket === lastBucket) return;
+        lastBucket = bucket;
+        const requestId = replayRequestRef.current + 1;
+        replayRequestRef.current = requestId;
+        replayTimingInFlightRef.current = true;
+        setReplay((current) => ({ ...current, loading: true, error: "" }));
+        try {
+          const session = replay.session || trackMapReplaySessionOptions(selectedRace).find((item) => item.kind === replay.sessionKind) || null;
+          const result = await window.pitwall.data.replayTiming({
+            source: "f1timing",
+            meetingKey: selectedRace.meetingKey || "",
+            season: data.seasonSummary?.season || "",
+            raceName: selectedRace.name || "",
+            raceStartsAt: selectedRace.startsAt || session?.startsAt || "",
+            sessionStartsAt: session?.startsAt || selectedRace.startsAt || "",
+            sessionKind: replay.sessionKind,
+            elapsedSeconds,
+          });
+          if (cancelled || requestId !== replayRequestRef.current) return;
+          setReplay((current) => ({ ...current, loading: false, data: result || null, error: result?.ok === false ? result.message || "Replay timing is unavailable." : "" }));
+        } catch (error) {
+          if (cancelled || requestId !== replayRequestRef.current) return;
+          setReplay((current) => ({ ...current, loading: false, error: error?.message || "Replay timing is unavailable." }));
+        } finally {
+          if (replayRequestRef.current === requestId) replayTimingInFlightRef.current = false;
+        }
+      };
+      loadReplayTiming();
+      const timer = setInterval(loadReplayTiming, TRACK_MAP_REPLAY_TIMING_POLL_INTERVAL_MS);
+      return () => {
+        cancelled = true;
+        replayRequestRef.current += 1;
+        replayTimingInFlightRef.current = false;
+        clearInterval(timer);
+      };
+    }, [replayActive, selectedRaceValue, selectedRace?.meetingKey, replay.sessionKind, replay.elapsedSeconds]);
+
+    useEffect(() => {
+      if (!replayActive || !replay.needsInitialLapStart) return;
+      const lapTimeline = Array.isArray(replay.data?.lapTimeline) ? replay.data.lapTimeline : [];
+      const target = lapTimeline.find((item) => Number(item.lap) === 1);
+      const elapsedSeconds = Number(target?.elapsedSeconds);
+      if (!Number.isFinite(elapsedSeconds)) return;
+      replayRequestRef.current += 1;
+      replayTimingInFlightRef.current = false;
+      setReplay((current) => ({
+        ...current,
+        needsInitialLapStart: false,
+        loading: true,
+        error: "",
+        elapsedSeconds,
+        data: current.data ? {
+          ...current.data,
+          sessionClock: {
+            ...(current.data.sessionClock || {}),
+            lapCount: { ...(current.data.sessionClock?.lapCount || {}), lap: 1 },
+          },
+        } : current.data,
+      }));
+    }, [replayActive, replay.needsInitialLapStart, replay.data?.lapTimeline]);
+
+    function startTrackMapReplay(race, session) {
+      const kind = session?.kind || "Race";
+      setSelectedRaceKey(raceKey(race));
+      setReplayChoiceRace(null);
+      setPaused(false);
+      setReplay({ active: true, playing: true, loading: true, raceKey: raceKey(race), sessionKind: kind, session: session || null, elapsedSeconds: 0, data: null, error: "", needsInitialLapStart: true });
+    }
+    function loadTrackMapReplay() {
+      if (!selectedRace) return;
+      const options = trackMapReplaySessionOptions(selectedRace);
+      if (options.length > 1) {
+        setReplayChoiceRace(selectedRace);
+        return;
+      }
+      startTrackMapReplay(selectedRace, options[0]);
+    }
+    function stopTrackMapReplay() {
+      setReplay((current) => ({ ...current, active: false, playing: false }));
+    }
+    function seekReplayLap(lapValue) {
+      const lap = Math.max(1, Math.floor(Number(lapValue || 1)));
+      const lapTimeline = Array.isArray(replay.data?.lapTimeline) ? replay.data.lapTimeline : [];
+      const target = lapTimeline.find((item) => Number(item.lap) === lap);
+      const elapsedSeconds = Number(target?.elapsedSeconds);
+      if (!Number.isFinite(elapsedSeconds)) return;
+      replayRequestRef.current += 1;
+      replayTimingInFlightRef.current = false;
+      setReplay((current) => ({
+        ...current,
+        needsInitialLapStart: false,
+        loading: true,
+        error: "",
+        elapsedSeconds,
+        data: current.data ? {
+          ...current.data,
+          sessionClock: {
+            ...(current.data.sessionClock || {}),
+            lapCount: { ...(current.data.sessionClock?.lapCount || {}), lap },
+          },
+        } : current.data,
+      }));
+    }
+    function setTrackPaused(nextPaused) {
+      setPaused(nextPaused);
+      if (replayActive) setReplay((current) => ({ ...current, playing: !nextPaused }));
+    }
+
+    const replayLap = replay.data?.sessionClock?.lapCount?.lap || "-";
+    const replayLaps = replay.data?.sessionClock?.lapCount?.laps || "-";
+    const liveWeather = liveTimingData?.weather && Object.values(liveTimingData.weather).some((value) => value !== "" && value != null) ? liveTimingData.weather : data.race?.weather;
+    const liveLap = liveTimingData?.sessionClock?.lapCount?.lap || data.race?.lap || "-";
+    const liveLaps = liveTimingData?.sessionClock?.lapCount?.laps || data.race?.laps || "-";
+    const headerRace = mapTracking
+      ? { ...(replayActive ? selectedRace : data.race || {}), lap: replayActive ? replayLap : liveLap, laps: replayActive ? replayLaps : liveLaps, weather: replayActive ? replay.data?.weather || {} : liveWeather }
+      : selectedRace;
     const circuit = resolveCircuit(headerRace) || (mapLive ? resolveCircuit(data.race) : null);
     const geom = useMemo(() => (circuit ? buildGeom(circuit) : null), [circuit]);
 
@@ -799,17 +1041,17 @@
 
     // Live cars spaced around the lap from cumulative gap-to-leader seconds.
     const cars = useMemo(() => {
-      if (!mapLive) return [];
+      if (!mapTracking) return [];
       const lapT = lapSeconds(timing[0]?.last) || 90;
       let cum = 0;
       return timing.map((row, i) => {
         const drv = data.byCode[row.code] || {};
         cum += i === 0 ? 0 : gapSeconds(row.interval, lapT);
-        return { code: row.code, pos: row.pos, num: drv.num, color: drv.color, abbr: drv.abbr, name: drv.name, comp: row.comp, gap: row.gap, frac: (cum / lapT) % 1 };
+        return { code: row.code, pos: row.pos, num: drv.num || row.number, color: drv.color || "var(--accent)", abbr: drv.abbr, name: drv.name, comp: row.comp, gap: row.gap, frac: (cum / lapT) % 1, trackPosition: row.trackPosition || null };
       });
-    }, [mapLive, timing, data.byCode]);
+    }, [mapTracking, timing, data.byCode]);
 
-    const layers = { turns: true, names: true, drs: true, sectors: true, start: true };
+    const layers = { turns: true, names: true, sectors: true, start: true };
     const selTurnObj = useMemo(() => (geom ? geom.turns.find((t) => t.n === selTurn) || null : null), [geom, selTurn]);
 
     const round = mapLive ? data.race?.round : selectedRace?.rnd;
@@ -824,22 +1066,27 @@
     const countdownTarget = !mapLive ? (raceSession?.startsAt || selectedRace?.startsAt || "") : "";
     const raceStartLabel = !mapLive && raceSession ? `Race start · ${raceSession.day || ""} ${raceSession.time || ""} local`.trim() : "";
 
-    const battles = Array.isArray(data.battlePairs) ? data.battlePairs : [];
+    const battles = replayActive ? [] : Array.isArray(data.battlePairs) ? data.battlePairs : [];
+    const loadableReplay = !replayActive && canLoadReplayRace(selectedRace);
+    const replayChoices = trackMapReplaySessionOptions(replayChoiceRace);
 
     return (
       <div className="tm-screen">
-        <Header round={round} gp={gp} name={circuitName} loc={loc} live={mapLive}
-          race={mapLive ? headerRace : null} countdownTarget={countdownTarget} raceStartLabel={raceStartLabel}
-          races={races} selectedRaceKey={selectedRaceValue} onSelectRace={setSelectedRaceKey} />
+        <Header round={round} gp={gp} name={circuitName} loc={loc} live={mapTracking} replay={replayActive} replayLoading={replay.loading}
+          race={mapTracking ? headerRace : null} countdownTarget={countdownTarget} raceStartLabel={raceStartLabel}
+          races={races} selectedRaceKey={selectedRaceValue} onSelectRace={setSelectedRaceKey}
+          canLoadReplay={loadableReplay} onLoadReplay={loadTrackMapReplay}
+          replayLap={replayLap} replayLaps={replayLaps} onSeekReplayLap={seekReplayLap} />
         <div className="tm-stage">
           <div className="tm-mapwrap">
             <div className="tm-mapcard">
               {geom ? (
                 <>
-                  <TrackMapView geom={geom} mode={mapLive ? "live" : "map"} layers={layers} cars={cars}
+                  <TrackMapView geom={geom} mode={mapTracking ? "live" : "map"} layers={layers} cars={cars}
                     focusCode={focusCode} onFocus={setFocus} selectedTurn={selTurn} onSelectTurn={setSelTurn} paused={paused} />
-                  {mapLive && <MapControls paused={paused} setPaused={setPaused} focusCode={focusCode} onClear={() => setFocus(null)} />}
-                  <MapLegend live={mapLive} layers={layers} carCount={cars.length} />
+                  {mapTracking && <MapControls paused={paused} setPaused={setTrackPaused} focusCode={focusCode} onClear={() => setFocus(null)}
+                    replay={replayActive} elapsedSeconds={replay.elapsedSeconds} onStopReplay={stopTrackMapReplay} />}
+                  <MapLegend live={mapTracking} layers={layers} carCount={cars.length} />
                   {selTurnObj && <TurnCard circuitName={circuit.name} turn={selTurnObj} onClose={() => setSelTurn(null)} />}
                 </>
               ) : (
@@ -853,7 +1100,7 @@
             </div>
           </div>
           <div className="tm-railwrap">
-            {mapLive ? (
+            {mapTracking ? (
               <TimingTower rows={timing} byCode={data.byCode} lap={headerRace.lap} laps={headerRace.laps}
                 battles={battles} focusCode={focusCode} onFocus={setFocus} />
             ) : geom ? (
@@ -866,6 +1113,27 @@
             )}
           </div>
         </div>
+        {replayChoiceRace && (
+          <div className="tm-modal" role="dialog" aria-modal="true" aria-label="Choose replay session">
+            <div className="tm-modal__panel">
+              <div className="tm-modal__head">
+                <div>
+                  <div className="tm-modal__title">Load Replay</div>
+                  <div className="tm-modal__sub">{replayChoiceRace.name || "Race weekend"} has more than one race session.</div>
+                </div>
+                <button className="tm-ctlbtn tm-ctlbtn--clear" type="button" onClick={() => setReplayChoiceRace(null)}><Icon name="close" size={13} /></button>
+              </div>
+              <div className="tm-modal__choices">
+                {replayChoices.map((session) => (
+                  <button className="tm-modal__choice" key={session.kind} type="button" onClick={() => startTrackMapReplay(replayChoiceRace, session)}>
+                    <span className="tm-modal__kind">{session.kind}</span>
+                    <span className="tm-modal__meta">{sessionLabel(session)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

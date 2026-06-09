@@ -168,17 +168,8 @@ const LIVE_CORE_DATA_URLS = {
   openF1Weather: "https://api.openf1.org/v1/weather?session_key=latest",
   ...LIVE_NEWS_URLS,
 };
-const LIVE_TIMING_ENRICHMENT_URLS = {
-  openF1Drivers: "https://api.openf1.org/v1/drivers?session_key=latest",
-  openF1CarData: "https://api.openf1.org/v1/car_data?session_key=latest",
-  openF1Intervals: "https://api.openf1.org/v1/intervals?session_key=latest",
-  openF1Laps: "https://api.openf1.org/v1/laps?session_key=latest",
-  openF1Pit: "https://api.openf1.org/v1/pit?session_key=latest",
-  openF1Position: "https://api.openf1.org/v1/position?session_key=latest",
-  openF1Stints: "https://api.openf1.org/v1/stints?session_key=latest",
-};
-const LIVE_DATA_URLS = { ...LIVE_CORE_DATA_URLS, ...LIVE_TIMING_ENRICHMENT_URLS };
-const OPTIONAL_LIVE_DATA_KEYS = new Set(["openF1CarData", "openF1Laps", "openF1Pit", "openF1Stints"]);
+const LIVE_DATA_URLS = { ...LIVE_CORE_DATA_URLS };
+const OPTIONAL_LIVE_DATA_KEYS = new Set();
 const COPILOT_INSIGHT_PAGES = [
   { id: "drivers-championship", title: "Drivers championship", kicker: "Overall standings" },
   { id: "constructors-championship", title: "Constructors championship", kicker: "Team standings" },
@@ -236,6 +227,7 @@ let replayTimingCache = new Map();
 let replayOpenF1Cache = new Map();
 let replayF1TimingCache = new Map();
 const f1TimingTelemetrySampleCache = new WeakMap();
+const f1TimingPositionSampleCache = new WeakMap();
 let liveTimingCache = null;
 let f1LiveTimingClient = null;
 let f1LiveTimingState = null;
@@ -3259,6 +3251,94 @@ function f1TimingTelemetryRowsAt(sessionData, targetSeconds) {
   return Array.from(latest.values());
 }
 
+function f1TimingPositionSamples(sessionData) {
+  if (!sessionData || typeof sessionData !== "object") return { samples: [], driverCount: 0 };
+  const cached = f1TimingPositionSampleCache.get(sessionData);
+  if (cached) return cached;
+  const driverNumbers = new Set();
+  const samples = [];
+  for (const outer of sessionData?.positionEntries || []) {
+    const groups = Array.isArray(outer?.data?.Position)
+      ? outer.data.Position
+      : Array.isArray(outer?.data?.Entries)
+        ? outer.data.Entries
+        : [];
+    for (const group of groups) {
+      const utc = group?.Timestamp || group?.Utc || group?.Date || "";
+      const utcMs = Date.parse(utc);
+      if (!Number.isFinite(utcMs)) continue;
+      const entries = group?.Entries || group?.Cars || {};
+      for (const [number, position] of Object.entries(entries)) {
+        const driverNumber = Number(number);
+        if (!Number.isFinite(driverNumber)) continue;
+        const x = finiteNumber(position?.X ?? position?.x);
+        const y = finiteNumber(position?.Y ?? position?.y);
+        if (x == null || y == null) continue;
+        driverNumbers.add(driverNumber);
+        samples.push({
+          utcMs,
+          driverNumber,
+          row: {
+            driver_number: driverNumber,
+            date: utc,
+            x,
+            y,
+            z: finiteNumber(position?.Z ?? position?.z) ?? 0,
+            status: String(position?.Status || position?.status || "").trim(),
+          },
+        });
+      }
+    }
+  }
+  samples.sort((a, b) => a.utcMs - b.utcMs || a.driverNumber - b.driverNumber);
+  const indexed = { samples, driverCount: driverNumbers.size };
+  f1TimingPositionSampleCache.set(sessionData, indexed);
+  return indexed;
+}
+
+function f1TimingPositionRowsAt(sessionData, targetSeconds) {
+  const targetUtcMs = f1TimingTargetUtcMs(sessionData, targetSeconds);
+  const { samples, driverCount } = f1TimingPositionSamples(sessionData);
+  if (!Number.isFinite(targetUtcMs)) {
+    const entry = f1TimingLatestEntryAt(sessionData?.positionEntries || [], targetSeconds);
+    const groups = Array.isArray(entry?.data?.Position)
+      ? entry.data.Position
+      : Array.isArray(entry?.data?.Entries)
+        ? entry.data.Entries
+        : [];
+    const group = groups.at(-1);
+    return Object.entries(group?.Entries || group?.Cars || {}).map(([number, position]) => {
+      const driverNumber = Number(number);
+      const x = finiteNumber(position?.X ?? position?.x);
+      const y = finiteNumber(position?.Y ?? position?.y);
+      if (!Number.isFinite(driverNumber) || x == null || y == null) return null;
+      return {
+        driver_number: driverNumber,
+        date: group?.Timestamp || group?.Utc || group?.Date || "",
+        x,
+        y,
+        z: finiteNumber(position?.Z ?? position?.z) ?? 0,
+        status: String(position?.Status || position?.status || "").trim(),
+      };
+    }).filter(Boolean);
+  }
+  if (!samples.length) return [];
+  let lo = 0;
+  let hi = samples.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (samples[mid].utcMs <= targetUtcMs) lo = mid + 1;
+    else hi = mid;
+  }
+  const latest = new Map();
+  for (let index = lo - 1; index >= 0; index -= 1) {
+    const sample = samples[index];
+    if (!latest.has(sample.driverNumber)) latest.set(sample.driverNumber, sample.row);
+    if (driverCount && latest.size >= driverCount) break;
+  }
+  return Array.from(latest.values());
+}
+
 function parseF1TimingWeatherState(state) {
   const air = finiteNumber(state?.AirTemp);
   const track = finiteNumber(state?.TrackTemp);
@@ -3312,6 +3392,23 @@ function parseF1TimingLapCount(sessionData, targetSeconds) {
   };
 }
 
+function f1TimingLapTimeline(sessionData, timingAnchor, videoStartArchiveSeconds) {
+  const offset = timingAnchor === "video"
+    ? Number(videoStartArchiveSeconds || 0)
+    : timingAnchor === "session" ? f1TimingSessionStartSeconds(sessionData) : 0;
+  const seen = new Set();
+  const timeline = [];
+  for (const entry of sessionData.lapCountEntries || []) {
+    const lap = finiteNumber(entry?.data?.CurrentLap) ?? finiteNumber(entry?.data?.Lap) ?? finiteNumber(entry?.data?.LapNumber);
+    const seconds = finiteNumber(entry?.seconds);
+    if (!lap || seconds == null || seen.has(lap)) continue;
+    const elapsedSeconds = Math.max(0, Number((seconds - offset).toFixed(3)));
+    seen.add(lap);
+    timeline.push({ lap, elapsedSeconds });
+  }
+  return timeline.sort((a, b) => a.lap - b.lap);
+}
+
 function parseF1TimingRaceControlMessages(entries, targetSeconds) {
   const state = f1TimingStateAt(entries || [], targetSeconds);
   const rawMessages = state?.Messages || state?.messages || state?.Message || [];
@@ -3360,6 +3457,10 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
   const raceControlMessages = parseF1TimingRaceControlMessages(sessionData.raceControlEntries, targetSeconds);
   const telemetryRows = f1TimingTelemetryRowsAt(sessionData, targetSeconds);
   const telemetryByNumber = latestCarDataByDriverNumber(telemetryRows);
+  const positionByNumber = new Map(f1TimingPositionRowsAt(sessionData, targetSeconds).map((row) => [
+    Number(row.driver_number),
+    { x: row.x, y: row.y, z: row.z, status: row.status },
+  ]));
   const knownCompounds = f1TimingKnownCompoundsByNumber(sessionData.timingAppEntries, targetSeconds);
   const lines = timingState?.Lines || {};
   const appLines = appState?.Lines || {};
@@ -3417,10 +3518,11 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
         s3: f1TimingSectorTime(line?.BestSectors?.["2"]),
       },
       telemetry: telemetryByNumber.get(number) || {},
+      trackPosition: positionByNumber.get(number) || null,
     };
   }).filter((row) => row.code && row.pos).sort((a, b) => a.pos - b.pos);
   const timingRows = fillF1TimingQualifyingDeltas(rows);
-  return { timing: timingRows, weather: parseF1TimingWeatherState(weatherState), sessionClock, raceControlMessages, diagnostics: {
+  return { timing: timingRows, weather: parseF1TimingWeatherState(weatherState), sessionClock, raceControlMessages, lapTimeline: f1TimingLapTimeline(sessionData, timingAnchor, videoStartArchiveSeconds), diagnostics: {
     timingAnchor,
     videoStartArchiveSeconds,
     sessionStartSeconds: f1TimingSessionStartSeconds(sessionData),
@@ -3437,39 +3539,46 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
     lapCountEntries: sessionData.lapCountEntries?.length || 0,
     weatherEntries: sessionData.weatherEntries?.length || 0,
     carDataEntries: sessionData.carDataEntries?.length || 0,
+    positionEntries: sessionData.positionEntries?.length || 0,
     telemetryRows: telemetryRows.length,
+    positionRows: positionByNumber.size,
   } };
 }
 
 async function getReplayF1TimingSessionData(meetingKey, sessionKind, options = {}) {
   const normalizedKind = normalizeOpenF1SessionKind(sessionKind || "Race");
   const identityKey = [options.raceName, options.raceStartsAt, options.sessionStartsAt].filter(Boolean).join(":");
-  const cacheKey = `${meetingKey}:${normalizedKind}:${identityKey}`;
+  const cacheKey = `${meetingKey || "race"}:${normalizedKind}:${identityKey}`;
   const cached = replayF1TimingCache.get(cacheKey);
   const maxAgeMs = 1000 * 60 * 60;
   if (cached && Date.now() - cached.createdAt < maxAgeMs) return cached.data;
 
-  const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { meeting_key: meetingKey })).catch(() => []);
-  const sessions = await requestOpenF1Json(openF1ApiUrl("sessions", { meeting_key: meetingKey }));
-  const meeting = meetings?.[0] || {};
-  const selectedSession = (sessions || [])
-    .slice()
-    .sort((a, b) => scoreOpenF1ReplaySession(b, sessionKind) - scoreOpenF1ReplaySession(a, sessionKind))[0];
-  if (!selectedSession?.session_key) throw new Error(`No ${sessionKind} session matched this replay.`);
   const optionIdentity = f1TimingArchiveIdentityFromOptions(options, sessionKind);
   let archive = null;
-  let resolvedMeeting = meeting;
-  let resolvedSession = selectedSession;
+  let resolvedMeeting = {};
+  let resolvedSession = {};
   if (optionIdentity) {
     try {
       archive = await resolveF1TimingArchiveBase(optionIdentity.meeting, optionIdentity.session);
       resolvedMeeting = optionIdentity.meeting;
-      resolvedSession = { ...selectedSession, ...optionIdentity.session };
+      resolvedSession = { ...optionIdentity.session };
     } catch {}
   }
-  if (!archive) archive = await resolveF1TimingArchiveBase(meeting, selectedSession);
+  if (!archive) {
+    if (!meetingKey) throw new Error("Formula 1 livetiming replay needs a race identity or OpenF1 meeting key.");
+    const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { meeting_key: meetingKey })).catch(() => []);
+    const sessions = await requestOpenF1Json(openF1ApiUrl("sessions", { meeting_key: meetingKey }));
+    const meeting = meetings?.[0] || {};
+    const selectedSession = (sessions || [])
+      .slice()
+      .sort((a, b) => scoreOpenF1ReplaySession(b, sessionKind) - scoreOpenF1ReplaySession(a, sessionKind))[0];
+    if (!selectedSession?.session_key) throw new Error(`No ${sessionKind} session matched this replay.`);
+    archive = await resolveF1TimingArchiveBase(meeting, selectedSession);
+    resolvedMeeting = meeting;
+    resolvedSession = selectedSession;
+  }
   const baseUrl = archive.baseUrl;
-  const [driverListText, timingText, appText, clockText, sessionDataText, statusText, trackStatusText, raceControlText, lapCountText, weatherText, carText] = await Promise.all([
+  const [driverListText, timingText, appText, clockText, sessionDataText, statusText, trackStatusText, raceControlText, lapCountText, weatherText, carText, positionText] = await Promise.all([
     f1TimingRequestText(`${baseUrl}DriverList.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}TimingData.jsonStream`),
     f1TimingRequestText(`${baseUrl}TimingAppData.jsonStream`).catch(() => ""),
@@ -3481,6 +3590,7 @@ async function getReplayF1TimingSessionData(meetingKey, sessionKind, options = {
     f1TimingRequestText(`${baseUrl}LapCount.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}WeatherData.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}CarData.z.jsonStream`).catch(() => ""),
+    f1TimingRequestText(`${baseUrl}Position.z.jsonStream`).catch(() => ""),
   ]);
   const data = {
     ok: true,
@@ -3499,6 +3609,7 @@ async function getReplayF1TimingSessionData(meetingKey, sessionKind, options = {
     lapCountEntries: lapCountText ? parseF1TimingJsonStream(lapCountText) : [],
     weatherEntries: weatherText ? parseF1TimingJsonStream(weatherText) : [],
     carDataEntries: carText ? parseF1TimingJsonStream(carText, { zipped: true }) : [],
+    positionEntries: positionText ? parseF1TimingJsonStream(positionText, { zipped: true }) : [],
   };
   replayF1TimingCache.set(cacheKey, { createdAt: Date.now(), data });
   if (replayF1TimingCache.size > 12) replayF1TimingCache = new Map(Array.from(replayF1TimingCache.entries()).slice(-8));
@@ -3652,6 +3763,7 @@ function getF1LiveTimingSnapshot(options = {}) {
     lapCountEntries: entriesByTopic.LapCount || [],
     weatherEntries: entriesByTopic.WeatherData || [],
     carDataEntries: entriesByTopic["CarData.z"] || [],
+    positionEntries: entriesByTopic["Position.z"] || [],
   }, targetLatencySeconds ? targetSeconds : Number.MAX_SAFE_INTEGER);
   if (!parsed.timing.length && targetLatencySeconds) {
     const latest = parseF1TimingArchiveRows({
@@ -3666,6 +3778,7 @@ function getF1LiveTimingSnapshot(options = {}) {
         lapCountEntries: entriesByTopic.LapCount || [],
         weatherEntries: entriesByTopic.WeatherData || [],
         carDataEntries: entriesByTopic["CarData.z"] || [],
+        positionEntries: entriesByTopic["Position.z"] || [],
       }, Number.MAX_SAFE_INTEGER);
     if (latest.timing.length) {
       return {
@@ -3908,16 +4021,19 @@ async function getReplayOpenF1TimingSnapshot(options = {}) {
 
 async function getReplayTimingSnapshot(options = {}) {
   const meetingKey = String(options.meetingKey || "").replace(/[^0-9]/g, "");
-  if (!meetingKey) return { ok: false, timing: [], weather: {}, message: "Replay timing needs an OpenF1 meeting key." };
   const sessionKind = String(options.sessionKind || "Race");
   const elapsedSeconds = Math.max(0, Number(options.elapsedSeconds || 0));
+  const strictF1Timing = /f1timing|formula1|official/i.test(String(options.source || options.provider || ""));
+  const identityKey = [options.raceName, options.raceStartsAt || options.startsAt, options.sessionStartsAt].filter(Boolean).join(":");
+  if (!meetingKey && !identityKey) return { ok: false, timing: [], weather: {}, message: "Replay timing needs a race identity or meeting key." };
   const videoStartKey = options.videoStartUtc || String(finiteNumber(options.videoStartArchiveSeconds) ?? "");
-  const cacheKey = `f1:${meetingKey}:${normalizeOpenF1SessionKind(sessionKind)}:${Math.floor(elapsedSeconds * 10)}:${videoStartKey}`;
+  const cacheKey = `f1:${meetingKey || identityKey}:${normalizeOpenF1SessionKind(sessionKind)}:${Math.floor(elapsedSeconds * 10)}:${videoStartKey}:${strictF1Timing ? "strict" : "fallback"}`;
   const cached = replayTimingCache.get(cacheKey);
   if (cached && Date.now() - cached.createdAt < 5000) return cached.data;
 
+  let f1TimingError = null;
   try {
-    const sessionData = await getReplayF1TimingSessionData(meetingKey, sessionKind);
+    const sessionData = await getReplayF1TimingSessionData(meetingKey, sessionKind, options);
     const parsed = parseF1TimingArchiveRows(sessionData, elapsedSeconds, {
       timingAnchor: "program",
       videoStartUtc: options.videoStartUtc,
@@ -3937,6 +4053,7 @@ async function getReplayTimingSnapshot(options = {}) {
         weather: parsed.weather,
         sessionClock: parsed.sessionClock,
         raceControlMessages: parsed.raceControlMessages,
+        lapTimeline: parsed.lapTimeline,
         diagnostics: parsed.diagnostics,
         message: parsed.timing.some((row) => row.last || row.best) ? "" : "Formula 1 timing is loaded; lap times will appear once the session has data.",
       };
@@ -3944,12 +4061,45 @@ async function getReplayTimingSnapshot(options = {}) {
       if (replayTimingCache.size > 120) replayTimingCache = new Map(Array.from(replayTimingCache.entries()).slice(-80));
       return data;
     }
+    if (parsed.lapTimeline?.length) {
+      const data = {
+        ok: true,
+        sessionKey: sessionData.selectedSession?.session_key,
+        sessionKind: sessionData.selectedSession?.session_name || sessionKind,
+        elapsedSeconds,
+        targetDate: "",
+        sourceLabel: "F1 timing waiting for race start",
+        timing: [],
+        weather: parsed.weather,
+        sessionClock: parsed.sessionClock,
+        raceControlMessages: parsed.raceControlMessages,
+        lapTimeline: parsed.lapTimeline,
+        diagnostics: parsed.diagnostics,
+        message: "Formula 1 timing is loaded; jumping to the start of lap 1.",
+      };
+      replayTimingCache.set(cacheKey, { createdAt: Date.now(), data });
+      if (replayTimingCache.size > 120) replayTimingCache = new Map(Array.from(replayTimingCache.entries()).slice(-80));
+      return data;
+    }
   } catch (error) {
+    f1TimingError = error;
     writePitWallDebugLog("f1timing.replay-fallback", {
       meetingKey,
       sessionKind,
       message: error?.message || "Formula 1 timing unavailable",
     });
+  }
+
+  if (strictF1Timing || !meetingKey) {
+    return {
+      ok: false,
+      timing: [],
+      weather: {},
+      sessionClock: null,
+      raceControlMessages: [],
+      sourceLabel: "Formula 1 replay timing unavailable",
+      message: f1TimingError?.message || "Formula 1 livetiming replay data is unavailable for this selection.",
+    };
   }
 
   const fallback = await getReplayOpenF1TimingSnapshot(options);
@@ -3962,54 +4112,17 @@ async function getReplayTimingSnapshot(options = {}) {
 
 async function getLiveTimingSnapshot(options = {}) {
   const targetLatencySeconds = Math.max(0, Math.min(90, Number(options.targetLatencySeconds || 0)));
-  const requestedSource = String(options.source || options.provider || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const f1Only = requestedSource === "f1" || requestedSource === "formula1";
   const f1Timing = getF1LiveTimingSnapshot({ targetLatencySeconds });
   if (f1Timing?.timing?.length) return f1Timing;
-  if (f1Only) {
-    return {
-      ok: false,
-      sourceLabel: "Formula 1 live timing unavailable",
-      fetchedAt: new Date().toISOString(),
-      timing: [],
-      weather: {},
-      errors: f1LiveTimingState?.lastError ? [f1LiveTimingState.lastError] : [],
-      message: f1LiveTimingState?.lastMessageAt ? "Formula 1 live timing has no current rows." : "Formula 1 live timing is still connecting.",
-    };
-  }
-  const cacheKey = `openf1:${Math.round(targetLatencySeconds)}`;
-  if (liveTimingCache?.key === cacheKey && Date.now() - liveTimingCache.createdAt < 15000) return liveTimingCache.data;
-  const keys = ["openF1Drivers", "openF1Position", "openF1Intervals", "openF1Laps", "openF1Stints", "openF1Pit", "openF1Weather", "openF1CarData"];
-  const entries = [];
-  for (const key of keys) {
-    try {
-      const url = key === "openF1CarData"
-        ? openF1ApiUrl("car_data", { session_key: "latest", "date>": new Date(Date.now() - 10000).toISOString() })
-        : LIVE_DATA_URLS[key];
-      entries.push({ key, value: await requestOpenF1Json(url) });
-    } catch (error) {
-      entries.push({ key, error });
-    }
-  }
-  const raw = {};
-  const errors = [];
-  for (const result of entries) {
-    if (!result.error) raw[result.key] = result.value;
-    else if (!OPTIONAL_LIVE_DATA_KEYS.has(result.key)) errors.push(result.error.message);
-  }
-  const timing = parseTiming(raw.openF1Drivers, raw.openF1Position, raw.openF1Intervals, [], raw.openF1Stints, raw.openF1Pit, raw.openF1Laps, raw.openF1CarData);
-  const weather = parseWeather(raw.openF1Weather || []);
-  const data = {
-    ok: timing.length > 0,
-    sourceLabel: errors.length ? `Live timing (${errors.length} source issue${errors.length === 1 ? "" : "s"})` : "Live timing",
+  return {
+    ok: false,
+    sourceLabel: "Formula 1 live timing unavailable",
     fetchedAt: new Date().toISOString(),
-    timing,
-    weather,
-    errors,
-    message: timing.length ? "" : "OpenF1 has no current live timing rows.",
+    timing: [],
+    weather: {},
+    errors: f1LiveTimingState?.lastError ? [f1LiveTimingState.lastError] : [],
+    message: f1LiveTimingState?.lastMessageAt ? "Formula 1 live timing has no current rows." : "Formula 1 live timing is still connecting.",
   };
-  liveTimingCache = { key: cacheKey, createdAt: Date.now(), data };
-  return data;
 }
 
 function latestLapsByDriverNumber(rows) {
@@ -4711,10 +4824,10 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
       effectiveSchedule = applyScheduleWinners(effectiveSchedule, raceWinners);
     }
   }
-  const drivers = parseOpenDrivers(raw.openF1Drivers, fallbackData.drivers, driverResult.standings);
+  const drivers = parseOpenDrivers([], fallbackData.drivers, driverResult.standings);
   const byCode = Object.fromEntries(drivers.map((driver) => [driver.code, driver]));
   const recentForm = parseDriverRecentForm(raw.driverResults);
-  const timing = parseTiming(raw.openF1Drivers, raw.openF1Position, raw.openF1Intervals, driverResult.standings, raw.openF1Stints, raw.openF1Pit, raw.openF1Laps, raw.openF1CarData);
+  const timing = [];
   const battlePairs = detectBattlePairs(timing);
   const nextRace = effectiveSchedule.find((race) => race.status === "live") || effectiveSchedule.find((race) => race.status === "upcoming") || effectiveSchedule.at(-1) || {};
   let weatherRows = Array.isArray(raw.openF1Weather) ? raw.openF1Weather : [];
@@ -4793,11 +4906,8 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
 function refreshLiveDataEnrichment(baseRaw, baseErrors, baseData) {
   if (liveDataEnrichmentRefresh) return liveDataEnrichmentRefresh;
   liveDataEnrichmentRefresh = (async () => {
-    const [enrichment, recentDriverResults] = await Promise.all([
-      fetchLiveDataEntries(LIVE_TIMING_ENRICHMENT_URLS),
-      fetchRecentDriverResults(baseData.schedule),
-    ]);
-    const raw = { ...baseRaw, ...enrichment.raw };
+    const recentDriverResults = await fetchRecentDriverResults(baseData.schedule);
+    const raw = { ...baseRaw };
     if (recentDriverResults) raw.driverResults = recentDriverResults;
     const data = await buildPitWallSnapshot(raw, baseErrors, {
       includeWeekendWeatherFallback: true,

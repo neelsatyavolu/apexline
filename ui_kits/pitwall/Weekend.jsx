@@ -645,11 +645,11 @@
     const requestedMode = query.get("weekendMode") || "";
     const selectedRace = pickRace(D, requestedRound);
     const selectedRaceSession = pickSession(selectedRace, D, requestedSessionKind);
-    const hasLiveTiming = Boolean(selectedRaceSession?.status === "live");
     const [liveTimingData, setLiveTimingData] = React.useState(null);
     const liveTimingInFlightRef = React.useRef(false);
     const liveTimingRequestIdRef = React.useRef(0);
-    const rows = hasLiveTiming && liveTimingData?.timing?.length ? liveTimingData.timing : timingRows(D);
+    const hasLiveTiming = Boolean(selectedRaceSession?.status === "live" || liveTimingData?.timing?.length);
+    const rows = hasLiveTiming ? (liveTimingData?.timing?.length ? liveTimingData.timing : []) : timingRows(D);
     const liveDataSource = liveTimingData?.sourceLabel || liveTimingData?.message || dataSource;
     const liveWeather = liveTimingData?.weather && Object.values(liveTimingData.weather).some((value) => value !== "" && value !== null && value !== undefined)
       ? liveTimingData.weather
@@ -667,7 +667,7 @@
     }, [hasLiveTiming, requestedMode]);
 
     React.useEffect(() => {
-      if (!hasLiveTiming || !window.pitwall?.data?.liveTiming) {
+      if (requestedMode === "recap" || !window.pitwall?.data?.liveTiming) {
         setLiveTimingData(null);
         return undefined;
       }
@@ -695,7 +695,7 @@
         liveTimingInFlightRef.current = false;
         clearInterval(timer);
       };
-    }, [hasLiveTiming, selectedRaceSession?.kind]);
+    }, [requestedMode, selectedRaceSession?.kind]);
 
     return (
       <div className="wk">

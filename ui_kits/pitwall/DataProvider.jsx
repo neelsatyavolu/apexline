@@ -122,6 +122,9 @@
     if (!Number.isFinite(numeric)) return 50;
     return Math.max(min, Math.min(max, Math.round(numeric * 10) / 10));
   }
+  function clampProfileTickerRows(value) {
+    return clampProfilePanelSize(value || 3, 1, 3);
+  }
 
   function normalizeLivePanelSizes(saved) {
     if (!saved || typeof saved !== "object") return null;
@@ -129,6 +132,7 @@
       timingWidth: clampProfilePanelSize(saved.timingWidth || 340, 260, 560),
       insightsHeight: clampProfilePanelSize(saved.insightsHeight || 280, 180, 460),
       focusOnboardHeight: clampProfilePanelSize(saved.focusOnboardHeight || 220, 150, 380),
+      broadcastTickerRows: clampProfileTickerRows(saved.broadcastTickerRows),
       battleSplit: clampProfilePanelPct(saved.battleSplit || 50, 28, 72),
       quadCol: clampProfilePanelPct(saved.quadCol || 50, 28, 72),
       quadRow: clampProfilePanelPct(saved.quadRow || 50, 28, 72),

@@ -1,14 +1,14 @@
 {
-  "currentRelease": "1.0.7",
+  "currentRelease": "1.0.8",
   "releases": [
     {
-      "version": "1.0.7",
+      "version": "1.0.8",
       "updateTo": {
-        "version": "1.0.7",
-        "pub_date": "2026-06-08T22:03:57.471Z",
-        "notes": "Apexline 1.0.7",
-        "name": "Apexline 1.0.7",
-        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.0.7-mac-arm64.zip"
+        "version": "1.0.8",
+        "pub_date": "2026-06-09T00:44:21.654Z",
+        "notes": "Apexline 1.0.8",
+        "name": "Apexline 1.0.8",
+        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.0.8-mac-arm64.zip"
       }
     }
   ]

@@ -1,6 +1,6 @@
 {
   "name": "apexline",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "private": true,
   "description": "Apexline macOS F1 companion app",
   "main": "electron/main.cjs",
@@ -16,7 +16,8 @@
     "test": "node scripts/pitwall-smoke-test.cjs",
     "smoke": "node scripts/pitwall-smoke-test.cjs",
     "probe:openf1:monaco": "node scripts/pitwall-openf1-replay-probe.cjs --meeting=1286 --session=Qualifying --elapsed=861",
-    "probe:f1timing:monaco": "node scripts/pitwall-f1timing-replay-probe.cjs --elapsed=3600"
+    "probe:f1timing:monaco": "node scripts/pitwall-f1timing-replay-probe.cjs --elapsed=3600",
+    "probe:live-layout": "node scripts/build-renderer.cjs && electron scripts/live-racing-layout-probe.cjs"
   },
   "dependencies": {
     "@babel/standalone": "^7.29.0",

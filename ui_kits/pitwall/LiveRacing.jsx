@@ -40,7 +40,8 @@
     /* Window title bar */
     .live__bar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; column-gap: var(--space-7); height: 48px; padding: 0 var(--space-7); background: var(--bg-base); border-bottom: 1px solid var(--border-subtle); flex: none; }
     .live__barleft { display: flex; align-items: center; gap: var(--space-7); min-width: 0; }
-    .live__traffic { display: flex; gap: 8px; flex: none; }
+    .live__traffic { display: none; gap: 8px; flex: none; }
+    .live--fullscreen .live__traffic { display: flex; }
     .live__traffic span { width: 12px; height: 12px; border-radius: 50%; }
     .live__brand { font-family: var(--font-display); font-weight: 800; font-size: 16px; letter-spacing: -0.01em; color: var(--text-strong); }
     .live__brand i { font-style: normal; color: var(--accent); }
@@ -72,7 +73,7 @@
     .live__body[data-layout="focus"] { grid-template-columns: minmax(0, 1fr) var(--timing-sidebar-w, 340px); }
     .live__body[data-layout="focus"] .live__timing { grid-column: 2; border-right: 0; border-left: 1px solid var(--border-subtle); }
     .live__body[data-layout="focus"] .live__center { grid-column: 1; grid-row: 1; }
-    .live__timing { position: relative; display: flex; flex-direction: column; background: var(--bg-base); border-right: 1px solid var(--border-subtle); min-height: 0; min-width: 0; }
+    .live__timing { position: relative; display: flex; flex-direction: column; background: var(--bg-base); border-right: 1px solid var(--border-subtle); min-height: 0; min-width: 0; container-type: inline-size; }
     .live__timinghd { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--space-5); padding: var(--space-6) var(--space-7); border-bottom: 1px solid var(--border-subtle); }
     .live__timingtitle { display: flex; align-items: center; gap: var(--space-5); min-width: 0; }
     .live__timingclockgroup { justify-self: center; display: inline-flex; align-items: baseline; gap: var(--space-4); min-width: 0; white-space: nowrap; }
@@ -198,7 +199,7 @@
     .pane:not(.pane--bc) .pane__telemetry { margin-top: auto; }
     .pane__telemetry { position: relative; z-index: 2; padding: 0 var(--space-6) var(--space-6); background: linear-gradient(0deg, rgba(6,8,12,0.78), rgba(6,8,12,0.38) 58%, transparent); }
     .pane__telemetry--broadcast { display: flex; justify-content: center; overflow: hidden; }
-    .pane__tele-panel { --tele-scale: 1.2; --tele-preferred-width: 560px; display: flex; align-items: stretch; flex: 0 1 auto; width: min(var(--tele-preferred-width), calc(100% / var(--tele-scale))); min-width: min(max-content, calc(100% / var(--tele-scale))); max-width: calc(100% / var(--tele-scale)); overflow: hidden; transform: scale(var(--tele-scale)); transform-origin: bottom center; border: 1px solid var(--border-default); border-top-color: var(--border-strong); border-radius: var(--radius-md); background: linear-gradient(180deg, rgba(15,19,27,0.86), rgba(8,11,17,0.93)); box-shadow: var(--shadow-lg), var(--inset-top-light); backdrop-filter: blur(14px); }
+    .pane__tele-panel { --tele-scale: 1.2; --tele-preferred-width: 560px; display: flex; align-items: stretch; flex: 0 0 auto; width: min(var(--tele-preferred-width), calc(100% / var(--tele-scale))); min-width: min(max-content, calc(100% / var(--tele-scale))); max-width: calc(100% / var(--tele-scale)); overflow: hidden; transform: scale(var(--tele-scale)); transform-origin: bottom center; border: 1px solid var(--border-default); border-top-color: var(--border-strong); border-radius: var(--radius-md); background: linear-gradient(180deg, rgba(15,19,27,0.86), rgba(8,11,17,0.93)); box-shadow: var(--shadow-lg), var(--inset-top-light); backdrop-filter: blur(14px); }
     .pane__tele-id { display: flex; align-items: center; gap: var(--space-5); padding: 0 var(--space-6) 0 0; background: linear-gradient(90deg, color-mix(in srgb, var(--tele-team, var(--accent)) 90%, #000), color-mix(in srgb, var(--tele-team, var(--accent)) 58%, #000)); flex: none; }
     .pane__tele-idpos { align-self: stretch; display: grid; place-items: center; min-width: 46px; padding: 0 var(--space-5); background: rgba(0,0,0,0.22); color: #fff; font-family: var(--font-mono); font-size: 21px; font-weight: 800; font-variant-numeric: tabular-nums; }
     .pane__tele-code { color: #fff; font-family: var(--font-display); font-size: 23px; font-weight: 800; letter-spacing: 0.02em; }
@@ -231,7 +232,7 @@
     .live__grid[data-layout="focus"] .pane__tele-seg--drive { flex: 0 0 auto; }
     .live__grid[data-layout="focus"] .pane__tele-seg--laps { flex: 0 1 auto; }
     .live__grid[data-layout="focus"] .pane__tele-seg--sectors { flex: 0 1 auto; gap: 4px; margin-left: 5px; }
-    .live__grid[data-layout="focus"] .pane__tele-seg--gaps { flex: 0 1 auto; }
+    .live__grid[data-layout="focus"] .pane__tele-seg--gaps { flex: 0 0 auto; justify-content: flex-start; }
     .live__grid[data-layout="focus"] .pane__tele-metric b { font-size: 16px; }
     .live__grid[data-layout="focus"] .pane__tele-metric { flex: 0 0 auto; }
     .live__grid[data-layout="focus"] .pane__tele-k { font-size: 7px; }
@@ -243,6 +244,44 @@
     .live__grid[data-layout="focus"] .pane__tele-lap.pane__tele-row { grid-template-columns: 24px minmax(0, max-content); column-gap: 5px; }
     .live__grid[data-layout="focus"] .pane__tele-sector .mini-sector { width: auto; min-width: 0; max-width: none; }
     .live__grid[data-layout="focus"] .pane__tele-sector .mini-sector__seg { width: 2px; height: 10px; }
+    @media (max-width: 1600px) {
+      .live__bar { grid-template-columns: minmax(0, 1fr) auto auto; column-gap: var(--space-4); padding: 0 var(--space-5); }
+      .live__barleft { gap: var(--space-5); }
+      .live__brand { font-size: 14px; }
+      .live__race { gap: var(--space-4); }
+      .live__race-name { max-width: 120px; }
+      .live__presets { gap: var(--space-3); }
+      .preset-select { width: 150px; max-width: 22vw; }
+      .live__barright { gap: var(--space-3); }
+      .live__barright .pw-btn { position: relative; min-width: var(--size-control-sm); }
+      .live__barright .pw-btn--sm { padding: 0 var(--space-4); }
+      .live__barright .pw-btn > span:not(.pw-btn__spinner) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    }
+    @media (max-width: 1180px) {
+      .live__grid[data-layout="focus"] { grid-template-rows: minmax(120px, clamp(120px, 22vh, 180px)) minmax(320px, 1fr); }
+      .live__grid[data-layout="focus"] .pane--bc .pane__video { object-fit: contain; object-position: center center; }
+      .pane__telemetry { padding: 0 var(--space-4) var(--space-4); }
+      .pane__tele-idpos { min-width: 34px; font-size: 16px; padding: 0 var(--space-4); }
+      .pane__tele-code { font-size: 17px; }
+      .pane__tele-seg { gap: var(--space-5); padding: 7px var(--space-5); }
+      .pane__tele-metric b { font-size: 21px; }
+      .pane__tele-lap { min-width: 58px; }
+      .pane__tele-lap b { font-size: 13px; }
+      .pane__tele-vbar { width: 5px; min-height: 26px; }
+    }
+    @media (max-width: 980px) {
+      .live__race-name { display: none; }
+      .preset-select { width: 132px; }
+    }
+    @container (max-width: 380px) {
+      .live__timinghd { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title actions" "clock clock"; row-gap: var(--space-4); padding: var(--space-5) var(--space-6); }
+      .live__timingtitle { grid-area: title; }
+      .live__timingclockgroup { grid-area: clock; justify-self: start; gap: var(--space-3); }
+      .live__timingactions { grid-area: actions; gap: var(--space-3); }
+      .live__timinglap { font-size: 15px; }
+      .live__timingclock { font-size: 16px; }
+      .live__weather { gap: var(--space-4); padding: var(--space-5) var(--space-6); }
+    }
     @container (max-width: 620px) {
       .pane:not(.pane--bc) .pane__top { padding: var(--space-4); }
       .pane:not(.pane--bc) .pane__tag { gap: var(--space-3); padding: 2px 8px 2px 3px; }
@@ -289,7 +328,7 @@
       .pane__tele-sector .mini-sector { width: auto; min-width: 0; max-width: none; }
     }
     @container (max-width: 420px) {
-      .pane__tele-panel { --tele-scale: 0.91; }
+      .pane__tele-panel { --tele-scale: 0.82; }
       .pane__tele-idpos { min-width: 20px; padding: 0 4px; font-size: 11px; }
       .pane__tele-code { font-size: 11px; }
       .pane__tele-seg { padding: 2px; }
@@ -301,15 +340,74 @@
       .pane__tele-sector .mini-sector { width: auto; min-width: 0; max-width: none; }
       .pane__tele-sector .mini-sector__seg { width: 2px; height: 8px; }
     }
-    @media (max-width: 1180px) {
-      .pane__telemetry { padding: 0 var(--space-4) var(--space-4); }
-      .pane__tele-idpos { min-width: 34px; font-size: 16px; padding: 0 var(--space-4); }
-      .pane__tele-code { font-size: 17px; }
-      .pane__tele-seg { gap: var(--space-5); padding: 7px var(--space-5); }
-      .pane__tele-metric b { font-size: 21px; }
-      .pane__tele-lap { min-width: 58px; }
-      .pane__tele-lap b { font-size: 13px; }
-      .pane__tele-vbar { width: 5px; min-height: 26px; }
+    @container (min-width: 360px) {
+      .live__grid[data-layout="focus"] .pane__telemetry { padding: 0 8px 8px; }
+      .live__grid[data-layout="focus"] .pane__telemetry--broadcast { justify-content: center; }
+      .live__grid[data-layout="focus"] .pane__tele-panel { --tele-scale: 1; --tele-preferred-width: 720px; width: fit-content; min-width: 0; max-width: 100%; }
+      .live__grid[data-layout="focus"] .pane__tele-id { gap: 5px; padding-right: 5px; }
+      .live__grid[data-layout="focus"] .pane__tele-idpos { min-width: 27px; padding: 0 5px; font-size: 14px; }
+      .live__grid[data-layout="focus"] .pane__tele-code { font-size: 14px; }
+      .live__grid[data-layout="focus"] .pane__tele-seg { gap: 4px; padding: 4px 5px; }
+      .live__grid[data-layout="focus"] .pane__tele-seg--drive,
+      .live__grid[data-layout="focus"] .pane__tele-seg--laps,
+      .live__grid[data-layout="focus"] .pane__tele-seg--gaps { flex: 0 0 auto; }
+      .live__grid[data-layout="focus"] .pane__tele-seg--sectors { flex: 0 0 auto; justify-content: flex-start; margin-left: 0; }
+      .live__grid[data-layout="focus"] .pane__tele-sector { flex: 0 0 auto; justify-content: center; }
+      .live__grid[data-layout="focus"] .pane__tele-sector .mini-sector { width: auto; justify-content: flex-start; }
+      .live__grid[data-layout="focus"] .pane__tele-metric b { font-size: 17px; }
+      .live__grid[data-layout="focus"] .pane__tele-k { font-size: 6px; }
+      .live__grid[data-layout="focus"] .pane__tele-bars { gap: 3px; }
+      .live__grid[data-layout="focus"] .pane__tele-vbar { width: 4px; min-height: 21px; }
+      .live__grid[data-layout="focus"] .pane__tele-stack { gap: 4px; }
+      .live__grid[data-layout="focus"] .pane__tele-lap b { font-size: 10px; }
+      .live__grid[data-layout="focus"] .pane__tele-lap.pane__tele-row { grid-template-columns: 22px minmax(0, max-content); column-gap: 5px; }
+      .live__grid[data-layout="focus"] .pane__tele-sector .mini-sector__seg { width: 2px; height: 10px; }
+    }
+    @container (min-width: 360px) and (max-width: 420px) {
+      .live__grid[data-layout="focus"] .pane__tele-id { gap: 2px; padding-right: 3px; }
+      .live__grid[data-layout="focus"] .pane__tele-idpos { min-width: 24px; padding: 0 3px; font-size: 13px; }
+      .live__grid[data-layout="focus"] .pane__tele-code { font-size: 13px; }
+      .live__grid[data-layout="focus"] .pane__tele-seg { gap: 2px; padding: 4px 3px; }
+      .live__grid[data-layout="focus"] .pane__tele-metric b { font-size: 15px; }
+      .live__grid[data-layout="focus"] .pane__tele-k { font-size: 6px; }
+      .live__grid[data-layout="focus"] .pane__tele-bars { gap: 2px; }
+      .live__grid[data-layout="focus"] .pane__tele-vbar { width: 3px; min-height: 21px; }
+      .live__grid[data-layout="focus"] .pane__tele-stack { gap: 3px; }
+      .live__grid[data-layout="focus"] .pane__tele-lap b { font-size: 10px; }
+      .live__grid[data-layout="focus"] .pane__tele-lap.pane__tele-row { grid-template-columns: 20px minmax(0, max-content); column-gap: 3px; }
+      .live__grid[data-layout="focus"] .pane__tele-sector .mini-sector__seg { height: 8px; }
+    }
+    @container (max-width: 340px) {
+      .pane__tele-panel { --tele-scale: 0.66; }
+      .pane__tele-id { gap: 1px; padding-right: 2px; }
+      .pane__tele-idpos { min-width: 18px; padding: 0 3px; font-size: 10px; }
+      .pane__tele-code { font-size: 10px; }
+      .pane__tele-seg { gap: 1px; padding: 1px 2px; }
+      .pane__tele-seg--sectors { gap: 1px; margin-left: 0; }
+      .pane__tele-metric b { font-size: 11px; }
+      .pane__tele-k { font-size: 5px; letter-spacing: 0; }
+      .pane__tele-bars { gap: 1px; }
+      .pane__tele-vbar { width: 2px; min-height: 12px; }
+      .pane__tele-lap b { font-size: 8px; }
+      .pane__tele-stack { gap: 1px; }
+      .pane__tele-lap.pane__tele-row { grid-template-columns: 14px minmax(0, max-content); column-gap: 2px; }
+      .pane__tele-sector { gap: 1px; }
+      .pane__tele-sector .mini-sector { gap: 0; }
+      .pane__tele-sector .mini-sector__seg { width: 1px; height: 6px; }
+    }
+    @container (max-width: 260px) {
+      .pane__tele-panel { --tele-scale: 0.58; }
+      .pane__tele-idpos { min-width: 16px; padding: 0 2px; font-size: 9px; }
+      .pane__tele-code { font-size: 9px; }
+      .pane__tele-metric b { font-size: 10px; }
+      .pane__tele-k { font-size: 4px; }
+      .pane__tele-lap b { font-size: 7px; }
+      .pane__tele-lap.pane__tele-row { grid-template-columns: 12px minmax(0, max-content); column-gap: 1px; }
+      .pane__tele-vbar { width: 1px; min-height: 10px; }
+      .pane__tele-sector .mini-sector__seg { width: 1px; height: 5px; }
+    }
+    @container (max-width: 200px) {
+      .pane__tele-panel { --tele-scale: 0.47; }
     }
     .pane__controls { position: absolute; top: var(--space-5); right: var(--space-6); z-index: 5; display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity var(--dur-fast) var(--ease-standard); }
     .pane:hover .pane__controls, .pane:focus-within .pane__controls { opacity: 1; }
@@ -355,12 +453,15 @@
     .pane__bcbug-lap { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-xs); color: var(--text-primary); white-space: nowrap; }
     .pane__bcbug-lap i { color: var(--text-tertiary); font-style: normal; }
     .pane__feedlabel--bc { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); }
+    .pane__ticker-resize { position: absolute; left: 0; right: 0; bottom: calc(var(--ticker-total-h, 46px) - 5px); z-index: 7; height: 10px; appearance: none; -webkit-appearance: none; padding: 0; border: 0; background: transparent; cursor: row-resize; }
+    .pane__ticker-resize::after { content: ""; position: absolute; left: 18px; right: 18px; top: 4px; height: 2px; border-radius: var(--radius-pill); background: var(--accent); opacity: 0; transition: opacity var(--dur-fast) var(--ease-standard); }
+    .pane__ticker-resize:hover::after, .pane__ticker-resize:focus-visible::after { opacity: 1; }
     .pane__ticker { position: relative; z-index: 2; display: flex; flex: none; gap: 0; height: var(--ticker-total-h, 46px); background: linear-gradient(0deg, rgba(6,9,14,0.96), rgba(6,9,14,0.82)); border-top: 1px solid var(--border-default); box-sizing: border-box; }
-    .pane__ticker--top15 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); grid-auto-rows: var(--ticker-row-h, 34px); }
+    .pane__ticker--rows2, .pane__ticker--top15 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); grid-auto-rows: var(--ticker-row-h, 34px); }
     .tick { flex: 1; display: flex; align-items: center; gap: var(--space-5); height: var(--ticker-row-h, 46px); padding: 0 var(--space-6); border-right: 1px solid var(--border-subtle); min-width: 0; box-sizing: border-box; }
-    .pane__ticker--top15 .tick { height: var(--ticker-row-h, 34px); border-bottom: 1px solid var(--border-subtle); }
-    .pane__ticker--top15 .tick:nth-child(5n) { border-right: 0; }
-    .pane__ticker--top15 .tick:nth-last-child(-n + 5) { border-bottom: 0; }
+    .pane__ticker--rows2 .tick, .pane__ticker--top15 .tick { height: var(--ticker-row-h, 34px); border-bottom: 1px solid var(--border-subtle); }
+    .pane__ticker--rows2 .tick:nth-child(5n), .pane__ticker--top15 .tick:nth-child(5n) { border-right: 0; }
+    .pane__ticker--rows2 .tick:nth-last-child(-n + 5), .pane__ticker--top15 .tick:nth-last-child(-n + 5) { border-bottom: 0; }
     .tick:last-child { border-right: 0; }
     .tick__bar { width: 3px; align-self: stretch; min-height: 18px; margin: 7px 0; border-radius: var(--radius-pill); flex: none; }
     .tick__main { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); align-items: baseline; column-gap: var(--space-4); min-width: 0; width: 100%; }
@@ -1098,11 +1199,15 @@
     if (!Number.isFinite(numeric)) return 50;
     return Math.max(min, Math.min(max, Math.round(numeric * 10) / 10));
   }
+  function clampBroadcastTickerRows(value) {
+    return clampPanelSize(value || 3, 1, 3);
+  }
   function normalizeLivePanelSizes(saved = {}) {
     return {
       timingWidth: clampPanelSize(saved.timingWidth || 340, 260, 560),
       insightsHeight: clampPanelSize(saved.insightsHeight || 280, 180, 460),
       focusOnboardHeight: clampPanelSize(saved.focusOnboardHeight || 220, 150, 380),
+      broadcastTickerRows: clampBroadcastTickerRows(saved.broadcastTickerRows),
       battleSplit: clampPanelPct(saved.battleSplit || 50, 28, 72),
       quadCol: clampPanelPct(saved.quadCol || 50, 28, 72),
       quadRow: clampPanelPct(saved.quadRow || 50, 28, 72),
@@ -1116,7 +1221,7 @@
       const saved = JSON.parse(localStorage.getItem(PANEL_SIZE_STORAGE_KEY) || "{}");
       return normalizeLivePanelSizes(saved);
     } catch {
-      return { timingWidth: 340, insightsHeight: 280, focusOnboardHeight: 220, battleSplit: 50, quadCol: 50, quadRow: 50, dataColA: 33, dataColB: 33, dataRow: 50 };
+      return { timingWidth: 340, insightsHeight: 280, focusOnboardHeight: 220, broadcastTickerRows: 3, battleSplit: 50, quadCol: 50, quadRow: 50, dataColA: 33, dataColB: 33, dataRow: 50 };
     }
   }
   function readTimingColumns() {
@@ -2148,22 +2253,34 @@
   function BroadcastPane({ focus, streamUrl, audioActive, audioVolume, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand, visible = true, style, zone,
     hasCurrentLiveSession, replayControls, sessionLibrary, onLoadPastSession, onConnectF1Tv,
     replaySync, onReplayToggle, onReplaySeek, onSurfaceToggle, onSyncAll, onPlayerReady, streamStatus, resolving,
-    syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset, timingRows, sessionKind, videoQuality }) {
+    syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset, timingRows, sessionKind, videoQuality,
+    broadcastTickerRows = 3, onTickerRowsChange }) {
     const paneRef = React.useRef(null);
     const [tickerCanFitTop15, setTickerCanFitTop15] = React.useState(false);
+    const [tickerCanFitTop10, setTickerCanFitTop10] = React.useState(false);
+    const [tickerCompact, setTickerCompact] = React.useState(false);
     const [tickerRowHeight, setTickerRowHeight] = React.useState(46);
     const [tickerCodeSize, setTickerCodeSize] = React.useState(14);
     const descriptor = streamDescriptor(streamUrl);
     const sourceRows = timingRows?.length ? timingRows : D.timing;
+    const requestedTickerRows = clampBroadcastTickerRows(broadcastTickerRows);
     React.useEffect(() => {
       const node = paneRef.current;
       if (!node || typeof ResizeObserver === "undefined") return undefined;
       const update = () => {
         const rect = node.getBoundingClientRect();
-        const canFitTop15 = rect.width >= 920 && rect.height >= 390 && sourceRows.length >= 15;
-        const rowCount = canFitTop15 ? 3 : 1;
-        const rowHeight = clampPanelSize((rect.height - 300) / rowCount, canFitTop15 ? 30 : 46, canFitTop15 ? 42 : 74);
+        const top15RowHeight = clampPanelSize((rect.height - 300) / 3, 30, 42);
+        const top10RowHeight = clampPanelSize((rect.height - 300) / 2, 30, 42);
+        const targetVideoHeight = Math.min(rect.width * 9 / 16, Math.max(0, rect.height - 40));
+        const top15VideoHeight = rect.height - top15RowHeight * 3;
+        const top10VideoHeight = rect.height - top10RowHeight * 2;
+        const canFitTop15 = rect.width >= 920 && rect.height >= 390 && sourceRows.length >= 15 && top15VideoHeight >= targetVideoHeight * 0.9;
+        const canFitTop10 = rect.width >= 920 && rect.height >= 360 && sourceRows.length >= 10 && top10VideoHeight >= targetVideoHeight * 0.9;
+        const rowCount = requestedTickerRows >= 3 && canFitTop15 ? 3 : requestedTickerRows >= 2 && canFitTop10 ? 2 : 1;
+        const rowHeight = rowCount === 3 ? top15RowHeight : rowCount === 2 ? top10RowHeight : clampPanelSize(rect.height - targetVideoHeight * 0.9, 46, 74);
         setTickerCanFitTop15(canFitTop15);
+        setTickerCanFitTop10(canFitTop10);
+        setTickerCompact(rect.width < 760);
         setTickerRowHeight(rowHeight);
         setTickerCodeSize(clampPanelSize(rowHeight * 0.34, 14, 18));
       };
@@ -2171,12 +2288,34 @@
       const observer = new ResizeObserver(update);
       observer.observe(node);
       return () => observer.disconnect();
-    }, [sourceRows.length]);
-    const tickerRowLimit = tickerCanFitTop15 && sourceRows.length >= 15 ? 15 : 5;
-    const tickerRowCount = tickerRowLimit === 15 ? 3 : 1;
+    }, [requestedTickerRows, sourceRows.length]);
+    const tickerRowLimit = tickerCanFitTop15 && requestedTickerRows >= 3 && sourceRows.length >= 15 ? 15 : tickerCanFitTop10 && requestedTickerRows >= 2 && sourceRows.length >= 10 ? 10 : tickerCompact ? 3 : 5;
+    const tickerRowCount = tickerRowLimit === 15 ? 3 : tickerRowLimit === 10 ? 2 : 1;
     const tickerTotalHeight = tickerRowHeight * tickerRowCount;
     const top = sourceRows.slice(0, tickerRowLimit);
     const paneStyle = { ...(style || {}), "--ticker-row-h": `${tickerRowHeight}px`, "--ticker-total-h": `${tickerTotalHeight}px`, "--ticker-code-size": `${tickerCodeSize}px`, "--ticker-meta-size": `${clampPanelSize(tickerCodeSize * 0.68, 10, 12)}px` };
+    function rowCountFromPointer(pointerEvent) {
+      const rect = paneRef.current?.getBoundingClientRect();
+      if (!rect) return requestedTickerRows;
+      return clampBroadcastTickerRows(Math.round((rect.bottom - pointerEvent.clientY) / Math.max(30, tickerRowHeight)));
+    }
+    function startTickerResize(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      const updateFromPointer = (pointerEvent) => onTickerRowsChange?.(rowCountFromPointer(pointerEvent));
+      const stop = () => {
+        window.removeEventListener("pointermove", updateFromPointer);
+        window.removeEventListener("pointerup", stop);
+      };
+      updateFromPointer(event);
+      window.addEventListener("pointermove", updateFromPointer);
+      window.addEventListener("pointerup", stop, { once: true });
+    }
+    function handleTickerResizeKey(event) {
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      event.preventDefault();
+      onTickerRowsChange?.(clampBroadcastTickerRows(requestedTickerRows + (event.key === "ArrowDown" ? -1 : 1)));
+    }
     return (
       <div ref={paneRef} className="pane pane--bc" data-focus={focus} data-expanded={expanded} data-visible={String(visible)} data-zone={zone} style={paneStyle}
         onClick={(event) => {
@@ -2235,8 +2374,11 @@
             </div>
           )}
         </div>
+        <button type="button" className="pane__ticker-resize" role="slider" aria-label="Resize broadcast timing tile rows"
+          aria-orientation="vertical" aria-valuemin="1" aria-valuemax="3" aria-valuenow={requestedTickerRows}
+          onPointerDown={startTickerResize} onKeyDown={handleTickerResizeKey} />
         {/* broadcast lower-third timing ticker */}
-        <div className={`pane__ticker ${tickerRowLimit === 15 ? "pane__ticker--top15" : ""}`}>
+        <div className={`pane__ticker ${tickerRowCount === 3 ? "pane__ticker--top15" : tickerRowCount === 2 ? "pane__ticker--rows2" : ""}`}>
           {top.map((t) => {
             const d = D.byCode[t.code] || {};
             const tyreLabel = tickerTyreLabel(t);
@@ -2362,6 +2504,7 @@
     const debugF1TvMeetingKey = debugParams.get("f1MeetingKey") || "";
     const debugF1TvDetailUrl = debugParams.get("f1DetailUrl") || "";
     const { data: D, profile, connection, dataSource } = window.PW.usePitWall();
+    const [isFullScreen, setIsFullScreen] = React.useState(false);
     const [livePrefs] = React.useState(readLivePrefs);
     const [preset, setPreset] = React.useState(() => {
       const defaultPreset = normalizePresetName(livePrefs.defaultPreset);
@@ -2460,6 +2603,23 @@
     React.useEffect(() => {
       const t = setTimeout(() => setShowToast(false), 6500);
       return () => clearTimeout(t);
+    }, []);
+    React.useEffect(() => {
+      const windowState = window.pitwall?.windowState;
+      if (!windowState) return undefined;
+      let mounted = true;
+      windowState.get()
+        .then((state) => {
+          if (mounted) setIsFullScreen(Boolean(state?.isFullScreen));
+        })
+        .catch(() => {});
+      const unsubscribe = windowState.onChange((state) => {
+        if (mounted) setIsFullScreen(Boolean(state?.isFullScreen));
+      });
+      return () => {
+        mounted = false;
+        if (typeof unsubscribe === "function") unsubscribe();
+      };
     }, []);
     React.useEffect(() => {
       if (!debugF1TvSeason) setF1TvSeason(currentSeason);
@@ -2803,6 +2963,10 @@
     }
     function resetReplayTimingOffset() {
       setReplayTimingOffset(0);
+    }
+    function setBroadcastTickerRows(rows) {
+      panelSizesTouchedRef.current = true;
+      setPanelSizes((sizes) => ({ ...sizes, broadcastTickerRows: clampBroadcastTickerRows(rows) }));
     }
 
     function focusAudioFeed(key) {
@@ -3292,7 +3456,7 @@
     const selectedCode = selected || timingRows[0]?.code || D.standings[0]?.code || D.drivers[0]?.code || "";
     const preferredCode = (profile.favoriteDrivers || []).find((code) => D.byCode[code]) || "";
     const activeSyncKey = audioFeed || selectedCode || "WORLD";
-    const fallbackCodes = timingRows.map((row) => row.code).concat(D.standings.map((row) => row.code)).filter(Boolean);
+    const fallbackCodes = timingRows.map((row) => row.code).concat(D.standings.map((row) => row.code), D.drivers.map((driver) => driver.code)).filter(Boolean);
     const liveTimingWeather = liveTimingData?.weather && Object.values(liveTimingData.weather).some((value) => value !== "" && value !== null && value !== undefined) ? liveTimingData.weather : null;
     const wx = replaySync.mode === "replay" && replayTimingData?.weather ? replayTimingData.weather : liveTimingWeather || D.race.weather || {};
     const replaySetupActive = pendingF1TvSelection || replaySync.mode === "replay";
@@ -3800,7 +3964,7 @@
     }
 
     return (
-      <div className="live">
+      <div className={"live" + (isFullScreen ? " live--fullscreen" : "")}>
         {/* Title bar */}
         <div className="live__bar">
           <div className="live__barleft">
@@ -3963,6 +4127,8 @@
                     timingRows={timingRows}
                     sessionKind={activeSessionKind}
                     videoQuality={videoQuality}
+                    broadcastTickerRows={panelSizes.broadcastTickerRows}
+                    onTickerRowsChange={setBroadcastTickerRows}
                     expanded={expandedPane === paneKey}
                     onExpand={() => setExpandedPane(expandedPane === paneKey ? null : paneKey)} />
                 );

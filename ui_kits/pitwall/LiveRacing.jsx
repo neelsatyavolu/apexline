@@ -651,6 +651,7 @@
     .slr__main { min-width: 0; }
     .slr__name { display: block; font-family: var(--font-display); font-weight: 800; font-size: var(--text-lg); color: var(--text-primary); line-height: 1.1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .slr__meta { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 5px; font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); }
+    .session-library__race-meta { font-family: var(--font-mono); }
     .slr__cta { display: inline-flex; align-items: center; gap: 6px; color: var(--text-tertiary); font-family: var(--font-sans); font-size: var(--text-sm); font-weight: 700; white-space: nowrap; }
 
     .slr__chip { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 9px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; }
@@ -683,9 +684,14 @@
     .slr-cell[data-available="false"] { opacity: 0.6; }
     .slr-cell__nm { font-family: var(--font-display); font-weight: 800; font-size: var(--text-md); color: var(--text-primary); }
     .slr-cell[data-live="true"] .slr-cell__nm { color: #ff8a8a; }
-    .slr-cell__mt { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); line-height: 1.4; }
+    .slr-cell__mt { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); line-height: 1.4; }
     .slr-cell__btn { margin-top: auto; }
     .slr-cell__btn > button { width: 100%; }
+    .replay-timing-badge { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-height: 20px; padding: 3px 7px; border-radius: var(--radius-pill); border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.04); color: var(--text-tertiary); font-family: var(--font-mono); font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: var(--tracking-caps); white-space: nowrap; }
+    .replay-timing-badge[data-status="ready"] { color: #8ed7ff; border-color: rgba(31,171,226,0.34); background: rgba(31,171,226,0.10); }
+    .replay-timing-badge[data-status="manual-sync"] { color: #ffd98a; border-color: rgba(255,201,77,0.30); background: rgba(255,201,77,0.09); }
+    .replay-timing-badge[data-status="generating"], .replay-timing-badge[data-status="checking"] { color: var(--accent); border-color: rgba(31,171,226,0.24); background: rgba(31,171,226,0.07); }
+    .replay-timing-badge[data-status="unavailable"] { color: var(--text-muted); }
     .session-library__empty { margin: var(--space-8); color: var(--text-tertiary); font-size: var(--text-sm); }
     @media (max-width: 860px) {
       .session-library { padding: 12px; }
@@ -2078,18 +2084,77 @@
   function raceLibraryId(race) {
     return String(race?.rnd || race?.meetingKey || race?.name || "");
   }
+  function replayTimingAvailabilityKey(race, session) {
+    return [raceLibraryId(race), normalizeF1TvSessionKind(session?.kind || session?.session_name || session?.session_type)].filter(Boolean).join(":");
+  }
+  function replayTimingAvailabilityFallback(status = "checking") {
+    const value = String(status || "checking").toLowerCase();
+    if (value === "ready") return { status: "ready", label: "Timing ready", message: "Synced replay live timing is available." };
+    if (value === "manual-sync") return { status: "manual-sync", label: "Timing sync", message: "Replay live timing is available, but may need manual sync." };
+    if (value === "generating") return { status: "generating", label: "Generating", message: "Replay live timing is being generated." };
+    if (value === "unavailable") return { status: "unavailable", label: "No timing", message: "Replay live timing is not available yet." };
+    return { status: "checking", label: "Checking", message: "Checking replay live timing availability." };
+  }
   function isCancelledF12026RaceName(value) {
     const text = String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     return /\bbahrain grand prix\b/.test(text) || /\bsaudi arabian grand prix\b/.test(text);
   }
-  function normalizeRaceLibrary(library, season) {
-    const races = Array.isArray(library?.races) ? library.races : [];
-    if (String(library?.season || season || "") !== "2026" || !races.some((race) => isCancelledF12026RaceName(race?.name))) return library;
+  function f1TvTimeMs(value) {
+    const time = Date.parse(value || "");
+    return Number.isFinite(time) ? time : null;
+  }
+  function estimatedF1TvSessionEndMs(session, start) {
+    if (!Number.isFinite(start)) return null;
+    const kind = normalizeF1TvSessionKind(session?.kind || session?.session_name || session?.session_type).toLowerCase();
+    const hours = kind === "race" ? 3 : 1;
+    return start + hours * 60 * 60 * 1000;
+  }
+  function normalizeF1TvSessionStatus(session, nowMs = Date.now()) {
+    const status = String(session?.status || "").toLowerCase();
+    const statusSource = String(session?.statusSource || "").toLowerCase();
+    const contentSubtype = String(session?.contentSubtype || "").toUpperCase();
+    if (contentSubtype === "LIVE") return "live";
+    if (contentSubtype === "REPLAY") return "done";
+    if (statusSource === "f1tv-cms" && status === "live") return "live";
+    if (statusSource === "f1tv-cms" && (status === "done" || status === "replay")) return "done";
+    const start = f1TvTimeMs(session?.startsAt || session?.dateStart || session?.date_start);
+    const explicitEnd = f1TvTimeMs(session?.endsAt || session?.dateEnd || session?.date_end);
+    const end = explicitEnd == null ? estimatedF1TvSessionEndMs(session, start) : explicitEnd;
+    if (start == null || end == null) return status || "unknown";
+    if (nowMs < start) return "upcoming";
+    if (nowMs <= end) return "live";
+    return "done";
+  }
+  function normalizeF1TvRaceStatus(race, sessions, nowMs = Date.now()) {
+    if ((sessions || []).some((session) => session.status === "live")) return "live";
+    if ((sessions || []).some((session) => session.status === "upcoming")) return "upcoming";
+    if ((sessions || []).length && (sessions || []).every((session) => session.status === "done")) return "done";
+    const starts = (sessions || []).map((session) => f1TvTimeMs(session.startsAt)).filter((time) => time != null);
+    const ends = (sessions || []).map((session) => f1TvTimeMs(session.endsAt)).filter((time) => time != null);
+    if (starts.length && ends.length) {
+      const firstStart = Math.min(...starts);
+      const lastEnd = Math.max(...ends);
+      if (nowMs < firstStart) return "upcoming";
+      if (nowMs <= lastEnd) return "upcoming";
+      return "done";
+    }
+    return String(race?.status || "").toLowerCase() || "unknown";
+  }
+  function normalizeRaceLibrary(library, season, nowMs = Date.now()) {
+    const sourceRaces = Array.isArray(library?.races) ? library.races : [];
+    const shouldRemoveCancelled = String(library?.season || season || "") === "2026" && sourceRaces.some((race) => isCancelledF12026RaceName(race?.name));
+    const races = shouldRemoveCancelled ? sourceRaces.filter((race) => !isCancelledF12026RaceName(race?.name)) : sourceRaces;
     return {
       ...library,
-      races: races
-        .filter((race) => !isCancelledF12026RaceName(race?.name))
-        .map((race, index) => ({ ...race, rnd: index + 1 })),
+      races: races.map((race, index) => {
+        const sessions = (race.sessions || []).map((session) => ({ ...session, status: normalizeF1TvSessionStatus(session, nowMs) }));
+        return {
+          ...race,
+          rnd: shouldRemoveCancelled ? index + 1 : race.rnd,
+          status: normalizeF1TvRaceStatus(race, sessions, nowMs),
+          sessions,
+        };
+      }),
     };
   }
   function normalizeF1TvSessionKind(kind) {
@@ -3178,6 +3243,7 @@
     const [streamStatus, setStreamStatus] = React.useState("");
     const [f1TvSeason, setF1TvSeason] = React.useState(() => debugF1TvSeason || String(new Date().getFullYear()));
     const [f1TvLibrary, setF1TvLibrary] = React.useState(null);
+    const [replayTimingAvailability, setReplayTimingAvailability] = React.useState({});
     const [f1TvRaceId, setF1TvRaceId] = React.useState("");
     const [f1TvSessionKind, setF1TvSessionKind] = React.useState(debugF1TvSession || "Race");
     const [f1TvDetailUrl, setF1TvDetailUrl] = React.useState(debugF1TvDetailUrl);
@@ -3292,7 +3358,7 @@
     const videoQuality = normalizeVideoQuality(profile.videoQuality || livePrefs.videoQuality);
     const currentSeason = String(D.seasonSummary?.season || new Date().getFullYear());
     const selectableSeasons = Array.from(new Set([currentSeason, String(new Date().getFullYear()), String(new Date().getFullYear() - 1), String(new Date().getFullYear() - 2), "2024", "2023", "2022", "2021", "2020", "2019", "2018"])).filter(Boolean);
-    const f1TvSessionLibrary = f1TvLibrary || localF1TvLibrary();
+    const f1TvSessionLibrary = normalizeRaceLibrary(f1TvLibrary || localF1TvLibrary(), f1TvSeason || currentSeason, clockTick);
     const f1TvRaces = f1TvSessionLibrary.races || [];
     const currentF1TvWeekendIndex = (() => {
       const index = f1TvRaces.findIndex((race) => race.status === "live" || race.status === "upcoming");
@@ -3308,6 +3374,10 @@
       : f1TvSessionOptions.map((kind) => ({ kind, status: "unknown" }));
     const selectedF1TvSessionMeta = sessionLibrarySessions.find((session) => session.kind === f1TvSessionKind) || { kind: f1TvSessionKind, status: "unknown" };
     const canResolveSelectedF1TvSession = canLoadF1TvSession(selectedF1TvRace, selectedF1TvSessionMeta);
+    const replayTimingAvailabilitySignature = [
+      raceLibraryId(selectedF1TvRace),
+      ...sessionLibrarySessions.map((session) => [session.kind, session.status, session.sessionKey, session.startsAt, session.endsAt].join(",")),
+    ].join("|");
 
     React.useEffect(() => {
       const t = setTimeout(() => setShowToast(false), 6500);
@@ -3974,7 +4044,7 @@
       setStreamStatus(forceRefresh ? "Refreshing F1 TV session library..." : "Loading F1 TV session library...");
       try {
         const library = await window.pitwall.f1tv.library({ season, forceRefresh });
-        const nextLibrary = normalizeRaceLibrary(library?.races?.length ? library : localF1TvLibrary(), season);
+        const nextLibrary = normalizeRaceLibrary(library?.races?.length ? library : localF1TvLibrary(), season, Date.now());
         setF1TvLibrary(nextLibrary);
         const requestedRace = nextLibrary.races.find((race) => {
           const meeting = String(race.meetingKey || "");
@@ -4001,6 +4071,35 @@
       const races = library.races || [];
       return races.find((item) => raceLibraryId(item) === f1TvRaceId) || races[0] || null;
     }
+
+    React.useEffect(() => {
+      const race = selectedF1TvRace;
+      if (!race?.meetingKey || !window.pitwall?.data?.replayTimingAvailability) return undefined;
+      const sessions = sessionLibrarySessions.filter((session) => session.status !== "live" && canLoadF1TvSession(race, session));
+      if (!sessions.length) return undefined;
+      let cancelled = false;
+      sessions.forEach((session) => {
+        const key = replayTimingAvailabilityKey(race, session);
+        setReplayTimingAvailability((current) => current[key] ? current : { ...current, [key]: replayTimingAvailabilityFallback("checking") });
+        window.pitwall.data.replayTimingAvailability({
+          meetingKey: race.meetingKey,
+          sessionKey: session.sessionKey || "",
+          sessionKind: session.kind,
+          raceName: race.name || "",
+          raceStartsAt: race.startsAt || "",
+          sessionStartsAt: session.startsAt || "",
+          sessionEndsAt: session.endsAt || "",
+          sessionStatus: session.status || "",
+        }).then((status) => {
+          if (cancelled) return;
+          setReplayTimingAvailability((current) => ({ ...current, [key]: { ...replayTimingAvailabilityFallback(status?.status), ...(status || {}) } }));
+        }).catch(() => {
+          if (cancelled) return;
+          setReplayTimingAvailability((current) => ({ ...current, [key]: replayTimingAvailabilityFallback("unavailable") }));
+        });
+      });
+      return () => { cancelled = true; };
+    }, [replayTimingAvailabilitySignature]);
 
     React.useEffect(() => {
       if (!debugAutoF1Tv || debugAutoF1TvLoaded.current || f1TvResolving || !f1TvLibrary?.races?.length || !f1TvRaceId) return;
@@ -4045,12 +4144,42 @@
       return false;
     }
 
+    function applyResolvedStreamStatusToLibrary(race, sessionKind, streamStatus) {
+      const status = String(streamStatus || "").toLowerCase();
+      if (status !== "live" && status !== "replay") return;
+      const selectedRaceId = raceLibraryId(race);
+      if (!selectedRaceId) return;
+      const selectedKind = normalizeF1TvSessionKind(sessionKind);
+      const nextSessionStatus = status === "live" ? "live" : "done";
+      setF1TvLibrary((library) => {
+        if (!library?.races?.length) return library;
+        let changed = false;
+        const races = library.races.map((item) => {
+          if (raceLibraryId(item) !== selectedRaceId) return item;
+          const sessions = (item.sessions || []).map((session) => {
+            if (normalizeF1TvSessionKind(session.kind) !== selectedKind || session.status === nextSessionStatus) return session;
+            changed = true;
+            return { ...session, status: nextSessionStatus };
+          });
+          const raceStatus = normalizeF1TvRaceStatus(item, sessions, Date.now());
+          if (raceStatus !== item.status) changed = true;
+          return { ...item, status: raceStatus, sessions };
+        });
+        return changed ? { ...library, races } : library;
+      });
+    }
+
     function decorateResolvedFeed(feed, resolved, sessionKind = f1TvSessionKind) {
+      const streamStatus = feed.streamStatus || resolved.streamStatus || "";
+      const playbackMode = streamStatus === "live"
+        ? "live"
+        : streamStatus === "replay" ? "replay" : resolved.playbackMode || "replay";
       return {
         ...feed,
         contentId: resolved.contentId || feed.contentId || "",
         sessionKind,
-        playbackMode: resolved.playbackMode || "replay",
+        streamStatus,
+        playbackMode,
       };
     }
 
@@ -4091,10 +4220,12 @@
           season: f1TvSeason,
           raceName: race?.name || debugF1TvRace || "",
           sessionKind,
+          sessionStatus: session.status || "",
           meetingKey: race?.meetingKey || debugF1TvMeetingKey || "",
         });
         const feeds = (resolved.feeds || []).map((feed) => decorateResolvedFeed(feed, resolved, sessionKind));
         const world = preferredMainF1TvFeed(feeds);
+        const playbackMode = world?.playbackMode || resolved.playbackMode || "replay";
         if (!world) {
           logPitWallDebug("f1tv.resolve-no-world", {
             contentId: resolved.contentId || "",
@@ -4112,10 +4243,11 @@
           return null;
         }
         const nextResolved = { ...resolved, feeds };
+        applyResolvedStreamStatusToLibrary(race, sessionKind, world.streamStatus || resolved.streamStatus || "");
         setResolvedF1TvContent(nextResolved);
         setPendingF1TvSelection(false);
         setStreamSources((sources) => ({ ...sources, [targetKey || "WORLD"]: world }));
-        setReplaySync({ mode: resolved.playbackMode || "replay", playing: true, masterTime: 0, duration: 0, masterKey: "WORLD" });
+        setReplaySync({ mode: playbackMode, playing: true, masterTime: 0, duration: 0, masterKey: "WORLD" });
         const worldLicense = debugUrlParts(world.licenseUrl || world.drm?.licenseUrl || "");
         logPitWallDebug("f1tv.resolve-success", {
           contentId: resolved.contentId || "",
@@ -4351,10 +4483,10 @@
     const battlePair = activeBattlePairs[0] || D.battlePairs?.[0] || null;
     const battleInsight = battlePair || D.insights.find((ins) => ins.kind === "battle");
     const battleCodes = battleInsight?.a && battleInsight?.b ? [battleInsight.a, battleInsight.b] : focusCodes;
-    const hasCurrentLiveSession = Boolean(D.race?.lap || currentLiveSession);
-    const sessionStatusLabel = hasCurrentLiveSession
-      ? (D.race.lap ? `LAP ${D.race.lap} / ${D.race.laps || "—"}` : dataSource)
-      : "";
+    const hasActiveLiveStream = streamDescriptor(streamSources.WORLD)?.playbackMode === "live"
+      || resolvedF1TvContent?.playbackMode === "live";
+    const hasCurrentLiveSession = Boolean(D.race?.lap || currentLiveSession || hasActiveLiveStream);
+    const sessionStatusLabel = hasCurrentLiveSession && D.race?.lap ? `LAP ${D.race.lap} / ${D.race.laps || "—"}` : "";
     const timingLap = telemetryNumber(sessionClock?.lapCount?.lap) ?? telemetryNumber(D.race?.lap);
     const timingLaps = telemetryNumber(sessionClock?.lapCount?.laps) ?? telemetryNumber(D.race?.laps);
     const timingLapLabel = timingLap ? `Lap ${timingLap}/${timingLaps || "—"}` : "";
@@ -4551,16 +4683,16 @@
         liveTimingRequestRef.current = requestId;
         liveTimingInFlightRef.current = true;
         try {
-          const data = await window.pitwall.data.liveTiming({ targetLatencySeconds: syncTargetFor("WORLD") });
+          const data = await window.pitwall.data.liveTiming({ source: "f1", targetLatencySeconds: syncTargetFor("WORLD") });
           if (cancelled || requestId !== liveTimingRequestRef.current) return;
-          setLiveTimingData((current) => hasRealTimingRows(data?.timing) ? data : hasRealTimingRows(current?.timing) ? current : data || null);
+          setLiveTimingData(data || null);
           logPitWallDebug("live.timing", {
             rowCount: data?.timing?.length || 0,
             ok: Boolean(data?.ok),
           });
         } catch (error) {
           if (cancelled || requestId !== liveTimingRequestRef.current) return;
-          setLiveTimingData({ ok: false, timing: [], weather: {}, sourceLabel: "Live timing unavailable", message: "OpenF1 live timing is unavailable." });
+          setLiveTimingData({ ok: false, timing: [], weather: {}, sourceLabel: "Formula 1 live timing unavailable", message: "Formula 1 SignalR live timing is unavailable." });
           logPitWallDebug("live.timing-error", { message: error?.message || String(error || "") });
         } finally {
           if (requestId === liveTimingRequestRef.current) liveTimingInFlightRef.current = false;
@@ -5317,7 +5449,7 @@
               <span className="slr__rnd">{race.rnd ? "R" + race.rnd : "R-"}</span>
               <span className="slr__main">
                 <span className="slr__name">{race.name || "Race weekend"}</span>
-                <span className="slr__meta">
+                <span className="slr__meta session-library__race-meta">
                   {statusChip(state)}
                   <span className="slr__metatext">
                     {detail}
@@ -5354,7 +5486,7 @@
                 <span className="slr__code">{race.rnd ? "R" + race.rnd : "R-"}</span>
                 <div>
                   <span className="slr__exname">{race.name || "Race weekend"}</span>
-                  <div className="slr__exmeta">{exMeta}</div>
+                  <div className="slr__exmeta session-library__race-meta">{exMeta}</div>
                 </div>
                 <span className="slr__exstatus">
                   {state === "live" ? <span className="slr__chip slr__chip--live"><i />Live now</span>
@@ -5369,10 +5501,18 @@
                   const live = session.status === "live";
                   const available = canLoadF1TvSession(race, session);
                   const note = session.kind === "Race" && winner ? ` · ${winner}` : "";
+                  const timingAvailability = !live && available ? replayTimingAvailability[replayTimingAvailabilityKey(race, session)] : null;
                   return (
-                    <div className="slr-cell" data-live={String(live)} data-available={String(available)} key={session.kind}>
+                    <div className="slr-cell session-library__row" data-live={String(live)} data-available={String(available)} key={session.kind}>
                       <span className="slr-cell__nm">{sessionDisplayName(session.kind)}</span>
-                      <span className="slr-cell__mt">{sessionScheduleText(session)}{note}</span>
+                      <span className="slr-cell__mt">
+                        <span>{sessionScheduleText(session)}{note}</span>
+                        {timingAvailability && (
+                          <span className="replay-timing-badge" data-status={timingAvailability.status || "checking"} title={timingAvailability.message || ""}>
+                            <Icon name="timer" size={11} /> {timingAvailability.label || "Checking"}
+                          </span>
+                        )}
+                      </span>
                       <span className="slr-cell__btn">
                         <Button variant={live ? "primary" : "secondary"} size="sm" onClick={() => loadLibrarySession(race, session)} disabled={f1TvResolving || !available} iconLeft={<Icon name="play" size={13} />}>
                           {!available ? "Not started" : f1TvResolving && active ? "Loading..." : live ? "Watch live" : "Watch replay"}
@@ -5394,7 +5534,7 @@
               <span className="session-library__glyph"><Icon name="grid" size={22} /></span>
               <div>
                 <h2 className="session-library__title">Session Library</h2>
-                <div className="session-library__sub">{seasonLabel ? `The ${seasonLabel} season, round by round` : "The season, round by round"}</div>
+                <div className="session-library__sub">{seasonLabel ? `Race weekends from the ${seasonLabel} season, round by round` : "Race weekends, round by round"}</div>
               </div>
               <div className="session-library__tools">
                 {seasonLabel && <span className="session-library__season">SEASON <b>{seasonLabel}</b></span>}

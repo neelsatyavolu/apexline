@@ -615,12 +615,21 @@ assert.equal(f1TimingAnalyticsRows.length, 16, "Formula 1 timing fallback should
 assert.equal(f1TimingAnalyticsRows.filter((row) => f1TimingAnalyticsSandbox.finiteNumber(row.position) != null).length, 16, "Formula 1 timing fallback should expose positions");
 assert.equal(f1TimingAnalyticsRows.filter((row) => f1TimingAnalyticsSandbox.finiteNumber(row.resultDuration) != null || f1TimingAnalyticsSandbox.finiteNumber(row.fastestLap) != null).length, 16, "Formula 1 timing fallback should expose lap times");
 assert.equal(f1TimingAnalyticsRows.filter((row) => f1TimingAnalyticsSandbox.finiteNumber(row.laps) != null && Number(row.laps) > 0).length, 16, "Formula 1 timing fallback should expose lap counts");
+const analyticsCacheSandbox = vm.runInNewContext(`(() => {
+  ${[
+    "finiteNumber",
+    "analyticsSessionIsImmutable",
+    "analyticsSessionHasPublishedRows",
+  ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+  return { analyticsSessionHasPublishedRows };
+})()`);
+assert.equal(analyticsCacheSandbox.analyticsSessionHasPublishedRows({ source: "Formula 1 livetiming", counts: { laps: 20, position: 20 } }), false, "Cached Formula 1 timing recap rows should not block a fresh OpenF1 recap load");
+assert.equal(analyticsCacheSandbox.analyticsSessionHasPublishedRows({ source: "OpenF1", counts: { laps: 20, position: 20 } }), true, "Published OpenF1 rows should satisfy session cache checks");
 assert.doesNotMatch(mainProcess, /const hasPublishedRows = \["drivers"/, "Roster-only OpenF1 responses should not block the Formula 1 timing fallback");
 assert.match(mainProcess, /analyticsSessionHasPublishedRows[\s\S]*\["laps", "position", "sessionResult", "stints"\][\s\S]*aliasDiskEntry\?\.data && analyticsSessionHasPublishedRows/, "Roster-only OpenF1 analytics cache entries should not block the Formula 1 timing fallback");
 assert.match(mainProcess, /f1TimingArchiveIdentityFromOptions[\s\S]*raceName[\s\S]*raceStartsAt[\s\S]*resolveF1TimingArchiveBase\(optionIdentity\.meeting, optionIdentity\.session\)/, "Formula 1 timing fallback should resolve archives from the selected schedule race identity before trusting OpenF1 meeting metadata");
-assert.match(mainProcess, /if \(shouldPreferF1TimingAnalytics\(options\)\) \{[\s\S]*return await buildF1TimingAnalyticsSessionData\(sessionInfo, options\);[\s\S]*const requestEntries = Object\.entries\(requests\);/, "Schedule-identified weekend recaps should try Formula 1 timing before the slow OpenF1 analytics endpoint loop");
-assert.match(mainProcess, /analyticsArchiveAliasKey[\s\S]*raceName[\s\S]*raceStartsAt[\s\S]*analyticsSessionDiskEntry\(\[archiveAliasKey, aliasKey\]/, "Formula 1 timing recaps should hit a race-identity disk cache before resolving OpenF1 session metadata");
-assert.match(mainProcess, /analyticsSessionIsImmutable[\s\S]*formula 1[\s\S]*shouldRevalidateAnalyticsCache\(createdAt, data\)[\s\S]*analyticsSessionIsImmutable\(data\)[\s\S]*return false/, "Formula 1 timing archive analytics should be treated as immutable cached recap data");
+assert.doesNotMatch(mainProcess, /if \(shouldPreferF1TimingAnalytics\(options\)\)/, "Schedule-identified weekend recaps should ask OpenF1 before trying Formula 1 timing");
+assert.doesNotMatch(mainProcess, /analyticsArchiveAliasKey/, "Formula 1 archive cache aliases should not shadow OpenF1 recap data");
 assert.match(mainProcess, /buildF1TimingAnalyticsSessionData[\s\S]*parseF1TimingArchiveRows[\s\S]*f1TimingAnalyticsDriverRows/, "Session analytics should fall back to Formula 1 timing archives when OpenF1 analytics rows are empty");
 
 const jolpicaScheduleSandbox = vm.runInNewContext(`(() => {
@@ -771,6 +780,13 @@ assert.equal(openF1Schedule.length, 2, "OpenF1 meetings should backfill the dash
 assert.equal(openF1Schedule[0].name, "Monaco Grand Prix", "OpenF1 schedule fallback should preserve the current weekend name");
 assert.equal(openF1Schedule[0].status, "done", "OpenF1 schedule fallback should mark just-finished race weekends as done");
 assert.deepEqual(Array.from(openF1Schedule[0].sessions, (session) => session.kind), ["Practice 1", "Qualifying", "Race"], "OpenF1 schedule fallback should include session times");
+assert.equal(openF1Schedule[0].sessions[0].endsAt, "2026-06-05T12:30:00.000Z", "OpenF1 schedule fallback should carry session end times for live status recalculation");
+const openF1EndedPractice = openF1ScheduleSandbox.parseOpenF1Schedule([
+  { meeting_key: 1287, meeting_name: "Barcelona Grand Prix", date_start: "2026-06-12T11:30:00+00:00" },
+], [
+  { meeting_key: 1287, session_name: "Practice 2", session_type: "Practice", date_start: "2026-06-12T15:00:00+00:00", date_end: "2026-06-12T16:00:00+00:00" },
+], Date.parse("2026-06-12T16:01:00+00:00"));
+assert.equal(openF1EndedPractice[0].sessions[0].status, "done", "OpenF1 schedule fallback should stop marking practice live after its official end time");
 
 const f1TvContentScoreSandbox = vm.runInNewContext(`(() => {
   ${[
@@ -1626,6 +1642,11 @@ assert.match(mainProcess, /sessionid/, "F1 TV playback requests should include t
 assert.match(mainProcess, /f1TvEntitlementTokenFromCookies/, "F1 TV status should treat the entitlement-token cookie as playback-ready auth");
 assert.match(mainProcess, /f1TvPlaybackHeaders/, "F1 TV resolver should build volatile playback headers for clean player requests");
 assert.match(mainProcess, /headers:\s*\{[\s\S]*playbackHeaders/, "F1 TV direct-resolved streams should carry playback headers in memory");
+const f1TvPlaybackMode = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "f1TvPlaybackMode")})`);
+assert.equal(f1TvPlaybackMode({ sessionKind: "Race", sessionStatus: "live" }), "live", "F1 TV resolver should treat a current Race session as live playback");
+assert.equal(f1TvPlaybackMode({ sessionKind: "Race", sessionStatus: "done" }), "replay", "F1 TV resolver should keep completed Race sessions in replay playback");
+assert.equal(f1TvPlaybackMode({ sessionKind: "Race", sessionStatus: "done", streamStatus: "live" }), "live", "F1 TV resolver should let a live manifest keep an overrun session in live playback");
+assert.equal(f1TvPlaybackMode({ sessionKind: "Race", sessionStatus: "live", streamStatus: "replay" }), "replay", "F1 TV resolver should let a replay manifest override scheduled live status");
 assert.match(mainProcess, /writePitWallDebugLog/, "Main process should write sanitized PitWall debug logs");
 assert.match(mainProcess, /pitwall:debug:log/, "Main process should expose debug logging IPC");
 assert.match(preload, /debug:\s*\{[\s\S]*log:/, "Preload should expose debug logging to the renderer");
@@ -1661,12 +1682,146 @@ assert.match(mainProcess, /pitwall:f1tv:library/, "Electron main should expose F
 assert.match(mainProcess, /F1TV_LIBRARY_CACHE_FILE/, "F1 TV library should persist a season cache so Live Racing opens quickly");
 assert.match(mainProcess, /F1TV_LIBRARY_CACHE_MS/, "F1 TV library cache should have an explicit TTL");
 assert.match(mainProcess, /forceRefresh/, "F1 TV library IPC should support bypassing the cache for manual reloads");
+assert.match(mainProcess, /F1TV_SEASON_PAGE_IDS[\s\S]*2026[\s\S]*12343/, "F1 TV library should know the official CMS season page for the 2026 season");
+assert.match(mainProcess, /fetchF1TvCmsSeasonContent\(year\)/, "F1 TV library should enrich OpenF1 schedule rows with fast F1 TV CMS content metadata");
+assert.match(mainProcess, /f1TvCmsDetailPageUrisFromPage/, "F1 TV library should follow CMS meeting detail pages because the season page only contains meeting bundles");
+assert.match(mainProcess, /F1TV_CMS_DETAIL_TIMEOUT_MS/, "F1 TV CMS detail fetches should have a short timeout so Live Racing does not hang");
+assert.match(mainProcess, /sessionKey: String\(session\.session_key \|\| ""\)/, "OpenF1 session keys should be carried through for exact F1 TV CMS status matching");
+assert.doesNotMatch(mainProcess, /async function getF1TvLibrary[\s\S]{0,2500}resolveF1TvContent/, "F1 TV library should not load the hidden F1 TV player just to determine live/replay status");
+const f1TvCmsLibrarySandbox = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(mainProcess, "normalizeOpenF1SessionKind")}
+  ${extractNamedFunction(mainProcess, "f1TvCmsTimeIso")}
+  ${extractNamedFunction(mainProcess, "normalizeF1TvCmsSessionKind")}
+  ${extractNamedFunction(mainProcess, "normalizeF1TvCmsContentItem")}
+  ${extractNamedFunction(mainProcess, "applyF1TvCmsLibraryMetadata")}
+  return { normalizeF1TvCmsContentItem, applyF1TvCmsLibraryMetadata };
+})()`);
+const cmsLiveLibrary = f1TvCmsLibrarySandbox.applyF1TvCmsLibraryMetadata({
+  source: "OpenF1",
+  season: "2026",
+  races: [{
+    rnd: 7,
+    name: "Barcelona Grand Prix",
+    status: "done",
+    meetingKey: "1234",
+    sessions: [
+      { kind: "Practice 1", status: "done", startsAt: "2026-06-12T11:30:00Z", endsAt: "2026-06-12T12:30:00Z" },
+      { kind: "Practice 2", status: "done", startsAt: "2026-06-12T15:00:00Z", endsAt: "2026-06-12T16:00:00Z" },
+      { kind: "Race", status: "upcoming", startsAt: "2026-06-14T13:00:00Z", endsAt: "2026-06-14T15:00:00Z" },
+    ],
+  }],
+}, [{
+  metadata: {
+    contentId: "cms-live-fp2",
+    contentSubtype: "LIVE",
+    title: "Practice 2",
+    emfAttributes: {
+      MeetingKey: "1234",
+      MeetingSessionKey: "5678",
+      Global_Title: "Practice 2",
+      sessionStartDate: "2026-06-12T15:00:00Z",
+      sessionEndDate: "2026-06-12T16:00:00Z",
+    },
+  },
+}], Date.parse("2026-06-12T16:01:00Z"));
+assert.equal(cmsLiveLibrary.races[0].sessions[1].status, "live", "F1 TV CMS LIVE should keep an overrun session live after its scheduled end");
+assert.equal(cmsLiveLibrary.races[0].sessions[1].statusSource, "f1tv-cms", "F1 TV CMS status should be marked as authoritative");
+assert.equal(cmsLiveLibrary.races[0].sessions[1].contentId, "cms-live-fp2", "F1 TV CMS enrichment should attach the content id for later session resolution");
+assert.equal(cmsLiveLibrary.races[0].status, "live", "F1 TV CMS LIVE should make the race weekend live only while a session is live");
+const cmsReplayLibrary = f1TvCmsLibrarySandbox.applyF1TvCmsLibraryMetadata({
+  source: "OpenF1",
+  season: "2026",
+  races: [{
+    rnd: 7,
+    name: "Barcelona Grand Prix",
+    status: "live",
+    meetingKey: "1234",
+    sessions: [
+      { kind: "Qualifying", status: "live", startsAt: "2026-06-13T14:00:00Z", endsAt: "2026-06-13T15:00:00Z" },
+    ],
+  }],
+}, [{
+  metadata: {
+    contentId: "cms-replay-quali",
+    contentSubtype: "REPLAY",
+    title: "Qualifying",
+    emfAttributes: {
+      MeetingKey: "1234",
+      MeetingSessionKey: "7777",
+      Global_Title: "Qualifying",
+    },
+  },
+}], Date.parse("2026-06-13T14:30:00Z"));
+assert.equal(cmsReplayLibrary.races[0].sessions[0].status, "done", "F1 TV CMS REPLAY should override stale scheduled-live status");
+const cmsExactSessionLibrary = f1TvCmsLibrarySandbox.applyF1TvCmsLibraryMetadata({
+  source: "OpenF1",
+  season: "2026",
+  races: [{
+    rnd: 7,
+    name: "Barcelona Grand Prix",
+    status: "upcoming",
+    meetingKey: "1234",
+    sessions: [
+      { kind: "Race", status: "upcoming", sessionKey: "race-session" },
+    ],
+  }],
+}, [{
+  metadata: {
+    contentId: "cms-wrong-live-race",
+    contentSubtype: "LIVE",
+    title: "Race",
+    emfAttributes: {
+      MeetingKey: "1234",
+      MeetingSessionKey: "other-race-session",
+      Global_Title: "Race",
+    },
+  },
+}, {
+  metadata: {
+    contentId: "cms-exact-replay-race",
+    contentSubtype: "REPLAY",
+    title: "Race",
+    emfAttributes: {
+      MeetingKey: "1234",
+      MeetingSessionKey: "race-session",
+      Global_Title: "Race",
+    },
+  },
+}]);
+assert.equal(cmsExactSessionLibrary.races[0].sessions[0].status, "done", "F1 TV CMS enrichment should prefer exact session-key matches over same-kind rows");
+assert.equal(cmsExactSessionLibrary.races[0].sessions[0].contentId, "cms-exact-replay-race", "F1 TV CMS exact session-key matching should preserve the exact content id");
+const cmsMismatchedSessionLibrary = f1TvCmsLibrarySandbox.applyF1TvCmsLibraryMetadata({
+  source: "OpenF1",
+  season: "2026",
+  races: [{
+    rnd: 7,
+    name: "Barcelona Grand Prix",
+    status: "upcoming",
+    meetingKey: "1234",
+    sessions: [
+      { kind: "Qualifying", status: "upcoming", sessionKey: "official-qualifying" },
+    ],
+  }],
+}, [{
+  metadata: {
+    contentId: "cms-other-qualifying",
+    contentSubtype: "REPLAY",
+    title: "Qualifying",
+    emfAttributes: {
+      MeetingKey: "1234",
+      MeetingSessionKey: "other-qualifying",
+      Global_Title: "Qualifying",
+    },
+  },
+}]);
+assert.equal(cmsMismatchedSessionLibrary.races[0].sessions[0].status, "upcoming", "F1 TV CMS enrichment should not use same-kind rows when OpenF1 has a different session key");
 assert.match(mainProcess, /filter_MeetingKey/, "F1 TV session browser should open meeting-filtered replay search pages");
 assert.match(mainProcess, /pitwall:f1tv:streams/, "Electron main should expose captured F1 TV stream IPC");
 assert.match(mainProcess, /pitwall:f1tv:resolveContent/, "Electron main should expose hidden F1 TV content resolution IPC");
 assert.match(mainProcess, /PITWALL_F1TV_DIAG_URL/, "Electron should support a sanitized F1 TV resolver diagnostic mode for production-profile testing");
 assert.match(mainProcess, /PITWALL_F1TV_DIAG_SESSION/, "F1 TV diagnostics should support reproducing picker session-kind resolution");
 assert.match(mainProcess, /PITWALL_F1TV_LIBRARY_DIAG/, "Electron should support a sanitized F1 TV library diagnostic mode");
+assert.match(mainProcess, /PITWALL_REPLAY_TIMING_AVAILABILITY_DIAG/, "Electron should support a sanitized replay timing availability diagnostic mode");
 assert.match(mainProcess, /PITWALL_DASHBOARD_DIAG/, "Electron should support a hidden Dashboard data-richness diagnostic mode");
 assert.match(mainProcess, /PITWALL_F1TV_DIAG_FALLBACK/, "F1 TV diagnostics should allow an explicit slow hidden playback fallback for learning request shape");
 assert.match(mainProcess, /PITWALL_F1TV_MEDIA_DIAG/, "F1 TV diagnostics should fetch the resolved manifest through the media bridge for playback debugging");
@@ -1773,7 +1928,7 @@ assert.match(mainProcess, /ANALYTICS_REVALIDATE_MS/, "Session analytics should h
 assert.match(mainProcess, /analyticsRefreshInFlight/, "Session analytics should dedupe background refreshes for repeated Weekend and Analytics requests");
 assert.match(mainProcess, /refreshAnalyticsSessionCache/, "Session analytics should refresh cached session data without blocking the caller");
 assert.match(mainProcess, /analyticsCacheFingerprint/, "Session analytics should compare cached and fresh session data before rewriting the cache");
-assert.match(mainProcess, /analyticsSessionDiskEntry\(\[cacheKey, archiveAliasKey, aliasKey\], \{ allowStale: true \}\)/, "Session analytics should return cached session data immediately while checking for updates later");
+assert.match(mainProcess, /analyticsSessionDiskEntry\(\[cacheKey, aliasKey\], \{ allowStale: true \}\)/, "Session analytics should return cached OpenF1 session data immediately while checking for updates later");
 assert.match(mainProcess, /OpenF1 rate limit reached/, "Session analytics should report OpenF1 rate limits without exposing raw URLs");
 assert.match(mainProcess, /hasPublishedRows/, "Session analytics should explain when OpenF1 has not published rows yet");
 assert.match(mainProcess, /value === null \|\| value === undefined \|\| value === ""[\s\S]*return null/, "Session analytics should not coerce missing numeric values to zero");
@@ -2582,7 +2737,9 @@ assert.match(source["Leaderboards.jsx"], /seasonSummary/, "Leaderboards should u
 assert.match(source["LiveRacing.jsx"], /Diagnostics browser/, "Live mode should keep F1 TV website browsing available for diagnostics");
 assert.match(source["LiveRacing.jsx"], /F1 TV session picker/, "Live mode should include a session picker for past races and sessions");
 assert.match(source["LiveRacing.jsx"], /No current live session/, "Live mode should clearly state when there is no current live session");
+assert.doesNotMatch(source["LiveRacing.jsx"], /const hasActiveLiveStream = replaySync\.mode === "live"/, "Live Racing top bar should not treat default live mode as a current live session");
 assert.match(source["LiveRacing.jsx"], /const sessionStatusLabel = hasCurrentLiveSession[\s\S]*:\s*"";/, "Live Racing top bar should omit the no-current-live-session status text");
+assert.doesNotMatch(source["LiveRacing.jsx"], /const sessionStatusLabel = hasCurrentLiveSession[\s\S]{0,220}dataSource[\s\S]{0,80}:\s*"";/, "Live Racing top bar should not show live data source labels or source issues");
 assert.match(source["LiveRacing.jsx"], /\.live__bar \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto minmax\(0, 1fr\)[\s\S]*\.live__presets \{[^}]*justify-self: center/, "Live Racing title bar should center the layout preset picker");
 assert.match(source["LiveRacing.jsx"], /Load past session/, "Live mode should expose a visible past-session action outside hidden pane settings");
 assert.match(source["LiveRacing.jsx"], /Session Library/, "Live mode should open a dedicated session library popup for past sessions");
@@ -2595,12 +2752,107 @@ assert.match(source["LiveRacing.jsx"], /f1TvResolving && active \? "Loading\.\.\
 assert.match(source["LiveRacing.jsx"], /currentF1TvWeekendIndex[\s\S]*slice\(0, currentF1TvWeekendIndex \+ 1\)/, "Session library should show past races through the current weekend, not future weekends");
 assert.match(source["LiveRacing.jsx"], /activeRaceName[\s\S]*selectedF1TvRace\?\.name[\s\S]*replaySetupActive|replaySetupActive[\s\S]*activeRaceName[\s\S]*selectedF1TvRace\?\.name/, "Live Racing top bar should use the selected replay race name while a replay is active");
 const f1TvSessionGateSandbox = vm.runInNewContext(`(() => {
+  const F1TV_SESSION_STATUS_GRACE_MS = 1000 * 60 * 5;
+  const F1TV_WEEKEND_STATUS_GRACE_MS = 1000 * 60 * 30;
+  ${extractNamedFunction(source["LiveRacing.jsx"], "isCancelledF12026RaceName")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "f1TvTimeMs")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "estimatedF1TvSessionEndMs")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "normalizeF1TvSessionStatus")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "normalizeF1TvRaceStatus")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "normalizeF1TvSessionKind")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "normalizeRaceLibrary")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "orderedF1TvSessions")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "canLoadF1TvSession")}
-  return { canLoadF1TvSession, normalizeF1TvSessionKind, orderedF1TvSessions };
+  return { canLoadF1TvSession, normalizeF1TvSessionKind, normalizeRaceLibrary, orderedF1TvSessions };
 })()`);
 assert.equal(f1TvSessionGateSandbox.normalizeF1TvSessionKind("Sprint Shootout"), "Sprint Qualifying", "Session library should present Sprint Shootout aliases as Sprint Qualifying");
+const staleFp1Library = f1TvSessionGateSandbox.normalizeRaceLibrary({
+  season: "2026",
+  races: [{
+    rnd: 7,
+    name: "Barcelona Grand Prix",
+    status: "live",
+    startsAt: "2026-06-14T13:00:00Z",
+    sessions: [
+      { kind: "Practice 1", status: "live", startsAt: "2026-06-12T11:30:00Z", endsAt: "2026-06-12T12:30:00Z" },
+      { kind: "Practice 2", status: "upcoming", startsAt: "2026-06-12T15:00:00Z", endsAt: "2026-06-12T16:00:00Z" },
+      { kind: "Practice 3", status: "upcoming", startsAt: "2026-06-13T10:30:00Z", endsAt: "2026-06-13T11:30:00Z" },
+      { kind: "Qualifying", status: "upcoming", startsAt: "2026-06-13T14:00:00Z", endsAt: "2026-06-13T15:00:00Z" },
+      { kind: "Race", status: "upcoming", startsAt: "2026-06-14T13:00:00Z", endsAt: "2026-06-14T15:00:00Z" },
+    ],
+  }],
+}, "2026", Date.parse("2026-06-12T15:30:00Z"));
+assert.deepEqual(
+  staleFp1Library.races[0].sessions.map((session) => [session.kind, session.status]),
+  [["Practice 1", "done"], ["Practice 2", "live"], ["Practice 3", "upcoming"], ["Qualifying", "upcoming"], ["Race", "upcoming"]],
+  "Session library should rederive stale cached live/upcoming statuses from session times"
+);
+assert.equal(staleFp1Library.races[0].status, "live", "Session library should keep the weekend live while a later session is live");
+const betweenSessionsLibrary = f1TvSessionGateSandbox.normalizeRaceLibrary({
+  season: "2026",
+  races: [{
+    rnd: 7,
+    name: "Barcelona Grand Prix",
+    status: "live",
+    sessions: [
+      { kind: "Practice 1", status: "live", startsAt: "2026-06-12T11:30:00Z", endsAt: "2026-06-12T12:30:00Z" },
+      { kind: "Practice 2", status: "upcoming", startsAt: "2026-06-12T15:00:00Z", endsAt: "2026-06-12T16:00:00Z" },
+      { kind: "Practice 3", status: "upcoming", startsAt: "2026-06-13T10:30:00Z", endsAt: "2026-06-13T11:30:00Z" },
+      { kind: "Qualifying", status: "upcoming", startsAt: "2026-06-13T14:00:00Z", endsAt: "2026-06-13T15:00:00Z" },
+      { kind: "Race", status: "upcoming", startsAt: "2026-06-14T13:00:00Z", endsAt: "2026-06-14T15:00:00Z" },
+    ],
+  }],
+}, "2026", Date.parse("2026-06-12T13:00:00Z"));
+assert.equal(betweenSessionsLibrary.races[0].status, "upcoming", "Session library should not mark a race weekend live between sessions");
+const endedFp2Library = f1TvSessionGateSandbox.normalizeRaceLibrary({
+  season: "2026",
+  races: [{
+    rnd: 7,
+    name: "Barcelona Grand Prix",
+    status: "live",
+    sessions: [
+      { kind: "Practice 2", status: "live", startsAt: "2026-06-12T15:00:00Z", endsAt: "2026-06-12T16:00:00Z" },
+    ],
+  }],
+}, "2026", Date.parse("2026-06-12T16:01:00Z"));
+assert.equal(endedFp2Library.races[0].sessions[0].status, "done", "Session library should stop showing FP2 live after the official end time");
+const endedFp2LegacyLibrary = f1TvSessionGateSandbox.normalizeRaceLibrary({
+  season: "2026",
+  races: [{
+    rnd: 7,
+    name: "Barcelona Grand Prix",
+    status: "live",
+    sessions: [
+      { kind: "Practice 2", status: "live", startsAt: "2026-06-12T15:00:00Z" },
+    ],
+  }],
+}, "2026", Date.parse("2026-06-12T16:01:00Z"));
+assert.equal(endedFp2LegacyLibrary.races[0].sessions[0].status, "done", "Session library should not trust legacy cached live status forever when a practice start time is known");
+const cmsLiveFp2Library = f1TvSessionGateSandbox.normalizeRaceLibrary({
+  season: "2026",
+  races: [{
+    rnd: 7,
+    name: "Barcelona Grand Prix",
+    status: "done",
+    sessions: [
+      { kind: "Practice 2", status: "live", statusSource: "f1tv-cms", contentSubtype: "LIVE", startsAt: "2026-06-12T15:00:00Z", endsAt: "2026-06-12T16:00:00Z" },
+    ],
+  }],
+}, "2026", Date.parse("2026-06-12T16:01:00Z"));
+assert.equal(cmsLiveFp2Library.races[0].sessions[0].status, "live", "Session library should preserve F1 TV CMS live status after the scheduled end time");
+assert.equal(cmsLiveFp2Library.races[0].status, "live", "Session library should show the weekend live while F1 TV CMS says a session is still live");
+const cmsReplayFp2Library = f1TvSessionGateSandbox.normalizeRaceLibrary({
+  season: "2026",
+  races: [{
+    rnd: 7,
+    name: "Barcelona Grand Prix",
+    status: "live",
+    sessions: [
+      { kind: "Practice 2", status: "live", statusSource: "f1tv-cms", contentSubtype: "REPLAY", startsAt: "2026-06-12T15:00:00Z", endsAt: "2026-06-12T16:00:00Z" },
+    ],
+  }],
+}, "2026", Date.parse("2026-06-12T15:30:00Z"));
+assert.equal(cmsReplayFp2Library.races[0].sessions[0].status, "done", "Session library should preserve F1 TV CMS replay status even during a stale scheduled-live window");
 assert.deepEqual(
   JSON.parse(JSON.stringify(f1TvSessionGateSandbox.orderedF1TvSessions([
     { kind: "Practice 1", status: "done" },
@@ -2637,6 +2889,7 @@ assert.match(source["LiveRacing.jsx"], /pitwall\.f1tv\.library/, "Live mode shou
 assert.match(source["LiveRacing.jsx"], /pitwall\.f1tv\.library\(\{ season, forceRefresh/, "Live Racing should pass forceRefresh through to the F1 TV library loader");
 assert.match(source["LiveRacing.jsx"], /loadF1TvLibrary\(f1TvSeason, \{ forceRefresh: true \}\)/, "Reload library should bypass cached F1 TV weekends");
 assert.match(source["LiveRacing.jsx"], /pitwall\.f1tv\.resolveContent/, "Live mode should resolve F1 TV content into clean stream descriptors");
+assert.match(source["LiveRacing.jsx"], /resolveContent\(\{[\s\S]*sessionStatus: session\.status/, "Live mode should pass selected F1 TV session status into clean stream resolution");
 assert.match(source["LiveRacing.jsx"], /pitwall\.f1tv\.probeStatus/, "Live mode should preflight F1 TV auth before waiting on hidden stream resolution");
 assert.match(source["LiveRacing.jsx"], /Checking F1 TV session/, "Live mode should tell the user while it checks F1 TV auth");
 assert.match(source["LiveRacing.jsx"], /Diagnostic F1 TV captures/, "Live mode should expose captured F1 TV stream diagnostics without making it the normal loading path");
@@ -2783,13 +3036,13 @@ assert.match(source["LiveRacing.jsx"], /replaySync\.playing === false[\s\S]*vide
 assert.match(source["LiveRacing.jsx"], /Replay timing unavailable/, "Replay timing errors should surface as a clear short status");
 assert.match(source["LiveRacing.jsx"], /diagnostics: data\?\.diagnostics/, "Replay timing logs should include sanitized data-source row counts");
 assert.match(source["LiveRacing.jsx"], /liveTimingData/, "Live mode should keep fast timing data separate from the dashboard snapshot");
-assert.match(source["LiveRacing.jsx"], /pitwall\.data\.liveTiming/, "Live mode should request fast OpenF1 timing snapshots while racing");
+assert.match(source["LiveRacing.jsx"], /pitwall\.data\.liveTiming\(\{[\s\S]*source: "f1"/, "Live mode should request Formula 1 SignalR timing snapshots while racing");
 assert.match(source["LiveRacing.jsx"], /targetLatencySeconds: syncTargetFor\("WORLD"\)/, "Live timing should request rows delayed to the World Feed target latency");
 assert.match(source["LiveRacing.jsx"], /setInterval\(loadLiveTiming, LIVE_TIMING_POLL_INTERVAL_MS\)/, "Live timing should refresh quickly for broadcast sync");
 assert.match(source["LiveRacing.jsx"], /liveTimingRequestRef/, "Live timing polling should ignore stale overlapping responses");
 assert.match(source["LiveRacing.jsx"], /liveTimingInFlightRef/, "Live timing polling should not start overlapping snapshot requests");
 assert.match(source["Weekend.jsx"], /liveTimingRequestIdRef[\s\S]*liveTimingInFlightRef\.current === requestId/, "Weekend live timing polling should ignore stale overlapping responses");
-assert.match(source["LiveRacing.jsx"], /setLiveTimingData\(\(current\) => hasRealTimingRows\(data\?\.timing\) \? data : hasRealTimingRows\(current\?\.timing\) \? current : data \|\| null\)/, "Live timing should not let an empty late response overwrite populated rows");
+assert.match(source["LiveRacing.jsx"], /setLiveTimingData\(data \|\| null\)/, "Live timing should surface Formula 1 unavailable responses instead of preserving stale rows");
 assert.doesNotMatch(source["LiveRacing.jsx"], /replaySync\.mode === "replay"[\s\S]*\? \(replayRows\.length \? replayRows : D\.timing\)[\s\S]*: \(liveRows\.length \? liveRows : D\.timing\)/, "Live Racing should not show stale dashboard timing rows when the selected live/replay timing source has no rows");
 assert.match(source["LiveRacing.jsx"], /pendingF1TvSelection/, "Choosing an F1 TV replay should pause unrelated live timing until playback resolves");
 assert.match(source["LiveRacing.jsx"], /if \(!resolvedF1TvContent\?\.contentId && !resolvedF1TvContent\?\.feeds\?\.length\) return undefined;/, "Replay timing should wait for the selected F1 TV session to resolve before polling timing");
@@ -2879,7 +3132,80 @@ assert.match(mainProcess, /TrackStatus\.jsonStream/, "Replay timing should fetch
 assert.match(mainProcess, /RaceControlMessages\.jsonStream/, "Replay timing should fetch the official F1 race-control stream");
 assert.match(mainProcess, /function parseF1TimingSessionClock/, "F1 timing parser should normalize the official session clock");
 assert.match(mainProcess, /function f1TimingSessionStartSeconds/, "Replay timing should retain the FastF1-style session Started marker for clock diagnostics");
+assert.match(mainProcess, /function getReplayTimingAvailability/, "Replay timing should expose a lightweight availability probe before a replay is loaded");
+assert.match(mainProcess, /pitwall:data:replayTimingAvailability/, "Electron main should expose replay timing availability IPC");
+assert.match(preload, /replayTimingAvailability: \(options = \{\}\)/, "Preload should expose replay timing availability to the renderer");
+assert.match(source["LiveRacing.jsx"], /pitwall\.data\.replayTimingAvailability/, "Session library should ask whether replay timing is available before loading a replay");
+assert.match(source["LiveRacing.jsx"], /replay-timing-badge/, "Session library should render a compact replay timing availability indicator");
+{
+  const availabilitySandbox = vm.runInNewContext(`(() => {
+    ${extractNamedFunction(mainProcess, "finiteNumber")}
+    ${extractNamedFunction(mainProcess, "f1TimingSessionHasStartMarker")}
+    ${extractNamedFunction(mainProcess, "f1TimingReplayAvailabilityFromSessionData")}
+    return { f1TimingReplayAvailabilityFromSessionData };
+  })()`);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(availabilitySandbox.f1TimingReplayAvailabilityFromSessionData({
+      baseUrl: "https://livetiming.formula1.com/static/2026/session/",
+      timingEntries: [{ seconds: 1, data: {} }],
+      sessionStatusEntries: [{ seconds: 12, data: { Status: "Started" } }],
+    }))),
+    {
+      ok: true,
+      status: "ready",
+      available: true,
+      synced: true,
+      label: "Timing ready",
+      message: "Synced replay live timing is available.",
+    },
+    "Replay timing availability should report synced timing when the official archive has timing rows and a session start marker"
+  );
+  assert.equal(
+    availabilitySandbox.f1TimingReplayAvailabilityFromSessionData({
+      baseUrl: "https://livetiming.formula1.com/static/2026/session/",
+      timingEntries: [{ seconds: 1, data: {} }],
+      sessionStatusEntries: [],
+    }).status,
+    "manual-sync",
+    "Replay timing availability should distinguish archives that exist but may need manual sync"
+  );
+  assert.equal(
+    availabilitySandbox.f1TimingReplayAvailabilityFromSessionData({
+      baseUrl: "https://livetiming.formula1.com/static/2026/session/",
+      timingEntries: [],
+      sessionStatusEntries: [],
+    }).status,
+    "generating",
+    "Replay timing availability should mark an archive shell without timing rows as generating"
+  );
+}
 assert.match(mainProcess, /function f1TvManifestProgramDateTime/, "F1 TV resolver should extract program-date-time from clean stream manifests");
+const f1TvManifestStatusSandbox = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(mainProcess, "f1TvManifestStreamStatus")}
+  return { f1TvManifestStreamStatus };
+})()`);
+assert.equal(
+  f1TvManifestStatusSandbox.f1TvManifestStreamStatus('<MPD type="dynamic" availabilityStartTime="2026-06-12T11:30:00Z"></MPD>', { manifestType: "dash" }),
+  "live",
+  "F1 TV resolver should treat dynamic DASH manifests as live streams"
+);
+assert.equal(
+  f1TvManifestStatusSandbox.f1TvManifestStreamStatus('<MPD type="static"></MPD>', { manifestType: "dash" }),
+  "replay",
+  "F1 TV resolver should treat static DASH manifests as replay streams"
+);
+assert.equal(
+  f1TvManifestStatusSandbox.f1TvManifestStreamStatus('#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\nseg.ts', { manifestType: "hls" }),
+  "live",
+  "F1 TV resolver should treat HLS playlists without ENDLIST as live streams"
+);
+assert.equal(
+  f1TvManifestStatusSandbox.f1TvManifestStreamStatus('#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-ENDLIST', { manifestType: "hls" }),
+  "replay",
+  "F1 TV resolver should treat ended HLS playlists as replay streams"
+);
+assert.match(mainProcess, /streamStatus/, "F1 TV resolver should return sanitized stream live-vs-replay status");
+assert.match(source["LiveRacing.jsx"], /streamStatus[\s\S]*playbackMode/, "Live Racing should use resolved stream status when choosing live or replay playback");
 assert.match(mainProcess, /Promise\.all\(feeds\.map\(async \(feed\)/, "F1 TV resolver should inspect manifest timing for every resolved feed");
 assert.match(mainProcess, /videoStartUtc/, "Resolved F1 TV feeds should carry a sanitized video start UTC for replay timing sync");
 assert.match(mainProcess, /Math\.floor\(elapsedSeconds \* 10\)/, "Formula 1 replay timing cache should keep tenth-second snapshots");
@@ -2892,12 +3218,18 @@ assert.match(mainProcess, /timingAnchor: "program"/, "F1 TV replay timing should
 assert.doesNotMatch(mainProcess, /parseF1TimingArchiveRows\(sessionData, elapsedSeconds, \{ alignToSessionStart: true \}\)/, "F1 TV replay timing should not add the session start offset to video.currentTime");
 assert.match(mainProcess, /getReplayF1TimingSessionData/, "Replay timing should prefer Formula 1 livetiming archives before OpenF1 fallbacks");
 assert.match(mainProcess, /getF1LiveTimingSnapshot/, "Live timing should attempt Formula 1 SignalR timing before OpenF1 fallbacks");
+assert.match(source["LiveRacing.jsx"], /pitwall\.data\.liveTiming\(\{[\s\S]*source: "f1"/, "Live Racing live mode should request Formula 1 SignalR timing only instead of falling back to OpenF1");
 assert.match(mainProcess, /targetLatencySeconds/, "Formula 1 live timing snapshots should accept a target latency for video alignment");
 assert.match(mainProcess, /Date\.now\(\) \/ 1000 - targetLatencySeconds/, "Formula 1 live timing should render buffered rows at the video target latency");
 assert.match(mainProcess, /signalrcore/, "Live timing should connect to Formula 1's SignalR Core live timing stream");
 assert.match(mainProcess, /trackStatusEntries: entriesByTopic\.TrackStatus/, "Live timing should pass official track flags into snapshots");
 assert.match(mainProcess, /raceControlEntries: entriesByTopic\.RaceControlMessages/, "Live timing should pass official race-control messages into snapshots");
-assert.match(mainProcess, /function ensureF1TimingLiveClient[\s\S]*getSecret\("f1tv-token"\)[\s\S]*access_token/, "Formula 1 SignalR live timing should pass the stored F1 TV subscription token as an access token without logging it");
+assert.match(mainProcess, /function ensureF1TimingLiveClient[\s\S]*getF1TvPlaybackToken\(\)[\s\S]*access_token/, "Formula 1 SignalR live timing should pass the resolved F1 TV playback token as an access token without logging it");
+assert.match(mainProcess, /function f1TimingSignalRCookieFromHeaders[\s\S]*AWSALBCORS/, "Formula 1 SignalR live timing should extract FastF1's AWSALBCORS cookie");
+assert.match(mainProcess, /function requestF1TimingSignalRCookie[\s\S]*method:\s*"OPTIONS"/, "Formula 1 SignalR live timing should preflight negotiate with OPTIONS before opening the socket");
+assert.match(mainProcess, /requestF1TimingJsonPost\(F1_TIMING_NEGOTIATE_URL,\s*10000,\s*signalRCookie \? \{ Cookie: signalRCookie \} : \{\}\)/, "Formula 1 SignalR live timing should carry the AWSALBCORS cookie into negotiate");
+assert.match(mainProcess, /function createF1TimingWebSocket[\s\S]*Sec-WebSocket-Key[\s\S]*Object\.entries\(headers/, "Formula 1 SignalR live timing should use a WebSocket handshake that can include custom headers");
+assert.match(mainProcess, /wsHeaders\.Cookie = signalRCookie/, "Formula 1 SignalR live timing should carry the AWSALBCORS cookie into the WebSocket handshake");
 assert.match(mainProcess, /openF1CarData/, "Electron main should fetch OpenF1 car data for onboard telemetry");
 assert.match(mainProcess, /latestCarDataByDriverNumber/, "Electron main should normalize latest car data by driver");
 assert.match(mainProcess, /parseTiming\([\s\S]*openF1Laps/, "Live timing parser should include lap data for last/best lap and mini sectors");

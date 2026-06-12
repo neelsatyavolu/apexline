@@ -6,6 +6,7 @@ const http = require("node:http");
 const https = require("node:https");
 const os = require("node:os");
 const path = require("node:path");
+const tls = require("node:tls");
 const { pathToFileURL } = require("node:url");
 const vm = require("node:vm");
 const zlib = require("node:zlib");
@@ -96,7 +97,7 @@ const DEBUG_LOG_FILE = "pitwall-debug.log";
 const ANALYTICS_SESSION_CACHE_FILE = "pitwall-analytics-session-cache.json";
 const F1TV_LIBRARY_CACHE_FILE = "pitwall-f1tv-library-cache.json";
 const LIVE_SNAPSHOT_CACHE_FILE = "pitwall-live-snapshot-cache.json";
-const F1TV_LIBRARY_CACHE_VERSION = 2;
+const F1TV_LIBRARY_CACHE_VERSION = 6;
 const LIVE_SNAPSHOT_CACHE_VERSION = 2;
 const PITWALL_UPDATE_BASE_URL = String(process.env.APEXLINE_UPDATE_BASE_URL || process.env.PITWALL_UPDATE_BASE_URL || appPackage.apexline?.updateBaseUrl || appPackage.pitwall?.updateBaseUrl || "").replace(/\/+$/, "");
 const SOCIAL_API_BASE_URL = String(process.env.APEXLINE_SOCIAL_API_BASE_URL || PITWALL_UPDATE_BASE_URL || "https://apexline.io").replace(/\/+$/, "");
@@ -105,6 +106,18 @@ const F1TV_LOGIN_URL = "https://account.formula1.com/#/en/login?redirect=https%3
 const F1TV_AUTH_URL = "https://api.formula1.com/v2/account/subscriber/authenticate/by-password";
 const F1TV_AUTH_API_KEY = "fCUCjWrKPu9ylJwRAv8BpGLEgiAuThx7";
 const F1TV_HOSTS = new Set(["f1tv.formula1.com", "account.formula1.com", "formula1.com", "www.formula1.com"]);
+const F1TV_SEASON_PAGE_IDS = {
+  "2022": "4319",
+  "2023": "6603",
+  "2024": "8192",
+  "2025": "10295",
+  "2026": "12343",
+};
+const F1TV_CMS_FORMAT = "WEB_DASH";
+const F1TV_CMS_ENTITLEMENT = "PREMIUM";
+const F1TV_CMS_GROUP_ID = "2";
+const F1TV_CMS_DETAIL_PAGE_LIMIT = 32;
+const F1TV_CMS_DETAIL_TIMEOUT_MS = 3000;
 const F1TV_MEDIA_CDN_HOSTS = new Set(["f1prodlive.akamaized.net"]);
 const DATA_CACHE_MS = 1000 * 60 * 3;
 const COPILOT_INSIGHT_RETRY_MS = 1000 * 60 * 10;
@@ -195,7 +208,7 @@ let copilotInsightRefresh = null;
 const ANALYTICS_CACHE_MS = 1000 * 60 * 5;
 const ANALYTICS_DISK_CACHE_MS = 1000 * 60 * 30;
 const ANALYTICS_REVALIDATE_MS = ANALYTICS_CACHE_MS;
-const F1TV_LIBRARY_CACHE_MS = 1000 * 60 * 60 * 6;
+const F1TV_LIBRARY_CACHE_MS = 1000 * 60;
 const RECENT_DRIVER_RESULTS_CACHE_MS = 1000 * 60 * 30;
 const RACE_WINNER_CACHE_MS = 1000 * 60 * 30;
 const OPENF1_ANALYTICS_REQUEST_DELAY_MS = 1000;
@@ -238,6 +251,7 @@ let f1TvLibraryCache = new Map();
 let replayTimingCache = new Map();
 let replayOpenF1Cache = new Map();
 let replayF1TimingCache = new Map();
+let replayTimingAvailabilityCache = new Map();
 let trackMapReplaySessionCache = new Map();
 let trackMapReplayTimingCache = new Map();
 let trackMapReplayStreamCache = new Map();
@@ -2557,13 +2571,16 @@ function parseOpenF1Schedule(openF1Meetings = [], openF1Sessions = [], nowMs = D
         const start = Date.parse(session.date_start || "");
         const end = Date.parse(session.date_end || "");
         const doneAt = Number.isFinite(end) ? end : start;
-        const live = Number.isFinite(start) && start <= nowMs && (!Number.isFinite(end) || nowMs <= end + 1000 * 60 * 5);
+        const live = Number.isFinite(start) && Number.isFinite(doneAt) && start <= nowMs && nowMs <= doneAt;
         return {
           kind: openF1SessionKindLabel(session),
           day: Number.isFinite(start) ? new Intl.DateTimeFormat("en", { weekday: "short" }).format(start) : "",
           time: Number.isFinite(start) ? new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit" }).format(start) : "",
           startsAt: Number.isFinite(start) ? new Date(start).toISOString() : "",
+          endsAt: Number.isFinite(end) ? new Date(end).toISOString() : "",
           status: live ? "live" : Number.isFinite(doneAt) && nowMs > doneAt ? "done" : "upcoming",
+          meetingKey,
+          sessionKey: String(session.session_key || ""),
         };
       });
       const raceSession = sourceSessions.find((session) => normalizeOpenF1SessionKind(session.session_name || session.session_type) === "race") || sourceSessions.at(-1);
@@ -2574,7 +2591,10 @@ function parseOpenF1Schedule(openF1Meetings = [], openF1Sessions = [], nowMs = D
         const start = Date.parse(session.date_start || "");
         return Number.isFinite(end) ? end : start;
       }).filter(Number.isFinite));
-      const live = Number.isFinite(firstStart) && nowMs >= firstStart && (!Number.isFinite(lastEnd) || nowMs <= lastEnd + 1000 * 60 * 30);
+      const live = sessions.some((session) => session.status === "live");
+      const done = sessions.length
+        ? sessions.every((session) => session.status === "done")
+        : Number.isFinite(raceStart) && raceStart < nowMs;
       return {
         rnd: index + 1,
         name: meeting.meeting_name || "Grand Prix",
@@ -2582,11 +2602,201 @@ function parseOpenF1Schedule(openF1Meetings = [], openF1Sessions = [], nowMs = D
         loc: [meeting.location, meeting.country_name].filter(Boolean).join(", "),
         date: Number.isFinite(raceStart) ? new Intl.DateTimeFormat("en", { month: "short", day: "2-digit" }).format(raceStart) : "",
         startsAt: Number.isFinite(raceStart) ? new Date(raceStart).toISOString() : "",
-        status: live ? "live" : Number.isFinite(raceStart) && raceStart < nowMs ? "done" : "upcoming",
+        endsAt: Number.isFinite(lastEnd) ? new Date(lastEnd).toISOString() : "",
+        status: live ? "live" : done ? "done" : "upcoming",
         meetingKey: meeting.meeting_key || null,
         sessions,
       };
     });
+}
+
+function f1TvCmsSeasonPageUrl(year) {
+  const pageId = F1TV_SEASON_PAGE_IDS[String(year)] || F1TV_SEASON_PAGE_IDS[String(new Date().getFullYear())] || "395";
+  return `https://f1tv.formula1.com/2.0/R/ENG/${F1TV_CMS_FORMAT}/ALL/PAGE/${pageId}/${F1TV_CMS_ENTITLEMENT}/${F1TV_CMS_GROUP_ID}`;
+}
+
+function f1TvCmsUrl(uri) {
+  return new URL(String(uri || ""), F1TV_HOME_URL).href;
+}
+
+function f1TvCmsTimeIso(value) {
+  if (value == null || value === "") return "";
+  const numeric = Number(value);
+  const time = Number.isFinite(numeric) && String(value).trim() !== ""
+    ? (numeric < 100000000000 ? numeric * 1000 : numeric)
+    : Date.parse(String(value));
+  return Number.isFinite(time) ? new Date(time).toISOString() : "";
+}
+
+function normalizeF1TvCmsSessionKind(value) {
+  const normalized = normalizeOpenF1SessionKind(value);
+  return normalized || String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function normalizeF1TvCmsContentItem(item = {}) {
+  const metadata = item.metadata || item.contentMetadata || item;
+  const attrs = metadata.emfAttributes || item.emfAttributes || {};
+  const contentSubtype = String(metadata.contentSubtype || metadata.objectSubtype || attrs.ContentSubtype || attrs.contentSubtype || "").trim().toUpperCase();
+  const status = contentSubtype === "LIVE" ? "live" : contentSubtype === "REPLAY" ? "done" : "";
+  if (!status) return null;
+  const sessionKind = normalizeF1TvCmsSessionKind([
+    attrs.Global_Title,
+    attrs.globalTitle,
+    attrs.MeetingSessionName,
+    attrs.Session_Name,
+    attrs.sessionName,
+    metadata.titleBrief,
+    metadata.title,
+    item.title,
+  ].filter(Boolean).join(" "));
+  const meetingKey = String(attrs.MeetingKey || attrs.meetingKey || attrs.Meeting_Key || metadata.meetingKey || item.meetingKey || "").trim();
+  if (!meetingKey || !sessionKind) return null;
+  return {
+    meetingKey,
+    sessionKey: String(attrs.MeetingSessionKey || attrs.sessionKey || attrs.SessionKey || metadata.sessionKey || item.sessionKey || "").trim(),
+    sessionKind,
+    status,
+    statusSource: "f1tv-cms",
+    contentSubtype,
+    contentId: String(metadata.contentId || item.contentId || item.id || "").trim(),
+    startsAt: f1TvCmsTimeIso(attrs.sessionStartDate || attrs.Session_Start_Date || attrs.MeetingSessionStartDate || metadata.startDate || item.startDate),
+    endsAt: f1TvCmsTimeIso(attrs.sessionEndDate || attrs.Session_End_Date || attrs.MeetingSessionEndDate || metadata.endDate || item.endDate),
+  };
+}
+
+function f1TvCmsContentItemsFromPage(page = {}) {
+  const items = [];
+  const seen = new Set();
+  const stack = [{ value: page, depth: 0 }];
+  while (stack.length) {
+    const { value, depth } = stack.pop();
+    if (!value || depth > 9) continue;
+    if (Array.isArray(value)) {
+      value.forEach((entry) => stack.push({ value: entry, depth: depth + 1 }));
+      continue;
+    }
+    if (typeof value !== "object") continue;
+    const normalized = normalizeF1TvCmsContentItem(value);
+    if (normalized) {
+      const key = `${normalized.contentId || normalized.meetingKey}:${normalized.sessionKey || normalized.sessionKind}:${normalized.contentSubtype}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        items.push(value);
+      }
+    }
+    Object.values(value).forEach((entry) => {
+      if (entry && typeof entry === "object") stack.push({ value: entry, depth: depth + 1 });
+    });
+  }
+  return items;
+}
+
+function f1TvCmsDetailPageUrisFromPage(page = {}) {
+  const uris = [];
+  const seen = new Set();
+  const stack = [{ value: page, depth: 0 }];
+  while (stack.length) {
+    const { value, depth } = stack.pop();
+    if (!value || depth > 9) continue;
+    if (Array.isArray(value)) {
+      value.forEach((entry) => stack.push({ value: entry, depth: depth + 1 }));
+      continue;
+    }
+    if (typeof value !== "object") continue;
+    const actions = Array.isArray(value.actions) ? value.actions : value.actions ? [value.actions] : [];
+    actions.forEach((action) => {
+      const uri = String(action?.uri || "").trim();
+      if (uri && /\/PAGE\/\d+\//.test(uri) && String(action?.targetType || "").toUpperCase() === "DETAILS_PAGE" && !seen.has(uri)) {
+        seen.add(uri);
+        uris.push(uri);
+      }
+    });
+    Object.values(value).forEach((entry) => {
+      if (entry && typeof entry === "object") stack.push({ value: entry, depth: depth + 1 });
+    });
+  }
+  return uris.slice(0, F1TV_CMS_DETAIL_PAGE_LIMIT);
+}
+
+async function fetchF1TvCmsJson(targetUrl, headers, timeoutMs = 6500) {
+  const response = await requestBuffer(targetUrl, { headers, timeoutMs });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`F1 TV CMS metadata unavailable (${response.status || "network"}).`);
+  }
+  try {
+    return JSON.parse(response.body.toString("utf8"));
+  } catch {
+    throw new Error("F1 TV CMS metadata was not valid JSON.");
+  }
+}
+
+async function fetchF1TvCmsSeasonContent(year) {
+  const headers = { Accept: "application/json, text/plain, */*" };
+  const playbackToken = await getF1TvPlaybackToken().catch(() => "");
+  Object.assign(headers, f1TvPlaybackHeaders(playbackToken));
+  const page = await fetchF1TvCmsJson(f1TvCmsSeasonPageUrl(year), headers);
+  const detailItems = await Promise.allSettled(
+    f1TvCmsDetailPageUrisFromPage(page).map(async (uri) => f1TvCmsContentItemsFromPage(
+      await fetchF1TvCmsJson(f1TvCmsUrl(uri), headers, F1TV_CMS_DETAIL_TIMEOUT_MS)
+    ))
+  );
+  return f1TvCmsContentItemsFromPage(page).concat(
+    detailItems.flatMap((result) => result.status === "fulfilled" ? result.value : [])
+  );
+}
+
+function applyF1TvCmsLibraryMetadata(library = {}, cmsItems = [], nowMs = Date.now()) {
+  void nowMs;
+  const normalizedItems = (cmsItems || []).map(normalizeF1TvCmsContentItem).filter(Boolean);
+  if (!normalizedItems.length || !Array.isArray(library.races)) return library;
+  const itemsByMeeting = new Map();
+  normalizedItems.forEach((item) => {
+    if (!itemsByMeeting.has(item.meetingKey)) itemsByMeeting.set(item.meetingKey, []);
+    itemsByMeeting.get(item.meetingKey).push(item);
+  });
+  const races = library.races.map((race) => {
+    const raceItems = itemsByMeeting.get(String(race.meetingKey || "").trim());
+    if (!raceItems?.length || !Array.isArray(race.sessions)) return race;
+    const itemsBySessionKey = new Map();
+    const itemsByKind = new Map();
+    raceItems.forEach((item) => {
+      const key = normalizeOpenF1SessionKind(item.sessionKind);
+      if (item.sessionKey) itemsBySessionKey.set(String(item.sessionKey), item);
+      const existing = itemsByKind.get(key);
+      if (!existing || item.status === "live" || existing.status !== "live") itemsByKind.set(key, item);
+    });
+    const sessions = race.sessions.map((sessionItem) => {
+      const sessionKey = String(sessionItem.sessionKey || sessionItem.session_key || "");
+      const item = sessionKey
+        ? itemsBySessionKey.get(sessionKey)
+        : itemsByKind.get(normalizeOpenF1SessionKind(sessionItem.kind || sessionItem.session_name || sessionItem.session_type));
+      if (!item) return sessionItem;
+      return {
+        ...sessionItem,
+        status: item.status,
+        statusSource: item.statusSource,
+        f1TvStatus: item.status,
+        contentSubtype: item.contentSubtype,
+        contentId: item.contentId || sessionItem.contentId || "",
+        sessionKey: item.sessionKey || sessionItem.sessionKey || "",
+        startsAt: sessionItem.startsAt || item.startsAt || "",
+        endsAt: sessionItem.endsAt || item.endsAt || "",
+      };
+    });
+    const status = sessions.some((sessionItem) => sessionItem.status === "live")
+      ? "live"
+      : sessions.some((sessionItem) => sessionItem.status === "upcoming")
+        ? "upcoming"
+        : sessions.length && sessions.every((sessionItem) => sessionItem.status === "done")
+          ? "done"
+          : race.status;
+    return { ...race, status, sessions };
+  });
+  return {
+    ...library,
+    source: String(library.source || "").includes("F1TV") ? library.source : `${library.source || "OpenF1"}+F1TV`,
+    races,
+  };
 }
 
 function latestBy(items, keyFn) {
@@ -2911,6 +3121,198 @@ function f1TimingHeaders(extra = {}) {
   };
 }
 
+function f1TimingSignalRCookieFromHeaders(headers = {}) {
+  const raw = headers["set-cookie"] || [];
+  const lines = Array.isArray(raw) ? raw : [raw];
+  return lines
+    .map((line) => String(line || "").split(";")[0].trim())
+    .find((cookie) => /^AWSALBCORS=/i.test(cookie)) || "";
+}
+
+function requestF1TimingSignalRCookie(targetUrl = F1_TIMING_NEGOTIATE_URL, timeout = 10000) {
+  return new Promise((resolve) => {
+    const endpoint = new URL(targetUrl);
+    const req = https.request({
+      method: "OPTIONS",
+      hostname: endpoint.hostname,
+      path: `${endpoint.pathname}${endpoint.search}`,
+      headers: f1TimingHeaders(),
+      timeout,
+    }, (res) => {
+      res.resume();
+      res.on("end", () => resolve(f1TimingSignalRCookieFromHeaders(res.headers)));
+    });
+    req.on("timeout", () => req.destroy(new Error("Timeout for Formula 1 live timing SignalR preflight")));
+    req.on("error", () => resolve(""));
+    req.end();
+  });
+}
+
+function encodeF1TimingWebSocketFrame(data, opcode = 0x1) {
+  const payload = Buffer.isBuffer(data) ? data : Buffer.from(String(data || ""), "utf8");
+  const mask = randomBytes(4);
+  let header;
+  if (payload.length <= 125) {
+    header = Buffer.from([0x80 | opcode, 0x80 | payload.length]);
+  } else if (payload.length <= 65535) {
+    header = Buffer.alloc(4);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(payload.length, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 127;
+    header.writeBigUInt64BE(BigInt(payload.length), 2);
+  }
+  const masked = Buffer.alloc(payload.length);
+  for (let index = 0; index < payload.length; index += 1) masked[index] = payload[index] ^ mask[index % 4];
+  return Buffer.concat([header, mask, masked]);
+}
+
+function createF1TimingWebSocket(targetUrl, headers = {}, timeout = 15000) {
+  const endpoint = new URL(targetUrl);
+  const client = {
+    readyState: 0,
+    onopen: null,
+    onmessage: null,
+    onerror: null,
+    onclose: null,
+    send(data) {
+      if (client.readyState !== 1) throw new Error("Formula 1 live timing WebSocket is not open.");
+      socket.write(encodeF1TimingWebSocketFrame(data, 0x1));
+    },
+    close() {
+      if (client.readyState >= 2) return;
+      client.readyState = 2;
+      try { socket.write(encodeF1TimingWebSocketFrame(Buffer.alloc(0), 0x8)); } catch {}
+      socket.end();
+    },
+  };
+  const key = randomBytes(16).toString("base64");
+  let buffer = Buffer.alloc(0);
+  let fragmented = [];
+  let opened = false;
+  let closed = false;
+  const socket = tls.connect({
+    host: endpoint.hostname,
+    port: Number(endpoint.port || 443),
+    servername: endpoint.hostname,
+  });
+  const openTimer = setTimeout(() => socket.destroy(new Error("Timeout for Formula 1 live timing WebSocket")), timeout);
+
+  function emitError(error) {
+    try { client.onerror?.(error); } catch {}
+  }
+
+  function emitClose(code = 0, reason = "") {
+    if (closed) return;
+    closed = true;
+    clearTimeout(openTimer);
+    client.readyState = 3;
+    try { client.onclose?.({ code, reason }); } catch {}
+  }
+
+  function emitMessage(data) {
+    try { client.onmessage?.({ data }); } catch {}
+  }
+
+  function parseFrames() {
+    while (buffer.length >= 2) {
+      const first = buffer[0];
+      const second = buffer[1];
+      const fin = Boolean(first & 0x80);
+      const opcode = first & 0x0f;
+      const masked = Boolean(second & 0x80);
+      let length = second & 0x7f;
+      let offset = 2;
+      if (length === 126) {
+        if (buffer.length < offset + 2) return;
+        length = buffer.readUInt16BE(offset);
+        offset += 2;
+      } else if (length === 127) {
+        if (buffer.length < offset + 8) return;
+        const largeLength = buffer.readBigUInt64BE(offset);
+        if (largeLength > BigInt(Number.MAX_SAFE_INTEGER)) {
+          socket.destroy(new Error("Formula 1 live timing WebSocket frame is too large."));
+          return;
+        }
+        length = Number(largeLength);
+        offset += 8;
+      }
+      if (masked) {
+        socket.destroy(new Error("Formula 1 live timing WebSocket server sent a masked frame."));
+        return;
+      }
+      if (buffer.length < offset + length) return;
+      const payload = buffer.slice(offset, offset + length);
+      buffer = buffer.slice(offset + length);
+
+      if (opcode === 0x8) {
+        const code = payload.length >= 2 ? payload.readUInt16BE(0) : 0;
+        const reason = payload.length > 2 ? payload.slice(2).toString("utf8") : "";
+        try { socket.write(encodeF1TimingWebSocketFrame(Buffer.alloc(0), 0x8)); } catch {}
+        socket.end();
+        emitClose(code, reason);
+        return;
+      }
+      if (opcode === 0x9) {
+        try { socket.write(encodeF1TimingWebSocketFrame(payload, 0xA)); } catch {}
+        continue;
+      }
+      if (opcode === 0xA) continue;
+      if (opcode === 0x1 || opcode === 0x2 || opcode === 0x0) {
+        fragmented.push(payload);
+        if (fin) {
+          const message = Buffer.concat(fragmented);
+          fragmented = [];
+          emitMessage(opcode === 0x2 ? message : message.toString("utf8"));
+        }
+      }
+    }
+  }
+
+  socket.on("secureConnect", () => {
+    const requestHeaders = [
+      `GET ${endpoint.pathname}${endpoint.search} HTTP/1.1`,
+      `Host: ${endpoint.host}`,
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      `Sec-WebSocket-Key: ${key}`,
+      "Sec-WebSocket-Version: 13",
+      "User-Agent: BestHTTP",
+      ...Object.entries(headers || {}).filter(([, value]) => value).map(([name, value]) => `${name}: ${value}`),
+    ];
+    socket.write(`${requestHeaders.join("\r\n")}\r\n\r\n`);
+  });
+
+  socket.on("data", (chunk) => {
+    buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
+    if (!opened) {
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      const head = buffer.slice(0, headerEnd).toString("latin1");
+      buffer = buffer.slice(headerEnd + 4);
+      const status = Number((head.match(/^HTTP\/\d(?:\.\d)?\s+(\d+)/i) || [])[1] || 0);
+      const accept = (head.match(/\r\nsec-websocket-accept:\s*([^\r\n]+)/i) || [])[1] || "";
+      const expectedAccept = createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
+      if (status !== 101 || accept.trim() !== expectedAccept) {
+        socket.destroy(new Error(`Formula 1 live timing WebSocket handshake failed (${status || "no status"}).`));
+        return;
+      }
+      opened = true;
+      clearTimeout(openTimer);
+      client.readyState = 1;
+      try { client.onopen?.(); } catch {}
+    }
+    parseFrames();
+  });
+
+  socket.on("error", emitError);
+  socket.on("close", () => emitClose());
+  return client;
+}
+
 function f1TimingRequestText(targetUrl, timeout = 18000, headers = {}) {
   return requestText(targetUrl, timeout, f1TimingHeaders(headers));
 }
@@ -3011,10 +3413,6 @@ function f1TimingArchiveIdentityFromOptions(options = {}, sessionKind = "Race") 
   };
 }
 
-function shouldPreferF1TimingAnalytics(options = {}) {
-  return Boolean(String(options.raceName || options.eventName || "").trim() && String(options.raceStartsAt || options.startsAt || "").trim());
-}
-
 function stripJsonBom(text) {
   return String(text || "").replace(/^\uFEFF/, "").replace(/^\u00EF\u00BB\u00BF/, "");
 }
@@ -3046,6 +3444,16 @@ function parseF1TimingJsonStream(text, options = {}) {
       const raw = JSON.parse(line.slice(12));
       const data = options.zipped ? decodeF1TimingZPayload(raw) : raw;
       return { time, seconds: f1TimingSeconds(time), data };
+    });
+}
+
+function parseF1TimingJsonStreamPreview(text, maxEntries = 2) {
+  return stripJsonBom(text).split(/\r?\n/)
+    .filter(Boolean)
+    .slice(0, Math.max(1, Number(maxEntries || 2)))
+    .map((line) => {
+      const time = line.slice(0, 12);
+      return { time, seconds: f1TimingSeconds(time), data: {} };
     });
 }
 
@@ -3200,6 +3608,53 @@ function f1TimingSessionStartSeconds(sessionData) {
     }
   }
   return 0;
+}
+
+function f1TimingSessionHasStartMarker(sessionData) {
+  for (const entry of sessionData?.sessionStatusEntries || []) {
+    const status = String(entry?.data?.Status || entry?.data?.SessionStatus || entry?.data?.Started || "");
+    if (status === "Started") return true;
+    const series = entry?.data?.StatusSeries;
+    const values = Array.isArray(series) ? series : series && typeof series === "object" ? Object.values(series) : [];
+    if (values.some((item) => String(item?.SessionStatus || item?.Status || item?.Started || "") === "Started")) return true;
+  }
+  return false;
+}
+
+function f1TimingReplayAvailabilityFromSessionData(sessionData = {}) {
+  const timingRows = Array.isArray(sessionData.timingEntries) ? sessionData.timingEntries.length : 0;
+  const archiveResolved = Boolean(sessionData.baseUrl);
+  const synced = f1TimingSessionHasStartMarker(sessionData);
+  if (timingRows > 0) {
+    return {
+      ok: true,
+      status: synced ? "ready" : "manual-sync",
+      available: true,
+      synced,
+      label: synced ? "Timing ready" : "Timing available",
+      message: synced
+        ? "Synced replay live timing is available."
+        : "Replay live timing is available, but may need manual sync.",
+    };
+  }
+  if (archiveResolved) {
+    return {
+      ok: true,
+      status: "generating",
+      available: false,
+      synced: false,
+      label: "Timing generating",
+      message: "Replay live timing is being generated.",
+    };
+  }
+  return {
+    ok: false,
+    status: "unavailable",
+    available: false,
+    synced: false,
+    label: "No timing",
+    message: "Replay live timing is not available yet.",
+  };
 }
 
 function f1TimingTargetUtcMs(sessionData, targetSeconds) {
@@ -3961,6 +4416,92 @@ async function getReplayF1TimingSessionData(meetingKey, sessionKind, options = {
   return data;
 }
 
+async function resolveF1TimingReplayAvailabilitySource(meetingKey, sessionKind, options = {}) {
+  const optionIdentity = f1TimingArchiveIdentityFromOptions(options, sessionKind);
+  if (optionIdentity) {
+    try {
+      const archive = await resolveF1TimingArchiveBase(optionIdentity.meeting, optionIdentity.session);
+      return { meeting: optionIdentity.meeting, session: optionIdentity.session, archive };
+    } catch {}
+  }
+
+  const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { meeting_key: meetingKey })).catch(() => []);
+  const sessions = await requestOpenF1Json(openF1ApiUrl("sessions", { meeting_key: meetingKey }));
+  const meeting = meetings?.[0] || {};
+  const explicitSessionKey = finiteNumber(options.sessionKey);
+  const selectedSession = explicitSessionKey
+    ? (sessions || []).find((session) => finiteNumber(session?.session_key) === explicitSessionKey)
+    : (sessions || []).slice().sort((a, b) => scoreOpenF1ReplaySession(b, sessionKind) - scoreOpenF1ReplaySession(a, sessionKind))[0];
+  if (!selectedSession?.session_key && !selectedSession?.session_name) throw new Error(`No ${sessionKind} session matched this replay.`);
+  const archive = await resolveF1TimingArchiveBase(meeting, selectedSession);
+  return { meeting, session: selectedSession, archive };
+}
+
+async function readF1TimingReplayAvailabilityData(resolvedMeeting, resolvedSession, baseUrl) {
+  void resolvedMeeting;
+  const [timingText, statusText] = await Promise.all([
+    f1TimingRequestText(`${baseUrl}TimingData.jsonStream`, 9000).catch(() => ""),
+    f1TimingRequestText(`${baseUrl}SessionStatus.jsonStream`, 9000).catch(() => ""),
+  ]);
+  return {
+    baseUrl,
+    selectedSession: resolvedSession,
+    timingEntries: timingText ? parseF1TimingJsonStreamPreview(timingText, 2) : [],
+    sessionStatusEntries: statusText ? parseF1TimingJsonStream(statusText) : [],
+  };
+}
+
+function missingF1TimingReplayAvailability(options = {}) {
+  const endedAt = Date.parse(options.sessionEndsAt || options.endsAt || options.dateEnd || options.date_end || "");
+  const recentlyEnded = Number.isFinite(endedAt) && Date.now() > endedAt && Date.now() - endedAt < 1000 * 60 * 60 * 12;
+  if (recentlyEnded) {
+    return {
+      ok: true,
+      status: "generating",
+      available: false,
+      synced: false,
+      label: "Timing generating",
+      message: "Replay live timing is being generated.",
+    };
+  }
+  return f1TimingReplayAvailabilityFromSessionData({});
+}
+
+async function getReplayTimingAvailability(options = {}) {
+  const meetingKey = String(options.meetingKey || "").replace(/[^0-9]/g, "");
+  const sessionKind = String(options.sessionKind || "Race");
+  if (!meetingKey) return { ...f1TimingReplayAvailabilityFromSessionData({}), checkedAt: new Date().toISOString() };
+  const cacheKey = [
+    meetingKey,
+    normalizeOpenF1SessionKind(sessionKind),
+    String(options.sessionKey || ""),
+    String(options.raceName || ""),
+    String(options.raceStartsAt || options.startsAt || ""),
+    String(options.sessionStartsAt || options.sessionStart || ""),
+  ].join(":");
+  const cached = replayTimingAvailabilityCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < 1000 * 60) return cached.data;
+  let data;
+  try {
+    const source = await resolveF1TimingReplayAvailabilitySource(meetingKey, sessionKind, options);
+    const sessionData = await readF1TimingReplayAvailabilityData(source.meeting, source.session, source.archive.baseUrl);
+    data = {
+      ...f1TimingReplayAvailabilityFromSessionData(sessionData),
+      sessionKey: source.session?.session_key || options.sessionKey || "",
+      sessionKind: source.session?.session_name || sessionKind,
+      checkedAt: new Date().toISOString(),
+    };
+  } catch {
+    data = {
+      ...missingF1TimingReplayAvailability(options),
+      checkedAt: new Date().toISOString(),
+    };
+  }
+  replayTimingAvailabilityCache.set(cacheKey, { createdAt: Date.now(), data });
+  if (replayTimingAvailabilityCache.size > 120) replayTimingAvailabilityCache = new Map(Array.from(replayTimingAvailabilityCache.entries()).slice(-80));
+  return data;
+}
+
 async function getTrackMapStaticF1TimingSessionData(options = {}) {
   const sessionKind = String(options.sessionKind || "Race");
   const identity = f1TimingArchiveIdentityFromOptions(options, sessionKind);
@@ -4185,14 +4726,14 @@ async function getTrackMapReplayTimingSnapshot(options = {}) {
   return data;
 }
 
-function requestF1TimingJsonPost(targetUrl, timeout = 10000) {
+function requestF1TimingJsonPost(targetUrl, timeout = 10000, headers = {}) {
   return new Promise((resolve, reject) => {
     const endpoint = new URL(targetUrl);
     const req = https.request({
       method: "POST",
       hostname: endpoint.hostname,
       path: `${endpoint.pathname}${endpoint.search}`,
-      headers: f1TimingHeaders({ "Content-Length": 0 }),
+      headers: f1TimingHeaders({ "Content-Length": 0, ...headers }),
       timeout,
     }, (res) => {
       let text = "";
@@ -4265,22 +4806,21 @@ async function ensureF1TimingLiveClient() {
   if (f1LiveTimingClient?.connecting || f1LiveTimingClient?.connected) return;
   const now = Date.now();
   if (f1LiveTimingClient?.nextAttemptAt && now < f1LiveTimingClient.nextAttemptAt) return;
-  const WebSocketImpl = globalThis.WebSocket;
-  if (typeof WebSocketImpl !== "function") {
-    f1LiveTimingClient = { connected: false, nextAttemptAt: now + 60000, error: "WebSocket unavailable" };
-    return;
-  }
   f1LiveTimingClient = { connecting: true, connected: false, nextAttemptAt: now + 30000 };
   f1LiveTimingState = f1LiveTimingState || { entriesByTopic: {}, lastMessageAt: 0, lastTopic: "", lastError: "" };
   try {
-    const negotiate = await requestF1TimingJsonPost(F1_TIMING_NEGOTIATE_URL);
+    const signalRCookie = await requestF1TimingSignalRCookie();
+    const negotiate = await requestF1TimingJsonPost(F1_TIMING_NEGOTIATE_URL, 10000, signalRCookie ? { Cookie: signalRCookie } : {});
     const connectionId = String(negotiate?.connectionId || negotiate?.connectionToken || "");
     if (!connectionId) throw new Error("Formula 1 live timing did not return a SignalR connection id.");
-    const subscriptionToken = String(await getSecret("f1tv-token") || "").trim();
+    const subscriptionToken = String(await getF1TvPlaybackToken() || "").trim();
     const liveUrl = new URL(F1_TIMING_SIGNALR_URL);
     liveUrl.searchParams.set("id", connectionId);
     if (subscriptionToken) liveUrl.searchParams.set("access_token", subscriptionToken);
-    const ws = new WebSocketImpl(liveUrl.href);
+    const wsHeaders = {};
+    if (signalRCookie) wsHeaders.Cookie = signalRCookie;
+    if (subscriptionToken) wsHeaders.Authorization = `Bearer ${subscriptionToken}`;
+    const ws = createF1TimingWebSocket(liveUrl.href, wsHeaders);
     f1LiveTimingClient.socket = ws;
     ws.onopen = () => {
       f1LiveTimingClient.connected = true;
@@ -6648,6 +7188,28 @@ function f1TvManifestProgramDateTime(text) {
   return {};
 }
 
+function f1TvManifestStreamStatus(text, options = {}) {
+  const source = String(text || "");
+  if (!source.trim()) return "";
+  const manifestType = String(options.manifestType || "").toLowerCase();
+  const contentType = String(options.contentType || "").toLowerCase();
+  const isDash = manifestType === "dash" || /dash\+xml|mpd|xml/.test(contentType) || /^\s*<MPD\b/i.test(source);
+  if (isDash) {
+    const type = (source.match(/\btype\s*=\s*["']([^"']+)["']/i)?.[1] || "").toLowerCase();
+    if (type === "dynamic") return "live";
+    if (type === "static") return "replay";
+    if (/\bminimumUpdatePeriod\s*=|\btimeShiftBufferDepth\s*=/i.test(source)) return "live";
+    return "";
+  }
+  const isHls = manifestType === "hls" || /mpegurl|m3u8/.test(contentType) || /^\s*#EXTM3U/i.test(source);
+  if (isHls) {
+    if (/#EXT-X-ENDLIST/i.test(source) || /#EXT-X-PLAYLIST-TYPE\s*:\s*VOD/i.test(source)) return "replay";
+    if (/#EXT-X-PLAYLIST-TYPE\s*:\s*EVENT/i.test(source)) return "live";
+    if (/#EXT-X-MEDIA-SEQUENCE|#EXT-X-TARGETDURATION|#EXTINF/i.test(source)) return "live";
+  }
+  return "";
+}
+
 function f1TvFirstHlsChildPlaylistUrl(text, manifestUrl) {
   const lines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   for (let index = 0; index < lines.length; index += 1) {
@@ -6675,20 +7237,33 @@ async function f1TvManifestTiming(feed = {}) {
   });
   if (response.status < 200 || response.status >= 300 || !response.body?.length) return {};
   const text = response.body.toString("utf8");
+  const streamStatus = f1TvManifestStreamStatus(text, {
+    manifestType: feed.manifestType,
+    contentType: response.headers?.["content-type"] || "",
+  });
   const direct = f1TvManifestProgramDateTime(text);
-  if (direct.videoStartUtc) return direct;
-  if (!/\.m3u8(?:[?#]|$)/i.test(manifestUrl) && !/mpegurl|m3u8/i.test(response.headers?.["content-type"] || "")) return {};
+  if (direct.videoStartUtc) return { ...direct, ...(streamStatus ? { streamStatus } : {}) };
+  if (!/\.m3u8(?:[?#]|$)/i.test(manifestUrl) && !/mpegurl|m3u8/i.test(response.headers?.["content-type"] || "")) {
+    return streamStatus ? { streamStatus } : {};
+  }
   const childUrl = f1TvFirstHlsChildPlaylistUrl(text, manifestUrl);
-  if (!childUrl || !isF1TvMediaUrl(childUrl)) return {};
+  if (!childUrl || !isF1TvMediaUrl(childUrl)) return streamStatus ? { streamStatus } : {};
   const childCookieHeader = await f1TvCookieHeaderForUrl(childUrl);
   const childResponse = await requestBuffer(childUrl, {
     headers: feed.headers || {},
     cookieHeader: childCookieHeader,
     timeoutMs: 6500,
   });
-  if (childResponse.status < 200 || childResponse.status >= 300 || !childResponse.body?.length) return {};
-  const child = f1TvManifestProgramDateTime(childResponse.body.toString("utf8"));
-  return child.videoStartUtc ? { ...child, videoStartSource: `${child.videoStartSource}:child-playlist` } : {};
+  if (childResponse.status < 200 || childResponse.status >= 300 || !childResponse.body?.length) return streamStatus ? { streamStatus } : {};
+  const childText = childResponse.body.toString("utf8");
+  const childStatus = f1TvManifestStreamStatus(childText, {
+    manifestType: "hls",
+    contentType: childResponse.headers?.["content-type"] || "",
+  });
+  const child = f1TvManifestProgramDateTime(childText);
+  const status = childStatus || streamStatus;
+  if (child.videoStartUtc) return { ...child, videoStartSource: `${child.videoStartSource}:child-playlist`, ...(status ? { streamStatus: status } : {}) };
+  return status ? { streamStatus: status } : {};
 }
 
 function f1TvStreamDescriptor(targetUrl, extra = {}) {
@@ -6878,6 +7453,15 @@ function f1TvContentTargetUrl(options = {}) {
   return f1TvReplaySearchUrl(options);
 }
 
+function f1TvPlaybackMode(options = {}) {
+  const streamStatus = String(options.streamStatus || "").toLowerCase();
+  if (streamStatus === "live") return "live";
+  if (streamStatus === "replay") return "replay";
+  const status = String(options.sessionStatus || options.status || "").toLowerCase();
+  if (status === "live") return "live";
+  return /live/i.test(String(options.sessionKind || "")) ? "live" : "replay";
+}
+
 function f1TvContentIdFromUrl(targetUrl) {
   const match = String(targetUrl || "").match(/\/detail\/([0-9]+)/i);
   return match ? match[1] : "";
@@ -7019,9 +7603,16 @@ async function resolveF1TvContent(_event, options = {}) {
   const manifestTiming = timingFeedTiming.videoStartUtc
     ? timingFeedTiming
     : feedTimings.find((item) => item.timing?.videoStartUtc)?.timing || {};
+  const streamStatus = timingFeedTiming.streamStatus
+    || feedTimings.find((item) => item.timing?.streamStatus)?.timing.streamStatus
+    || "";
   feeds = feedTimings.map(({ feed, timing }) => {
+    const feedStreamStatus = timing?.streamStatus || streamStatus;
+    const streamStatusFields = feedStreamStatus ? { streamStatus: feedStreamStatus } : {};
     if (timing?.videoStartUtc) return { ...feed, ...timing };
-    return manifestTiming.videoStartUtc ? { ...feed, ...manifestTiming, videoStartSource: `${manifestTiming.videoStartSource || "manifest"}:fallback` } : feed;
+    return manifestTiming.videoStartUtc
+      ? { ...feed, ...manifestTiming, ...streamStatusFields, videoStartSource: `${manifestTiming.videoStartSource || "manifest"}:fallback` }
+      : { ...feed, ...streamStatusFields };
   });
 
   const result = {
@@ -7029,7 +7620,8 @@ async function resolveF1TvContent(_event, options = {}) {
     contentId: resolvedContentId || f1TvContentIdFromUrl(targetUrl) || String(options.contentId || ""),
     title: String(options.title || options.sessionKind || "F1 TV session"),
     sourceUrl: targetUrl,
-    playbackMode: /live/i.test(String(options.sessionKind || "")) ? "live" : "replay",
+    streamStatus,
+    playbackMode: f1TvPlaybackMode({ ...options, streamStatus }),
     videoStartUtc: manifestTiming.videoStartUtc || "",
     videoStartSource: manifestTiming.videoStartSource || "",
     feeds,
@@ -7052,6 +7644,7 @@ async function resolveF1TvContent(_event, options = {}) {
     contentId: result.contentId,
     candidateCount: capture.contentCandidates.length,
     feedCount: feeds.length,
+    streamStatus,
     videoStartSynced: Boolean(manifestTiming.videoStartUtc),
     videoStartSource: manifestTiming.videoStartSource || "",
     playAttemptCount: capture.playEndpointAttempts.length,
@@ -7314,12 +7907,14 @@ async function getF1TvLibrary(options = {}) {
       };
     }
   }
-  const [meetingsResult, sessionsResult] = await Promise.allSettled([
+  const [meetingsResult, sessionsResult, cmsResult] = await Promise.allSettled([
     requestOpenF1Json(`https://api.openf1.org/v1/meetings?year=${year}`),
     requestOpenF1Json(`https://api.openf1.org/v1/sessions?year=${year}`),
+    fetchF1TvCmsSeasonContent(year),
   ]);
   const meetings = meetingsResult.status === "fulfilled" ? meetingsResult.value : [];
   const sessions = sessionsResult.status === "fulfilled" ? sessionsResult.value : [];
+  const cmsItems = cmsResult.status === "fulfilled" ? cmsResult.value : [];
   const races = parseOpenF1Schedule(meetings, sessions)
   .filter((race) => year !== "2026" || !isCancelledF12026RaceName(race.name || ""))
   .map((race, index) => ({
@@ -7329,6 +7924,7 @@ async function getF1TvLibrary(options = {}) {
     loc: race.loc,
     date: race.date,
     startsAt: race.startsAt,
+    endsAt: race.endsAt,
     status: race.status,
     meetingKey: race.meetingKey,
     sessions: race.sessions?.length ? race.sessions : [
@@ -7339,13 +7935,14 @@ async function getF1TvLibrary(options = {}) {
       { kind: "Race", status: "unknown" },
     ],
   }));
-  const library = {
+  const openF1Library = {
     source: "OpenF1",
     season: year,
     races,
     fetchedAt: new Date().toISOString(),
-    errors: [meetingsResult, sessionsResult].filter((result) => result.status === "rejected").map((result) => result.reason.message),
+    errors: [meetingsResult, sessionsResult, cmsResult].filter((result) => result.status === "rejected").map((result) => result.reason.message),
   };
+  const library = cmsItems.length ? applyF1TvCmsLibraryMetadata(openF1Library, cmsItems) : openF1Library;
   if (library.races.length) {
     writeF1TvLibraryCache(year, library);
     return library;
@@ -7375,6 +7972,13 @@ function sanitizeF1TvLibrary(library = {}) {
       status: race.status || "",
       meetingKey: race.meetingKey || "",
       sessionKinds: (race.sessions || []).map((sessionItem) => sessionItem.kind).filter(Boolean),
+      sessions: (race.sessions || []).map((sessionItem) => ({
+        kind: sessionItem.kind || "",
+        status: sessionItem.status || "",
+        statusSource: sessionItem.statusSource || "",
+        contentSubtype: sessionItem.contentSubtype || "",
+        sessionKey: sessionItem.sessionKey || "",
+      })),
     })),
   };
 }
@@ -7385,6 +7989,51 @@ async function runF1TvLibraryDiagnosticAndQuit() {
   const library = await getF1TvLibrary({ season }).catch((error) => ({ errors: [error.message || "library failed"], races: [] }));
   console.log(JSON.stringify({ pitwallF1TvLibraryDiagnostic: sanitizeF1TvLibrary(library) }, null, 2));
   app.exit(library.races?.length ? 0 : 2);
+  return true;
+}
+
+async function runReplayTimingAvailabilityDiagnosticAndQuit() {
+  if (!String(process.env.PITWALL_REPLAY_TIMING_AVAILABILITY_DIAG || "").trim()) return false;
+  const options = {
+    meetingKey: process.env.PITWALL_REPLAY_TIMING_MEETING_KEY || "1286",
+    sessionKey: process.env.PITWALL_REPLAY_TIMING_SESSION_KEY || "11295",
+    sessionKind: process.env.PITWALL_REPLAY_TIMING_SESSION || "Qualifying",
+    raceName: process.env.PITWALL_REPLAY_TIMING_RACE || "Monaco Grand Prix",
+    raceStartsAt: process.env.PITWALL_REPLAY_TIMING_RACE_START || "2026-06-07T13:00:00.000Z",
+    sessionStartsAt: process.env.PITWALL_REPLAY_TIMING_SESSION_START || "2026-06-06T14:00:00.000Z",
+    sessionEndsAt: process.env.PITWALL_REPLAY_TIMING_SESSION_END || "2026-06-06T15:00:00.000Z",
+  };
+  const startedAt = Date.now();
+  const status = await getReplayTimingAvailability(options).catch((error) => ({
+    ok: false,
+    status: "error",
+    available: false,
+    synced: false,
+    label: "Timing check failed",
+    message: error.message || "Replay timing availability check failed.",
+  }));
+  console.log(JSON.stringify({
+    pitwallReplayTimingAvailabilityDiagnostic: {
+      elapsedMs: Date.now() - startedAt,
+      options: {
+        meetingKey: options.meetingKey,
+        sessionKey: options.sessionKey,
+        sessionKind: options.sessionKind,
+        raceName: options.raceName,
+      },
+      status: {
+        ok: Boolean(status.ok),
+        status: status.status || "",
+        available: Boolean(status.available),
+        synced: Boolean(status.synced),
+        label: status.label || "",
+        message: status.message || "",
+        sessionKey: status.sessionKey || "",
+        sessionKind: status.sessionKind || "",
+      },
+    },
+  }, null, 2));
+  app.exit(status.ok ? 0 : 2);
   return true;
 }
 
@@ -8452,7 +9101,7 @@ function analyticsSessionIsImmutable(data = {}) {
 }
 
 function analyticsSessionHasPublishedRows(data = {}) {
-  if (analyticsSessionIsImmutable(data)) return true;
+  if (analyticsSessionIsImmutable(data)) return false;
   const counts = data?.counts || {};
   return ["laps", "position", "sessionResult", "stints"].some((key) => finiteNumber(counts[key]) > 0);
 }
@@ -8462,15 +9111,6 @@ function analyticsAliasKey(options = {}) {
   const meetingKey = finiteNumber(options.meetingKey) || "";
   const sessionNeedle = cleanSessionName(options.sessionKind || options.sessionName || "Race");
   return [season, meetingKey, sessionNeedle].join(":");
-}
-
-function analyticsArchiveAliasKey(options = {}) {
-  if (!shouldPreferF1TimingAnalytics(options)) return "";
-  const season = String(options.season || f1TimingDatePart(options.raceStartsAt || options.startsAt).slice(0, 4) || new Date().getFullYear()).replace(/[^0-9]/g, "") || String(new Date().getFullYear());
-  const raceName = compactText(options.raceName || options.eventName);
-  const raceStartsAt = f1TimingDatePart(options.raceStartsAt || options.startsAt);
-  const sessionNeedle = cleanSessionName(options.sessionKind || options.sessionName || "Race");
-  return raceName && raceStartsAt ? ["f1", season, raceName, raceStartsAt, sessionNeedle].join(":") : "";
 }
 
 function analyticsSessionDiskEntry(keys = [], options = {}) {
@@ -8552,11 +9192,6 @@ async function resolveAnalyticsSession(options = {}) {
 async function buildAnalyticsSessionData(sessionInfo, options = {}) {
   const sessionKey = finiteNumber(sessionInfo?.session_key);
   if (!sessionKey) throw new Error("OpenF1 did not return a session key for this selection.");
-  if (shouldPreferF1TimingAnalytics(options)) {
-    try {
-      return await buildF1TimingAnalyticsSessionData(sessionInfo, options);
-    } catch {}
-  }
   const optionalEndpoints = new Set(["overtakes", "position"]);
   const requests = {
     drivers: ["drivers", { session_key: sessionKey }],
@@ -8618,8 +9253,7 @@ async function buildAnalyticsSessionData(sessionInfo, options = {}) {
 }
 
 function refreshAnalyticsSessionCache({ cacheKey, aliasKey, options = {}, sessionInfo = null, cachedData = null } = {}) {
-  const archiveAliasKey = analyticsArchiveAliasKey(options);
-  const refreshKeys = [cacheKey, archiveAliasKey, aliasKey].filter(Boolean).map(String);
+  const refreshKeys = [cacheKey, aliasKey].filter(Boolean).map(String);
   if (!refreshKeys.length || refreshKeys.some((key) => analyticsRefreshInFlight.has(key))) return;
   for (const key of refreshKeys) analyticsRefreshInFlight.set(key, true);
   Promise.resolve().then(async () => {
@@ -8634,7 +9268,7 @@ function refreshAnalyticsSessionCache({ cacheKey, aliasKey, options = {}, sessio
     const createdAt = Date.now();
     if (analyticsCacheFingerprint(previousData) !== analyticsCacheFingerprint(data)) {
       analyticsSessionCache.set(resolvedCacheKey, { createdAt, data });
-      writeAnalyticsSessionDiskCache([resolvedCacheKey, archiveAliasKey, aliasKey], data);
+      writeAnalyticsSessionDiskCache([resolvedCacheKey, aliasKey], data);
     } else {
       analyticsSessionCache.set(resolvedCacheKey, { createdAt, data: previousData || data });
     }
@@ -8646,22 +9280,15 @@ function refreshAnalyticsSessionCache({ cacheKey, aliasKey, options = {}, sessio
 
 async function getAnalyticsSession(options = {}) {
   const aliasKey = analyticsAliasKey(options);
-  const archiveAliasKey = analyticsArchiveAliasKey(options);
-  const aliasDiskEntry = analyticsSessionDiskEntry([archiveAliasKey, aliasKey], { withMeta: true });
+  const aliasDiskEntry = analyticsSessionDiskEntry([aliasKey], { withMeta: true });
   if (aliasDiskEntry?.data && analyticsSessionHasPublishedRows(aliasDiskEntry.data)) {
     const shouldRefresh = shouldRevalidateAnalyticsCache(aliasDiskEntry.createdAt, aliasDiskEntry.data);
-    if (archiveAliasKey && aliasDiskEntry.key !== archiveAliasKey && analyticsSessionIsImmutable(aliasDiskEntry.data)) {
-      writeAnalyticsSessionDiskCache([archiveAliasKey], aliasDiskEntry.data);
-    }
     if (shouldRefresh) refreshAnalyticsSessionCache({ aliasKey, options, cachedData: aliasDiskEntry.data });
     return cachedAnalyticsSessionData(aliasDiskEntry.data, "disk", aliasDiskEntry.createdAt, shouldRefresh);
   }
-  const staleAliasEntry = analyticsSessionDiskEntry([archiveAliasKey, aliasKey], { allowStale: true, withMeta: true });
+  const staleAliasEntry = analyticsSessionDiskEntry([aliasKey], { allowStale: true, withMeta: true });
   if (staleAliasEntry?.data && analyticsSessionHasPublishedRows(staleAliasEntry.data)) {
     const shouldRefresh = shouldRevalidateAnalyticsCache(staleAliasEntry.createdAt, staleAliasEntry.data);
-    if (archiveAliasKey && staleAliasEntry.key !== archiveAliasKey && analyticsSessionIsImmutable(staleAliasEntry.data)) {
-      writeAnalyticsSessionDiskCache([archiveAliasKey], staleAliasEntry.data);
-    }
     if (shouldRefresh) refreshAnalyticsSessionCache({ aliasKey, options, cachedData: staleAliasEntry.data });
     return cachedAnalyticsSessionData(staleAliasEntry.data, "disk", staleAliasEntry.createdAt, shouldRefresh);
   }
@@ -8682,7 +9309,7 @@ async function getAnalyticsSession(options = {}) {
     if (shouldRefresh) refreshAnalyticsSessionCache({ cacheKey, aliasKey, options, sessionInfo, cachedData: cached.data });
     return cachedAnalyticsSessionData(cached.data, "memory", new Date(cached.createdAt).toISOString(), shouldRefresh);
   }
-  const diskEntry = analyticsSessionDiskEntry([cacheKey, archiveAliasKey, aliasKey], { withMeta: true });
+  const diskEntry = analyticsSessionDiskEntry([cacheKey, aliasKey], { withMeta: true });
   if (diskEntry?.data && analyticsSessionHasPublishedRows(diskEntry.data)) {
     const shouldRefresh = shouldRevalidateAnalyticsCache(diskEntry.createdAt, diskEntry.data);
     analyticsSessionCache.set(cacheKey, { createdAt: Date.parse(diskEntry.createdAt || "") || Date.now(), data: diskEntry.data });
@@ -8690,8 +9317,8 @@ async function getAnalyticsSession(options = {}) {
     if (shouldRefresh) refreshAnalyticsSessionCache({ cacheKey, aliasKey, options, sessionInfo, cachedData: diskEntry.data });
     return cachedAnalyticsSessionData(diskEntry.data, "disk", diskEntry.createdAt, shouldRefresh);
   }
-  const staleDiskEntry = analyticsSessionDiskEntry([cacheKey, archiveAliasKey, aliasKey], { allowStale: true, withMeta: true });
-  const staleDiskData = analyticsSessionDiskEntry([cacheKey, archiveAliasKey, aliasKey], { allowStale: true });
+  const staleDiskEntry = analyticsSessionDiskEntry([cacheKey, aliasKey], { allowStale: true, withMeta: true });
+  const staleDiskData = analyticsSessionDiskEntry([cacheKey, aliasKey], { allowStale: true });
   if ((staleDiskEntry?.data && analyticsSessionHasPublishedRows(staleDiskEntry.data)) || (staleDiskData && analyticsSessionHasPublishedRows(staleDiskData))) {
     const data = staleDiskEntry?.data || staleDiskData;
     analyticsSessionCache.set(cacheKey, { createdAt: Date.now(), data });
@@ -8703,7 +9330,7 @@ async function getAnalyticsSession(options = {}) {
 
   const data = await buildAnalyticsSessionData(sessionInfo, options);
   analyticsSessionCache.set(cacheKey, { createdAt: Date.now(), data });
-  writeAnalyticsSessionDiskCache([cacheKey, archiveAliasKey, aliasKey], data);
+  writeAnalyticsSessionDiskCache([cacheKey, aliasKey], data);
   trimAnalyticsSessionMemoryCache();
   return data;
 }
@@ -8799,6 +9426,7 @@ ipcMain.handle("pitwall:f1tv:logout", async () => {
 ipcMain.handle("pitwall:data:snapshot", (_event, options = {}) => getPitWallSnapshot(options));
 ipcMain.handle("pitwall:data:liveTiming", (_event, options = {}) => getLiveTimingSnapshot(options));
 ipcMain.handle("pitwall:data:replayTiming", (_event, options = {}) => getReplayTimingSnapshot(options));
+ipcMain.handle("pitwall:data:replayTimingAvailability", (_event, options = {}) => getReplayTimingAvailability(options));
 ipcMain.handle("pitwall:data:trackMapReplayTiming", (_event, options = {}) => getTrackMapReplayTimingSnapshot(options));
 ipcMain.handle("pitwall:ai:authStatus", () => getAiAuthStatus());
 ipcMain.handle("pitwall:ai:authStart", (_event, provider) => startAiOAuth(provider));
@@ -8973,6 +9601,7 @@ app.whenReady().then(async () => {
   installF1TvStreamCapture();
   if (await runF1TvProbeDiagnosticAndQuit()) return null;
   if (await runF1TvLibraryDiagnosticAndQuit()) return null;
+  if (await runReplayTimingAvailabilityDiagnosticAndQuit()) return null;
   if (await runAnalyticsSessionDiagnosticAndQuit()) return null;
   if (await runDashboardDiagnosticAndQuit()) return null;
   if (await runWeekendRecapDiagnosticAndQuit()) return null;

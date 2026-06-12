@@ -4135,7 +4135,7 @@ function f1TimingPositionSamplePoints(sessionData, maxPoints = 240) {
   const points = [];
   for (let index = 0; index < source.length; index += step) {
     const row = source[index].row;
-    points.push({ x: row.x, y: row.y });
+    points.push({ x: row.x, y: row.y, z: finiteNumber(row.z) });
   }
   return points;
 }

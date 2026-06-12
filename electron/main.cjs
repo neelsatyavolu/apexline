@@ -86,7 +86,7 @@ const KEYCHAIN_SERVICE = "Apexline";
 const LEGACY_KEYCHAIN_SERVICE = "PitWall";
 const KEY_PROVIDERS = new Set(["codex", "grok", "f1tv-email", "f1tv-token"]);
 const VIDEO_QUALITY_LEVELS = new Set(["max", "high", "medium", "low"]);
-const DEFAULT_USER_PROFILE = { name: "", profileImageUrl: "", favoriteDrivers: [], favoriteTeams: [], livePanelSizes: null, videoQuality: "" };
+const DEFAULT_USER_PROFILE = { name: "", profileImageUrl: "", favoriteDrivers: [], favoriteTeams: [], livePanelSizes: null, liveCustomLayouts: null, videoQuality: "" };
 const PROFILE_FILE = "pitwall-profile.json";
 const AI_PREFERENCES_FILE = "pitwall-ai-preferences.json";
 const SOCIAL_FILE = "apexline-social.json";
@@ -201,6 +201,7 @@ const RACE_WINNER_CACHE_MS = 1000 * 60 * 30;
 const OPENF1_ANALYTICS_REQUEST_DELAY_MS = 1000;
 const OPENF1_ANALYTICS_RETRY_MS = 750;
 const OPENF1_TOKEN_URL = "https://api.openf1.org/token";
+const OPENF1_TOKEN_PROXY_URL = `${SOCIAL_API_BASE_URL}/api/openf1-token`;
 const OPENF1_REQUEST_INTERVAL_MS = 1000;
 const OPENF1_SECOND_LIMIT = 6;
 const OPENF1_MINUTE_LIMIT = 60;
@@ -462,6 +463,66 @@ function normalizeVideoQuality(value) {
   return VIDEO_QUALITY_LEVELS.has(text) ? text : "";
 }
 
+function normalizeProfileCustomTileSource(raw = {}) {
+  if (!raw || typeof raw !== "object") return null;
+  if (raw.type === "timing") return { type: "timing" };
+  if (raw.type === "onboard" && typeof raw.code === "string" && raw.code) return { type: "onboard", code: raw.code.slice(0, 16) };
+  if (raw.type === "channel" && typeof raw.feedId === "string" && raw.feedId) return { type: "channel", feedId: raw.feedId.slice(0, 80) };
+  return null;
+}
+
+function profileCustomTileSourceKey(source) {
+  if (!source) return "";
+  if (source.type === "timing") return "timing";
+  if (source.type === "onboard") return "onboard:" + source.code;
+  if (source.type === "channel") return "channel:" + source.feedId;
+  return "";
+}
+
+function clampProfileCustomTileGeometry(rect = {}) {
+  const numeric = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
+  const round = (value) => Math.round(value * 10) / 10;
+  const w = round(Math.min(100, Math.max(12, numeric(rect.w, 32))));
+  const h = round(Math.min(100, Math.max(12, numeric(rect.h, 32))));
+  const x = round(Math.min(100 - w, Math.max(0, numeric(rect.x, 0))));
+  const y = round(Math.min(100 - h, Math.max(0, numeric(rect.y, 0))));
+  return { x, y, w, h };
+}
+
+function normalizeProfileCustomLayouts(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const seenLayoutIds = new Set();
+  const layouts = (Array.isArray(raw.layouts) ? raw.layouts : [])
+    .filter((layout) => layout && typeof layout === "object" && typeof layout.id === "string" && layout.id)
+    .filter((layout) => (seenLayoutIds.has(layout.id) ? false : (seenLayoutIds.add(layout.id), true)))
+    .slice(0, 24)
+    .map((layout) => {
+      const seenSources = new Set();
+      const tiles = (Array.isArray(layout.tiles) ? layout.tiles : [])
+        .slice(0, 64)
+        .map((tile) => {
+          const source = normalizeProfileCustomTileSource(tile?.source);
+          const sourceKey = profileCustomTileSourceKey(source);
+          if (!source || seenSources.has(sourceKey)) return null;
+          seenSources.add(sourceKey);
+          return {
+            id: typeof tile.id === "string" && tile.id ? tile.id.slice(0, 80) : "t-" + sourceKey,
+            source,
+            ...clampProfileCustomTileGeometry(tile),
+            tickerRows: clampProfilePanelSize(tile.tickerRows || 0, 0, 4),
+            tickerHeight: clampProfilePanelSize(tile.tickerHeight || 140, 64, 320),
+          };
+        })
+        .filter(Boolean);
+      return {
+        id: layout.id.slice(0, 80),
+        name: String(layout.name || "").trim().slice(0, 80) || "Custom layout",
+        tiles,
+      };
+    });
+  return { layouts };
+}
+
 function normalizeUserProfile(profile = {}) {
   return {
     name: String(profile.name || "").slice(0, 80),
@@ -469,6 +530,7 @@ function normalizeUserProfile(profile = {}) {
     favoriteDrivers: Array.isArray(profile.favoriteDrivers) ? profile.favoriteDrivers.map(String).slice(0, 8) : [],
     favoriteTeams: Array.isArray(profile.favoriteTeams) ? profile.favoriteTeams.map(String).slice(0, 8) : [],
     livePanelSizes: normalizeLivePanelSizes(profile.livePanelSizes),
+    liveCustomLayouts: normalizeProfileCustomLayouts(profile.liveCustomLayouts),
     videoQuality: normalizeVideoQuality(profile.videoQuality),
   };
 }
@@ -977,6 +1039,7 @@ function readDotEnvValues() {
     path.join(process.cwd(), ".env"),
     path.join(app.getAppPath(), ".env"),
     path.resolve(app.getAppPath(), "../../../../../.env"),
+    path.join(app.getPath("userData"), ".env"),
     process.env.PITWALL_DOTENV,
   ].filter(Boolean);
   const values = {};
@@ -1045,6 +1108,7 @@ function requestFormJson(targetUrl, body, timeout = 12000) {
 
 let openF1TokenCache = null;
 let openF1TokenRefresh = null;
+let openF1TokenProxyCooldownUntil = 0;
 let openF1Queue = Promise.resolve();
 const openF1RequestTimes = [];
 
@@ -1058,19 +1122,26 @@ function openF1IsUrl(targetUrl) {
 
 async function getOpenF1AccessToken() {
   const credentials = openF1Credentials();
-  if (!credentials) return "";
   const now = Date.now();
   if (openF1TokenCache?.accessToken && openF1TokenCache.expiresAt - now > OPENF1_TOKEN_REFRESH_MARGIN_MS) return openF1TokenCache.accessToken;
   if (openF1TokenRefresh) return openF1TokenRefresh;
-  openF1TokenRefresh = requestFormJson(OPENF1_TOKEN_URL, {
-    username: credentials.username,
-    password: credentials.password,
-  }).then((tokenData) => {
+  if (!credentials && now < openF1TokenProxyCooldownUntil) return "";
+  const fetchTokenData = credentials
+    ? requestFormJson(OPENF1_TOKEN_URL, {
+      username: credentials.username,
+      password: credentials.password,
+    })
+    : requestJson(OPENF1_TOKEN_PROXY_URL, 12000);
+  openF1TokenRefresh = fetchTokenData.then((tokenData) => {
     const accessToken = String(tokenData?.access_token || "");
     if (!accessToken) throw new Error("OpenF1 authentication did not return an access token.");
     const expiresIn = Math.max(60, Number(tokenData?.expires_in || 3600));
     openF1TokenCache = { accessToken, expiresAt: Date.now() + expiresIn * 1000 };
     return accessToken;
+  }).catch((error) => {
+    if (credentials) throw error;
+    openF1TokenProxyCooldownUntil = Date.now() + 60000;
+    return "";
   }).finally(() => {
     openF1TokenRefresh = null;
   });
@@ -2245,6 +2316,44 @@ function applyScheduleWinners(schedule = [], raceWinners = []) {
     const winner = byMeeting.get(String(race.meetingKey || "")) || byName.get(compactText(race.name)) || byRound.get(Number(race.rnd));
     return winner ? { ...race, winner } : race;
   });
+}
+
+function scheduleWinnerCount(schedule = []) {
+  return (schedule || []).filter((race) => race && race.winner).length;
+}
+
+// Winners already resolved on a schedule, in the shape applyScheduleWinners expects — used to
+// carry them forward into freshly built snapshots so they survive cache refreshes and restarts.
+function scheduleWinners(schedule = []) {
+  return (schedule || [])
+    .filter((race) => race && race.winner)
+    .map((race) => ({ rnd: race.rnd, meetingKey: race.meetingKey, name: race.name, winner: race.winner }));
+}
+
+function priorScheduleWinners() {
+  return scheduleWinners(liveDataCache?.data?.schedule);
+}
+
+function seasonRaceWinnersUrl() {
+  return `${JOLPICA_ERGAST_BASE_URL}/current/results/1.json?limit=100`;
+}
+
+// One request returns every round's winner for the current season — far faster than fanning out a
+// per-round (or per-session OpenF1) lookup. Cached like the other recent-results data.
+async function fetchSeasonRaceWinners() {
+  const cacheKey = "__season_winners__";
+  const cached = recentDriverResultsCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < RECENT_DRIVER_RESULTS_CACHE_MS) return cached.race;
+  try {
+    const json = await requestMaybeOpenF1Json(seasonRaceWinnersUrl());
+    const races = (json?.MRData?.RaceTable?.Races || json?.RaceTable?.Races || [])
+      .filter((race) => Array.isArray(race?.Results) && race.Results.length);
+    const out = races.length ? { MRData: { RaceTable: { Races: races } } } : null;
+    if (out) recentDriverResultsCache.set(cacheKey, { createdAt: Date.now(), race: out });
+    return out;
+  } catch {
+    return null;
+  }
 }
 
 function openF1RaceWinnerName(result, openDrivers, fallbackDrivers) {
@@ -5346,6 +5455,22 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
   const openF1Schedule = parseOpenF1Schedule(raw.openF1Meetings, raw.openF1Sessions);
   const fallbackSchedule = normalizeScheduleRoundOrder(openF1Schedule, { removeCancelled2026: scheduleHas2026Dates(openF1Schedule) });
   let effectiveSchedule = schedule.length ? schedule : applyScheduleWinners(fallbackSchedule, raceWinners);
+  // Carry winners we already resolved (in-memory / disk cache) so they paint instantly on the first
+  // snapshot and survive an app restart instead of being refetched.
+  const carriedWinners = priorScheduleWinners();
+  if (carriedWinners.length) {
+    raceWinners = raceWinners.concat(carriedWinners);
+    effectiveSchedule = applyScheduleWinners(effectiveSchedule, raceWinners);
+  }
+  // First paint: a single Ergast call returns every round's winner. Runs in both passes but is
+  // cached, and is skipped entirely once every done round already has a winner.
+  if (effectiveSchedule.some((race) => race.status === "done" && !race.winner)) {
+    const seasonWinners = parseRaceWinners(await fetchSeasonRaceWinners(), fallbackData.drivers);
+    if (seasonWinners.length) {
+      raceWinners = raceWinners.concat(seasonWinners);
+      effectiveSchedule = applyScheduleWinners(effectiveSchedule, raceWinners);
+    }
+  }
   if (!options.enrichmentPending) {
     const openF1RaceWinners = await fetchMissingOpenF1RaceWinners(effectiveSchedule, driverResult.seasonSummary.season, fallbackData.drivers);
     if (openF1RaceWinners.length) {
@@ -5480,8 +5605,15 @@ function readLiveSnapshotDiskCache() {
 function writeLiveSnapshotDiskCache(data) {
   if (!data?.schedule?.length && !data?.standings?.length) return;
   try {
+    // Never let a winner-poor snapshot (e.g. a pending pass that lost a race) clobber winners we
+    // already persisted — merge the richer set forward so restarts stay instant.
+    let outData = data;
+    const existing = readLiveSnapshotDiskCache();
+    if (existing && scheduleWinnerCount(existing.schedule) > scheduleWinnerCount(data.schedule)) {
+      outData = { ...data, schedule: applyScheduleWinners(data.schedule, scheduleWinners(existing.schedule)) };
+    }
     fs.mkdirSync(path.dirname(liveSnapshotCachePath()), { recursive: true });
-    fs.writeFileSync(liveSnapshotCachePath(), JSON.stringify({ schemaVersion: LIVE_SNAPSHOT_CACHE_VERSION, createdAt: new Date().toISOString(), data: normalizePitWallSnapshotRounds(data) }), "utf8");
+    fs.writeFileSync(liveSnapshotCachePath(), JSON.stringify({ schemaVersion: LIVE_SNAPSHOT_CACHE_VERSION, createdAt: new Date().toISOString(), data: normalizePitWallSnapshotRounds(outData) }), "utf8");
   } catch {}
 }
 
@@ -6337,22 +6469,20 @@ async function fetchDirectF1TvPlayMetadata(webContents, contentId, playbackToken
           const channelEndpoint = endpoint + "&channelId=" + encodeURIComponent(channelId) + "&player=player_tm";
           const channelAttempt = await fetchAttempt(channelEndpoint, { endpoint: channelEndpoint, status: 0, ok: false, contentType: "", manifests: [], licenseUrls: [], streamItems: [], bodyKeys: [], channelIds: [channelId], player: "player_tm" });
           out.push(channelAttempt);
-          if (channelAttempt.manifests.length) {
-            foundChannelManifest = true;
-            break;
-          }
+          if (channelAttempt.manifests.length) foundChannelManifest = true;
         }
         if (foundChannelManifest) break;
         const attempt = await fetchAttempt(endpoint, { endpoint, status: 0, ok: false, contentType: "", manifests: [], licenseUrls: [], streamItems: [], bodyKeys: [] });
         out.push(attempt);
         const channelIds = Array.from(new Set([...(attempt.channelIds || []), ...premiumChannelIds])).slice(0, 24);
+        let foundAttemptChannelManifest = false;
         for (const channelId of channelIds) {
           const channelEndpoint = endpoint + "&channelId=" + encodeURIComponent(channelId) + "&player=player_tm";
           const channelAttempt = await fetchAttempt(channelEndpoint, { endpoint: channelEndpoint, status: 0, ok: false, contentType: "", manifests: [], licenseUrls: [], streamItems: [], bodyKeys: [], channelIds: [channelId], player: "player_tm" });
           out.push(channelAttempt);
-          if (channelAttempt.manifests.length) break;
+          if (channelAttempt.manifests.length) foundAttemptChannelManifest = true;
         }
-        if (attempt.manifests.length) break;
+        if (attempt.manifests.length || foundAttemptChannelManifest) break;
       }
       return out;
     })();
@@ -6369,11 +6499,15 @@ async function fetchDirectF1TvPlayMetadata(webContents, contentId, playbackToken
       .filter((value) => isF1TvManifestUrl(value))
       .sort((a, b) => manifestScore(a) - manifestScore(b)),
     licenseUrls: Array.from(new Set(attempts.flatMap((attempt) => attempt.licenseUrls || []).map(absolute).filter(Boolean))),
-    streamItems: attempts.flatMap((attempt) => (attempt.streamItems || []).map((item) => ({
-      ...item,
-      manifest: absolute(item.manifest),
-      licenseUrls: Array.from(new Set((item.licenseUrls || []).map(absolute).filter(Boolean))),
-    }))).filter((item) => isF1TvManifestUrl(item.manifest)),
+    streamItems: attempts.flatMap((attempt) => {
+      const attemptChannelId = attempt.channelIds?.length === 1 ? String(attempt.channelIds[0]) : "";
+      return (attempt.streamItems || []).map((item) => ({
+        ...item,
+        channelId: item.channelId || attemptChannelId,
+        manifest: absolute(item.manifest),
+        licenseUrls: Array.from(new Set((item.licenseUrls || []).map(absolute).filter(Boolean))),
+      }));
+    }).filter((item) => isF1TvManifestUrl(item.manifest)),
   };
 }
 
@@ -7676,13 +7810,47 @@ const AI_SYSTEM_PROMPT = [
   "When predictions are available, label them as projections, use confidence and probability values from 0 to 1, and ground every winner, podium, leaderboard, and watchlist reason in the snapshot.",
 ].join(" ");
 
+const AI_INSIGHT_RESPONSE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    title: { type: "string" },
+    body: { type: "string" },
+    kind: { type: "string", enum: ["battle", "strategy", "track"] },
+    confidence: { type: "number" },
+  },
+  required: ["title", "body", "kind", "confidence"],
+};
+
+const AI_INSIGHT_SYSTEM_PROMPT = [
+  "You are Apexline's F1 race strategist generating one short insight card for the Live Racing screen.",
+  "Use only the provided JSON snapshot.",
+  "Compare snapshot.current with snapshot.priorSnapshots to surface a trend a viewer would miss in a single timing frame: closing or opening gaps, tyre offset, pit-window timing, track-status implications, or race control developments.",
+  "Do not repeat the running order, generic hype, obvious facts, or anything already covered by snapshot.recentInsights.",
+  "In replay mode, replay.elapsedSeconds is the hard knowledge boundary; never use later knowledge.",
+  "Return valid JSON matching the schema: title (at most nine words), body (one or two sentences), kind (battle, strategy, or track), and confidence from 0 to 1.",
+].join(" ");
+
+const AI_INSIGHT_TASK = "live_racing_insight";
+
+function aiTaskConfig(options = {}) {
+  if (options.task === AI_INSIGHT_TASK) {
+    return { systemPrompt: AI_INSIGHT_SYSTEM_PROMPT, schemaName: "pitwall_insight_response", schema: AI_INSIGHT_RESPONSE_SCHEMA };
+  }
+  return { systemPrompt: AI_SYSTEM_PROMPT, schemaName: "pitwall_ai_response", schema: AI_RESPONSE_SCHEMA };
+}
+
 function aiPayload(options = {}) {
-  return {
+  const payload = {
     prompt: String(options.prompt || "Summarize the live F1 snapshot."),
     snapshot: options.snapshot || {},
+    generatedAt: new Date().toISOString(),
+  };
+  if (options.task === AI_INSIGHT_TASK) return payload;
+  return {
+    ...payload,
     visualizationGuide: "Return visualization.kind='none' for text-only answers. Use 'tyre_strategy' with one row per relevant driver when tyre, stint, pit, compound, or race-plan data is best shown visually.",
     predictionGuide: "Return predictions.available=true only for daily Current weekend, Next weekend, Drivers championship, or Constructors championship projection pages. For Next weekend, include predictions.leaderboard as the full predicted Grand Prix race finishing order, not FP1, qualifying, sprint, or any other next scheduled session order. Otherwise use available=false with empty winner, podium, leaderboard, and watchlist arrays.",
-    generatedAt: new Date().toISOString(),
   };
 }
 
@@ -7698,8 +7866,25 @@ function tryParseAiJson(text) {
   }
 }
 
-function normalizeAiResult(provider, text, raw) {
+function normalizeAiResult(provider, text, raw, task) {
   const parsed = tryParseAiJson(text);
+  if (task === AI_INSIGHT_TASK) {
+    const body = String(parsed?.body || "").trim();
+    const alert = body ? {
+      kind: parsed.kind || "track",
+      title: String(parsed.title || "").trim(),
+      body,
+      confidence: typeof parsed.confidence === "number" ? parsed.confidence : null,
+    } : null;
+    return {
+      provider,
+      summary: alert ? alert.body : String(text || "The provider returned an empty response."),
+      alerts: alert ? [alert] : [],
+      visualization: null,
+      predictions: emptyDailyPredictions(),
+      raw,
+    };
+  }
   if (parsed?.summary) {
     const visualization = parsed.visualization?.kind && parsed.visualization.kind !== "none" ? parsed.visualization : null;
     return {
@@ -7735,18 +7920,19 @@ function grokText(raw) {
 }
 
 function responsesBody(model, options = {}) {
+  const task = aiTaskConfig(options);
   const body = {
     model,
     input: [
-      { role: "system", content: [{ type: "input_text", text: AI_SYSTEM_PROMPT }] },
+      { role: "system", content: [{ type: "input_text", text: task.systemPrompt }] },
       { role: "user", content: [{ type: "input_text", text: JSON.stringify(aiPayload(options)) }] },
     ],
     text: {
       format: {
         type: "json_schema",
-        name: "pitwall_ai_response",
+        name: task.schemaName,
         strict: true,
-        schema: AI_RESPONSE_SCHEMA,
+        schema: task.schema,
       },
     },
     max_output_tokens: 900,
@@ -7759,18 +7945,19 @@ function responsesBody(model, options = {}) {
 }
 
 function codexResponsesBody(model, options = {}) {
+  const task = aiTaskConfig(options);
   return {
     model,
-    instructions: AI_SYSTEM_PROMPT,
+    instructions: task.systemPrompt,
     input: [
       { role: "user", content: [{ type: "input_text", text: JSON.stringify(aiPayload(options)) }] },
     ],
     text: {
       format: {
         type: "json_schema",
-        name: "pitwall_ai_response",
+        name: task.schemaName,
         strict: true,
-        schema: AI_RESPONSE_SCHEMA,
+        schema: task.schema,
       },
     },
     reasoning: { effort: model === "gpt-5.4-mini" ? "high" : "low" },
@@ -7826,7 +8013,7 @@ async function askCodex(options = {}) {
   };
   if (tokens.accountId) headers["chatgpt-account-id"] = tokens.accountId;
   const raw = await requestCodexResponsesStream(CODEX_BACKEND_RESPONSES_URL, codexResponsesBody(model, options), headers);
-  return normalizeAiResult("codex", openAiText(raw), raw);
+  return normalizeAiResult("codex", openAiText(raw), raw, options.task);
 }
 
 async function askGrok(options = {}) {
@@ -7836,7 +8023,7 @@ async function askGrok(options = {}) {
   const body = {
     model,
     messages: [
-      { role: "system", content: AI_SYSTEM_PROMPT },
+      { role: "system", content: aiTaskConfig(options).systemPrompt },
       { role: "user", content: JSON.stringify(aiPayload(options)) },
     ],
     temperature: 0.4,
@@ -7844,7 +8031,7 @@ async function askGrok(options = {}) {
   };
   if (model === "grok-4.3") body.reasoning = { effort: "high" };
   const raw = await requestJsonPost(GROK_CHAT_COMPLETIONS_URL, body, { Authorization: `Bearer ${tokens.accessToken}` }, AI_PROVIDER_TIMEOUT_MS);
-  return normalizeAiResult("grok", grokText(raw), raw);
+  return normalizeAiResult("grok", grokText(raw), raw, options.task);
 }
 
 async function getPreferredAiSelection() {

@@ -143,6 +143,35 @@
     .cop-progress__row[data-state="failed"] .cop-progress__dot { background: var(--danger); }
     .cop-progress__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+    /* In-progress button + detailed progress popup */
+    .cop-hero__pending { display: flex; align-items: center; gap: var(--space-6); flex-wrap: wrap; }
+    .cop-hero__pending-hint { color: var(--text-secondary); font-size: var(--text-sm); }
+    .cop-inprogress-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pw-pulse 1.4s var(--ease-in-out) infinite; }
+    .cop-modal__overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: var(--space-8); background: rgba(4, 8, 16, 0.62); backdrop-filter: blur(6px); }
+    .cop-modal { width: min(560px, 100%); max-height: min(82vh, 680px); overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-7); padding: var(--space-9); border-radius: var(--radius-lg); border: 1px solid var(--accent-border);
+      background: linear-gradient(120% 130% at 90% -20%, var(--accent-quiet), transparent 55%), var(--surface-card); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5); }
+    .cop-modal__hd { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-6); }
+    .cop-modal__eyebrow { display: inline-flex; align-items: center; gap: var(--space-4); color: var(--text-accent); font-size: var(--text-2xs); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+    .cop-modal__title { margin-top: 4px; color: var(--text-strong); font-family: var(--font-display); font-size: var(--text-lg); font-weight: 800; }
+    .cop-modal__meta { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); color: var(--text-secondary); font-size: var(--text-xs); }
+    .cop-modal__count { font-family: var(--font-mono); font-weight: 700; color: var(--text-primary); }
+    .cop-modal__steps { display: flex; flex-direction: column; gap: var(--space-4); }
+    .cop-modal__step { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: var(--space-5); align-items: start; padding: var(--space-5); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); background: var(--bg-sunken); }
+    .cop-modal__step-dot { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--text-tertiary); }
+    .cop-modal__step[data-state="thinking"] { border-color: var(--accent-border); }
+    .cop-modal__step[data-state="thinking"] .cop-modal__step-dot { background: var(--accent); animation: pw-pulse 1.4s var(--ease-in-out) infinite; }
+    .cop-modal__step[data-state="computed"] .cop-modal__step-dot { background: var(--success); }
+    .cop-modal__step[data-state="failed"] .cop-modal__step-dot { background: var(--danger); }
+    .cop-modal__step-title { color: var(--text-primary); font-size: var(--text-sm); font-weight: 700; }
+    .cop-modal__step-detail { margin-top: 2px; color: var(--text-tertiary); font-size: var(--text-xs); line-height: 1.4; }
+    .cop-modal__step-state { color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 700; text-transform: uppercase; white-space: nowrap; }
+    .cop-modal__step[data-state="thinking"] .cop-modal__step-state { color: var(--text-accent); }
+    .cop-modal__step[data-state="computed"] .cop-modal__step-state { color: var(--success); }
+    .cop-modal__step[data-state="failed"] .cop-modal__step-state { color: var(--danger); }
+    .cop-modal__error { padding: var(--space-5); border-radius: var(--radius-sm); border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border-subtle)); background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.4; }
+    .cop-modal__foot { color: var(--text-tertiary); font-size: var(--text-2xs); }
+    @keyframes pw-pulse { 0%, 100% { box-shadow: 0 0 0 0 var(--accent-quiet); opacity: 1; } 50% { box-shadow: 0 0 0 6px transparent; opacity: 0.55; } }
+
     /* Chat panel */
     .cop-chat { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-h) - var(--space-10) - 54px); position: relative; top: 0;
       border-radius: var(--radius-lg); border: 1px solid var(--border-default); background: var(--surface-card); overflow: hidden; }
@@ -189,7 +218,7 @@
 	    @media (max-width: 980px) { .cop-page { grid-template-columns: 1fr; } .cop-chat { height: min(680px, calc(100vh - 140px)); } .ai-vis__row { grid-template-columns: 60px 1fr; } .ai-vis__bars, .ai-vis__rec { grid-column: 1 / -1; } .ai-vis__quality { grid-column: 2; justify-self: start; } .factors { grid-template-columns: 1fr; } }
 	    @media (max-width: 760px) { .race-pred__sections { grid-template-columns: 1fr; } }
 	    @keyframes pw-typing { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
-	    @media (prefers-reduced-motion: reduce) { .cop-chat__typing i { animation: none; } }
+	    @media (prefers-reduced-motion: reduce) { .cop-chat__typing i, .cop-inprogress-dot, .cop-modal__step-dot { animation: none; } }
 	    `;
     document.head.appendChild(el);
   }
@@ -580,6 +609,59 @@
 	    );
 	  }
 
+	  const PAGE_PROCESS_DETAILS = {
+	    "drivers-championship": "Projects the drivers' title winner, contenders, and watchlist from standings, wins, form, and news.",
+	    "constructors-championship": "Projects the constructors' title from team points, driver pairings, and reliability signals.",
+	    "current-weekend": "Computes race winner, podium, and watchlist picks from this weekend's sessions, weather, and tyre data.",
+	    "next-weekend": "Builds the full predicted finishing order for the next Grand Prix from season pace and track history.",
+	  };
+	  const STEP_STATE_LABELS = { waiting: "Queued", thinking: "Analyzing", computed: "Done", failed: "Failed" };
+
+	  function DailyProgressModal({ progress, items, completed, total, pct, onClose }) {
+	    React.useEffect(() => {
+	      function onKeyDown(event) {
+	        if (event.key === "Escape") onClose();
+	      }
+	      window.addEventListener("keydown", onKeyDown);
+	      return () => window.removeEventListener("keydown", onKeyDown);
+	    }, [onClose]);
+	    const updatedLabel = progress.updatedAt ? new Date(progress.updatedAt).toLocaleTimeString() : "";
+	    return (
+	      <div className="cop-modal__overlay" onClick={onClose} role="presentation">
+	        <div className="cop-modal" role="dialog" aria-modal="true" aria-label="Daily AI insight progress" onClick={(event) => event.stopPropagation()}>
+	          <div className="cop-modal__hd">
+	            <div>
+	              <div className="cop-modal__eyebrow"><Icon name="sparkles" size={13} /> Daily AI calculation</div>
+	              <div className="cop-modal__title">{progress.statusText || "Daily AI insight generation is running."}</div>
+	            </div>
+	            <IconButton variant="ghost" size="sm" label="Close progress" onClick={onClose}><Icon name="close" size={16} /></IconButton>
+	          </div>
+	          <div>
+	            <div className="cop-modal__meta">
+	              <span>{progress.currentPageTitle ? `Currently working on ${progress.currentPageTitle}` : "Waiting for the daily run to start"}</span>
+	              <span className="cop-modal__count">{completed}/{total} pages</span>
+	            </div>
+	            <div className="cop-progress__bar" style={{ marginTop: "var(--space-4)" }} aria-hidden="true"><div className="cop-progress__fill" style={{ "--_w": pct + "%" }} /></div>
+	          </div>
+	          <div className="cop-modal__steps">
+	            {items.map((item) => (
+	              <div className="cop-modal__step" data-state={item.status} key={item.id || item.title}>
+	                <span className="cop-modal__step-dot" />
+	                <div>
+	                  <div className="cop-modal__step-title">{item.title || item.id}</div>
+	                  <div className="cop-modal__step-detail">{PAGE_PROCESS_DETAILS[item.id] || "Builds this page's daily AI insight from the loaded snapshot."}</div>
+	                </div>
+	                <span className="cop-modal__step-state">{STEP_STATE_LABELS[item.status] || item.status}</span>
+	              </div>
+	            ))}
+	          </div>
+	          {progress.error && <div className="cop-modal__error">{progress.error}</div>}
+	          <div className="cop-modal__foot">Live status refreshes automatically every 5 seconds{updatedLabel ? ` · last update ${updatedLabel}` : ""}.</div>
+	        </div>
+	      </div>
+	    );
+	  }
+
 	  function Copilot() {
     const { data: D, connection, dataSource, refreshData } = window.PW.usePitWall();
     const daily = D.copilot?.daily || {
@@ -643,6 +725,8 @@
     const [draft, setDraft] = React.useState("");
     const [typing, setTyping] = React.useState(false);
     const [progressOpen, setProgressOpen] = React.useState(false);
+    const [progressModalOpen, setProgressModalOpen] = React.useState(false);
+    const dailyPending = daily.status === "pending";
     const msgsRef = React.useRef(null);
     const selectedTab = INSIGHT_TABS.find((tab) => tab.id === activeTab) || INSIGHT_TABS[0];
     const selectedPage = dailyPages.find((page) => page.id === activeTab) || {
@@ -777,12 +861,21 @@
                   <span className="cop-hero__model"><Icon name="key" size={12} /> {daily.generatedOn ? `Updated ${daily.generatedOn}` : "Updates once per day"}</span>
                 </div>
                 <h2 className="cop-hero__h">{selectedPage.title || selectedTab.label}</h2>
-                <p className="cop-hero__sum">{selectedPage.summary || projectionStatus}</p>
+                {dailyPending ? (
+                  <div className="cop-hero__pending">
+                    <Button size="sm" variant="secondary" onClick={() => setProgressModalOpen(true)} iconLeft={<span className="cop-inprogress-dot" />} aria-haspopup="dialog">
+                      In Progress
+                    </Button>
+                    <span className="cop-hero__pending-hint">{progress.statusText || "Daily AI insight generation is running."}</span>
+                  </div>
+                ) : (
+                  <p className="cop-hero__sum">{selectedPage.summary || projectionStatus}</p>
+                )}
                 <div className="cop-hero__conf">
                   <span style={{ fontSize: 11, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600 }}>Data coverage</span>
                   <div className="cop-conf__track"><div className="cop-conf__fill" style={{ width: (loadedFeedCount / totalFeedCount) * 100 + "%" }} /></div>
                   <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--text-primary)" }}>{loadedFeedCount}/{totalFeedCount}</span>
-                  <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-tertiary)" }}>{projectionStatus}</span>
+                  <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-tertiary)" }}>{dailyPending ? "Daily AI calculation in progress" : projectionStatus}</span>
                 </div>
               </section>
 
@@ -816,7 +909,7 @@
 
 	              <Card title="Daily status" subtitle="One automatic AI calculation per day" aside={<Icon name="sparkles" size={15} />} padding="default">
                 <div className="cop-status-head">
-                  <div className="cop-status-head__text">{progress.statusText || projectionStatus}</div>
+                  <div className="cop-status-head__text">{progress.statusText || (dailyPending ? "Daily AI calculation in progress." : projectionStatus)}</div>
                   <Button size="sm" variant={progressOpen ? "secondary" : "ghost"} onClick={() => setProgressOpen((open) => !open)} iconLeft={<Icon name="timer" size={13} />} aria-expanded={progressOpen}>
                     {progressOpen ? "Hide progress" : "Show progress"}
                   </Button>
@@ -855,6 +948,16 @@
               </Card>
             </div>
           </div>
+        )}
+        {progressModalOpen && (
+          <DailyProgressModal
+            progress={progress}
+            items={progressItems}
+            completed={progressCompleted}
+            total={progressTotal}
+            pct={progressPct}
+            onClose={() => setProgressModalOpen(false)}
+          />
         )}
       </div>
     );

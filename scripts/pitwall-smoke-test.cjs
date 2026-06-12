@@ -399,6 +399,7 @@ assert.match(liveRacingSource, /tickerTyreLabel\(t\)[\s\S]*className="tick__tyre
 assert.match(liveRacingSource, /const \w+ = isTiming \? null : customTilePane\(tile\);[\s\S]*activePaneMap\.get\(\w+\?\.paneId \|\| customPaneIdForSource\(tile\.source\)\)/, "Custom layout F1 TV tiles should render the WORLD pane produced for the main F1 TV feed");
 assert.match(liveRacingSource, /const \[isFullScreen, setIsFullScreen\] = React\.useState\(false\)[\s\S]*window\.pitwall\?\.windowState[\s\S]*className=\{"live" \+ \(isFullScreen \? " live--fullscreen" : ""\)\}/, "Live Racing should know native fullscreen state before showing custom traffic lights");
 assert.match(liveRacingSource, /\.live__traffic \{[^}]*display: none[\s\S]*\.live--fullscreen \.live__traffic \{[^}]*display: flex/, "Live Racing should hide custom traffic lights in windowed mode and only show them in fullscreen");
+assert.match(liveRacingSource, /\.live \{[^}]*--live-window-controls-space: 96px[\s\S]*\.live--fullscreen \{[^}]*--live-window-controls-space: 0px[\s\S]*\.live__bar \{[^}]*padding: 0 var\(--space-7\) 0 max\(var\(--live-window-controls-space\), var\(--space-7\)\)[\s\S]*@media \(max-width: 1600px\) \{[\s\S]*\.live__bar \{[^}]*padding: 0 var\(--space-5\) 0 max\(var\(--live-window-controls-space\), var\(--space-5\)\)/, "Live Racing windowed title bar should reserve native macOS traffic-light space without shifting fullscreen");
 assert.match(liveRacingSource, /@media \(max-width: 1600px\) \{[\s\S]*\.live__barright \.pw-btn > span:not\(\.pw-btn__spinner\)/, "Live Racing top bar should compact action labels at Air-sized widths instead of overlapping controls");
 assert.match(liveRacingSource, /@media \(max-width: 1180px\) \{[\s\S]*\.live__grid\[data-layout="focus"\][\s\S]*grid-template-rows: minmax\(120px, clamp\(120px, 22vh, 180px\)\) minmax\(320px, 1fr\)/, "Compact focus layout should preserve a visible onboard row and a usable F1 Live pane");
 assert.match(liveRacingSource, /@media \(max-width: 1180px\) \{[\s\S]*\.live__grid\[data-layout="focus"\] \.pane--bc \.pane__video \{ object-fit: contain; object-position: center center; \}/, "Compact focus layout should show the full F1 Live feed instead of cropping it aggressively");
@@ -1649,6 +1650,9 @@ assert.match(mainProcess, /FEATURESTEERING\/PREMIUM\/5/, "F1 TV resolver should 
 assert.match(mainProcess, /techPack=F1_FER/, "F1 TV resolver should request the same PSEUDO-VOD channel metadata shape as the web player");
 assert.match(mainProcess, /const versions = \["3\.0", "2\.0"\]/, "F1 TV resolver should prefer the official 3.0 playback API route");
 assert.match(mainProcess, /const clients = \["WEB_HLS", "WEB_DASH", "BIG_SCREEN_DASH", "BIG_SCREEN_HLS"\]/, "F1 TV resolver should prefer the official WEB_HLS channel playback route");
+assert.doesNotMatch(mainProcess, /if \(channelAttempt\.manifests\.length\) \{\s*foundChannelManifest = true;\s*break;\s*\}/, "F1 TV resolver should collect every channel-specific manifest so the Data Channel reaches the custom feed picker");
+assert.doesNotMatch(mainProcess, /if \(channelAttempt\.manifests\.length\) break;/, "F1 TV resolver should not stop channel discovery after the first playable extra feed");
+assert.match(mainProcess, /const attemptChannelId = attempt\.channelIds\?\.length === 1[\s\S]*channelId: item\.channelId \|\| attemptChannelId/, "F1 TV resolver should preserve channel ids on direct stream items so Data Channel keeps its stable feed id");
 assert.match(mainProcess, /manifestScore/, "F1 TV resolver should prefer playable CMAF/HLS manifests over DASH when F1 TV provides them");
 assert.match(mainProcess, /\.filter\(\(value\) => isF1TvManifestUrl\(value\)\)/, "F1 TV resolver should not treat license URLs as playable manifests");
 assert.match(mainProcess, /pitwall:f1tv:browse/, "Electron main should expose F1 TV content browser IPC");
@@ -1745,7 +1749,9 @@ assert.match(mainProcess, /constructors-championship/, "Daily Copilot insights s
 assert.match(mainProcess, /current-weekend/, "Daily Copilot insights should include a current race weekend page");
 assert.match(mainProcess, /next-weekend/, "Daily Copilot insights should include a next race weekend page");
 assert.match(mainProcess, /requestCodexResponsesStream/, "Codex AI layer should use the required streaming responses contract");
-assert.match(mainProcess, /instructions:\s*AI_SYSTEM_PROMPT/, "Codex AI layer should send system guidance as top-level instructions");
+assert.match(mainProcess, /instructions:\s*task\.systemPrompt/, "Codex AI layer should send task-selected system guidance as top-level instructions");
+assert.match(mainProcess, /AI_INSIGHT_RESPONSE_SCHEMA/, "AI layer should define a slim response schema for auto insights");
+assert.match(mainProcess, /aiTaskConfig/, "AI layer should select prompt and schema per task");
 assert.match(mainProcess, /stream:\s*true/, "Codex AI layer should request streaming responses");
 assert.match(mainProcess, /pitwall:history:query/, "Electron main should expose historical query IPC");
 assert.match(mainProcess, /pitwall:analytics:session/, "Electron main should expose session analytics IPC");
@@ -1779,10 +1785,13 @@ assert.match(mainProcess, /pitwall:profile:get/, "Electron main should persist t
 assert.match(mainProcess, /pitwall:profile:set/, "Electron main should save dashboard setup choices to the app profile");
 assert.match(mainProcess, /livePanelSizes/, "Electron profile should persist Live Racing panel sizes outside random localhost localStorage origins");
 assert.match(mainProcess, /videoQuality/, "Electron profile should persist Live Racing video quality outside random localhost localStorage origins");
+assert.match(mainProcess, /liveCustomLayouts/, "Electron profile should persist custom Live Racing layouts outside random localhost localStorage origins");
 assert.match(dataProviderSource, /livePanelSizes/, "Renderer profile should carry persisted Live Racing panel sizes");
 assert.match(dataProviderSource, /videoQuality/, "Renderer profile should carry persisted Live Racing video quality");
+assert.match(dataProviderSource, /liveCustomLayouts/, "Renderer profile should carry persisted custom Live Racing layouts");
 assert.match(dataProviderSource, /persisted\.livePanelSizes\s*!=\s*null[\s\S]*local\.livePanelSizes/, "Renderer profile merge should not let persisted null panel sizes wipe local Live Racing sizes");
 assert.match(dataProviderSource, /persisted\.videoQuality\s*!=\s*null[\s\S]*local\.videoQuality/, "Renderer profile merge should not let missing persisted video quality wipe local Settings quality");
+assert.match(dataProviderSource, /persisted\.liveCustomLayouts\s*!=\s*null[\s\S]*local\.liveCustomLayouts/, "Renderer profile merge should not let missing persisted custom layouts wipe local Live Racing layouts");
 assert.match(dataProviderSource, /incoming\?\.standings\?\.length \? incoming\.standings : base\?\.standings/, "Renderer live-data merge should preserve previous standings when a refresh source returns no rows");
 assert.match(dataProviderSource, /incoming\?\.constructors\?\.length \? mergeRowsByKey\(base\?\.constructors, incoming\.constructors, "abbr"\) : \(base\?\.constructors/, "Renderer live-data merge should preserve previous constructor standings when a refresh source returns no rows");
 assert.match(dataProviderSource, /incoming\?\.schedule\?\.length \? incoming\.schedule : base\?\.schedule/, "Renderer live-data merge should preserve previous schedule when a refresh source returns no rows");
@@ -2077,6 +2086,7 @@ const liveCustomLayoutSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(source["LiveRacing.jsx"], "applyCustomDrag")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "snapCustomEdge")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "snapCustomTileGeometry")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "resolveCustomOnboardCode")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "normalizeCustomTileSource")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "customTileSourceKey")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "customPaneIdForSource")}
@@ -2086,7 +2096,7 @@ const liveCustomLayoutSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(source["LiveRacing.jsx"], "nextCustomLayoutName")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "defaultCustomTileRect")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "channelDisplayName")}
-  return { applyCustomDrag, channelDisplayName, clampCustomTickerHeight, clampCustomTickerRows, clampCustomTileGeometry, customLayoutIdFromPreset, customLayoutPresetId, customPaneIdForSource, customTileCollides, customTileSourceKey, customTilesOverlap, defaultCustomTileRect, nextCustomLayoutName, normalizeCustomLayouts, normalizeCustomTileSource, snapCustomTileGeometry };
+  return { applyCustomDrag, channelDisplayName, clampCustomTickerHeight, clampCustomTickerRows, clampCustomTileGeometry, customLayoutIdFromPreset, customLayoutPresetId, customPaneIdForSource, customTileCollides, customTileSourceKey, customTilesOverlap, defaultCustomTileRect, nextCustomLayoutName, normalizeCustomLayouts, normalizeCustomTileSource, resolveCustomOnboardCode, snapCustomTileGeometry };
 })()`);
 const cloneVmValue = (value) => JSON.parse(JSON.stringify(value));
 assert.deepEqual(
@@ -2140,6 +2150,20 @@ assert.equal(liveCustomLayoutSandbox.customPaneIdForSource({ type: "onboard", co
 assert.equal(liveCustomLayoutSandbox.customPaneIdForSource({ type: "channel", feedId: "PIT" }), "CHANNEL-PIT", "Channel tiles should get a channel pane id");
 assert.equal(liveCustomLayoutSandbox.customPaneIdForSource({ type: "timing" }), "TIMING", "Timing tiles should get the timing pane id");
 assert.equal(liveCustomLayoutSandbox.customTileSourceKey({ type: "channel", feedId: "PIT" }), "channel:PIT", "Source keys should be stable per source");
+assert.deepEqual(cloneVmValue(liveCustomLayoutSandbox.normalizeCustomTileSource({ type: "smart-onboard", mode: "leader" })), { type: "smart-onboard", mode: "leader" }, "Custom layouts should accept dynamic leader onboard sources");
+assert.equal(liveCustomLayoutSandbox.customTileSourceKey({ type: "smart-onboard", mode: "favorite1" }), "smart-onboard:favorite1", "Dynamic onboard source keys should be stable by mode");
+assert.equal(liveCustomLayoutSandbox.customPaneIdForSource({ type: "smart-onboard", mode: "leader" }), "SMART-ONBOARD-leader", "Dynamic onboard tiles should get a pane id separate from fixed driver tiles");
+const smartContext = {
+  timingRows: [{ code: "VER", pos: 1 }, { code: "NOR", pos: 2 }, { code: "PIA", pos: 3 }],
+  standings: [{ code: "LEC" }],
+  drivers: [{ code: "VER" }, { code: "NOR" }, { code: "PIA" }],
+  byCode: { VER: {}, NOR: {}, PIA: {}, HAM: {} },
+  profile: { favoriteDrivers: ["NOR", "HAM"] },
+};
+assert.equal(liveCustomLayoutSandbox.resolveCustomOnboardCode({ type: "smart-onboard", mode: "leader" }, smartContext), "VER", "Dynamic leader onboard should follow the timing leader");
+assert.equal(liveCustomLayoutSandbox.resolveCustomOnboardCode({ type: "smart-onboard", mode: "favorite1" }, smartContext), "NOR", "Dynamic favorite onboard should follow the first configured favorite");
+assert.equal(liveCustomLayoutSandbox.resolveCustomOnboardCode({ type: "smart-onboard", mode: "favorite2" }, smartContext), "HAM", "Dynamic second favorite onboard should follow the second configured favorite");
+assert.equal(liveCustomLayoutSandbox.resolveCustomOnboardCode({ type: "smart-onboard", mode: "battle-secondary" }, smartContext), "NOR", "Dynamic battle secondary should prefer the first favorite that is not the leader");
 assert.equal(liveCustomLayoutSandbox.customLayoutIdFromPreset(liveCustomLayoutSandbox.customLayoutPresetId("cl-9")), "cl-9", "Custom preset ids should round-trip the layout id");
 assert.equal(liveCustomLayoutSandbox.customLayoutIdFromPreset("Intelligent"), "", "Built-in presets should not parse as custom layout ids");
 const normalizedCustom = cloneVmValue(liveCustomLayoutSandbox.normalizeCustomLayouts({
@@ -2170,6 +2194,16 @@ assert.deepEqual(
   { x: 0, y: 32, w: 32, h: 32 },
   "New custom tiles should take the first free spot below occupied rows"
 );
+assert.deepEqual(
+  cloneVmValue(liveCustomLayoutSandbox.defaultCustomTileRect([{ x: 0, y: 0, w: 80, h: 100 }])),
+  { x: 80, y: 0, w: 20, h: 32 },
+  "New custom tiles should shrink to fit a narrow open strip instead of failing to add"
+);
+assert.deepEqual(
+  cloneVmValue(liveCustomLayoutSandbox.defaultCustomTileRect([{ x: 0, y: 0, w: 100, h: 80 }])),
+  { x: 0, y: 80, w: 32, h: 20 },
+  "New custom tiles should shrink to fit a shallow open strip instead of failing to add"
+);
 assert.match(source["LiveRacing.jsx"], /useState\(readCustomLayouts\)/, "Live Racing should initialize custom layouts from storage");
 assert.match(source["LiveRacing.jsx"], /localStorage\.setItem\(CUSTOM_LAYOUT_STORAGE_KEY/, "Custom layouts should persist to localStorage on change");
 assert.match(source["LiveRacing.jsx"], /liveCustomLayouts: normalized/, "Custom layouts should mirror to the pitwall profile like panel sizes");
@@ -2185,6 +2219,7 @@ assert.match(source["LiveRacing.jsx"], /\.live__body\[data-layout="custom"\] \{ 
 assert.match(source["LiveRacing.jsx"], /\.custom-canvas \{[^}]*position: relative;[^}]*background: #000/, "Custom canvas should be a relative black stage for free tile placement");
 assert.match(source["LiveRacing.jsx"], /\.custom-tile \{[^}]*position: absolute/, "Custom tiles should be absolutely positioned");
 assert.match(source["LiveRacing.jsx"], /\.custom-tile__handle--se \{[^}]*cursor: nwse-resize/, "Custom tiles should expose corner resize handles");
+assert.match(source["LiveRacing.jsx"], /\.custom-tile__handle \{[^}]*z-index: [78]/, "Custom tile resize handles should sit above the drag header so top handles receive pointer events");
 assert.match(source["LiveRacing.jsx"], /\.custom-picker \{[^}]*z-index/, "Custom feed picker should overlay the canvas");
 assert.match(source["LiveRacing.jsx"], /function customTilePane/, "Custom layout tiles should convert to live panes");
 assert.match(source["LiveRacing.jsx"], /paneId: pane\.paneId \|\| \(pane\.broadcast \? "WORLD" : `DRIVER-\$\{pane\.code\}`\)/, "Pane id mapping should respect precomputed custom pane ids");
@@ -2201,6 +2236,10 @@ assert.match(source["LiveRacing.jsx"], /snapCustomTileGeometry\(proposed, others
 assert.match(source["LiveRacing.jsx"], /if \(!customTileCollides\(next, others\)\) lastValid = next/, "Custom tile drags should reject geometry that overlaps another tile");
 assert.match(source["LiveRacing.jsx"], /function renderCustomFeedPicker/, "Custom mode should offer a grouped feed picker");
 assert.match(source["LiveRacing.jsx"], /\{ group: "Channels"/, "Feed picker should group F1 TV channels");
+assert.match(source["LiveRacing.jsx"], /\{ group: "Intelligent onboards"/, "Feed picker should offer intelligent dynamic onboard sources");
+assert.match(source["LiveRacing.jsx"], /label: "Battle"[\s\S]*sources: \[[\s\S]*battle-secondary/, "Feed picker battle option should add two intelligent onboard tiles");
+assert.match(source["LiveRacing.jsx"], /function addCustomTiles/, "Custom layouts should support adding multiple feeds from one picker item");
+assert.match(source["LiveRacing.jsx"], /addCustomTiles\(activeCustomLayout\.id, item\.sources \|\| \[item\.source\]\)/, "The custom feed picker should add multi-source intelligent items");
 assert.match(source["LiveRacing.jsx"], /\{ group: "Onboards"/, "Feed picker should group driver onboards");
 assert.match(source["LiveRacing.jsx"], /\{ group: "App panels"/, "Feed picker should offer app panels like the timing tower");
 assert.match(source["LiveRacing.jsx"], /\{layout !== "focus" && layout !== "custom" && layout !== "theater" && renderInsightsPane\(\)\}/, "Custom and theater layouts should not render the insights strip");
@@ -2350,6 +2389,18 @@ const onboardResolutionSandbox = vm.runInNewContext(`(() => {
   let resolvedF1TvContent = { feeds: [] };
   let timingRows = [];
   let fallbackCodes = [];
+  const D = {
+    byCode: {
+      ALB: { code: "ALB", name: "Alexander Albon" },
+      NOR: { code: "NOR", name: "Lando Norris" },
+      VER: { code: "VER", name: "Max Verstappen" },
+    },
+    drivers: [
+      { code: "ALB", name: "Alexander Albon" },
+      { code: "NOR", name: "Lando Norris" },
+      { code: "VER", name: "Max Verstappen" },
+    ],
+  };
   ${extractNamedFunction(source["LiveRacing.jsx"], "preferredMainF1TvFeed")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "resolvedOnboardFeedForCode")}
   function resolve(feeds, code, rows = [], fallbacks = []) {
@@ -2405,6 +2456,14 @@ assert.equal(
   ], "ALB")?.driverCode,
   "ALB",
   "Onboard resolver should keep exact driver-tagged F1 TV feeds available"
+);
+assert.equal(
+  onboardResolutionSandbox.resolve([
+    { feedId: "WORLD", kind: "world", label: "F1 Live" },
+    { feedId: "1007", kind: "feed", title: "Lando Norris", label: "channelName:Lando Norris" },
+  ], "NOR")?.feedId,
+  "1007",
+  "Onboard resolver should attach numbered F1 TV onboard feeds when metadata names the driver"
 );
 assert.equal(
   onboardResolutionSandbox.resolve([

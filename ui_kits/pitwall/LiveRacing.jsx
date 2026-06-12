@@ -11,6 +11,9 @@
   const TIMING_ROW_MOTION_MS = 280;
   const AI_INSIGHT_INTERVAL_MS = 2 * 60 * 1000;
   const AI_INSIGHT_HISTORY_LIMIT = 8;
+  const AI_INSIGHT_RECENT_LIMIT = 6;
+  const AI_INSIGHT_EVENT_POLL_MS = 5 * 1000;
+  const AI_INSIGHT_EVENT_SPACING_MS = 30 * 1000;
   const PLAYBACK_PROFILES = {
     main: { bufferGoal: 18, replayBufferGoal: 30, backBufferLength: 18 },
     onboard: { maxHeight: 540, maxBandwidth: 2500000, bufferGoal: 10, replayBufferGoal: 18, backBufferLength: 8 },
@@ -39,9 +42,10 @@
     let el = document.getElementById(STYLE_ID);
     if (!el) { el = document.createElement("style"); el.id = STYLE_ID; document.head.appendChild(el); }
     el.textContent = `
-    .live { position: relative; display: flex; flex-direction: column; height: 100vh; background: var(--bg-app); color: var(--text-primary); font-family: var(--font-sans); overflow: hidden; }
+    .live { --live-window-controls-space: 96px; position: relative; display: flex; flex-direction: column; height: 100vh; background: var(--bg-app); color: var(--text-primary); font-family: var(--font-sans); overflow: hidden; }
+    .live--fullscreen { --live-window-controls-space: 0px; }
     /* Window title bar */
-    .live__bar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; column-gap: var(--space-7); height: 48px; padding: 0 var(--space-7); background: var(--bg-base); border-bottom: 1px solid var(--border-subtle); flex: none; -webkit-app-region: drag; }
+    .live__bar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; column-gap: var(--space-7); height: 48px; padding: 0 var(--space-7) 0 max(var(--live-window-controls-space), var(--space-7)); background: var(--bg-base); border-bottom: 1px solid var(--border-subtle); flex: none; -webkit-app-region: drag; }
     .live__bar :is(button, select, input, a, [role="button"], .live__traffic, .preset-select-wrap, .live__syncwrap) { -webkit-app-region: no-drag; }
     .live__barleft { display: flex; align-items: center; gap: var(--space-7); min-width: 0; }
     .live__traffic { display: none; gap: 8px; flex: none; }
@@ -224,7 +228,7 @@
     .custom-feedticker__grid { display: grid; height: 100%; gap: 0; }
     .custom-feedticker__grid .tick { height: 100%; min-height: 0; border-bottom: 1px solid var(--border-subtle); }
     .custom-feedticker__grid .tick:nth-child(5n) { border-right: 0; }
-    .custom-tile__handle { position: absolute; z-index: 5; }
+    .custom-tile__handle { position: absolute; z-index: 7; }
     .custom-tile__handle--n { top: -3px; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
     .custom-tile__handle--s { bottom: -3px; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
     .custom-tile__handle--e { right: -3px; top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
@@ -366,7 +370,7 @@
     .obE__pedals .thr { position: absolute; left: 0; bottom: 0; height: 100%; background: linear-gradient(90deg, color-mix(in srgb, var(--throttle) 55%, #000), var(--throttle)); box-shadow: 0 0 calc(var(--u) * 0.7) rgba(43,208,122,0.5); transition: width 90ms linear; }
     .obE__pedals .brk { position: absolute; left: 0; bottom: 0; height: 100%; background: linear-gradient(90deg, color-mix(in srgb, var(--brake) 60%, #000), var(--brake)); box-shadow: 0 0 calc(var(--u) * 0.7) rgba(255,59,59,0.55); transition: width 70ms linear; }
     @media (max-width: 1600px) {
-      .live__bar { grid-template-columns: minmax(0, 1fr) auto auto; column-gap: var(--space-4); padding: 0 var(--space-5); }
+      .live__bar { grid-template-columns: minmax(0, 1fr) auto auto; column-gap: var(--space-4); padding: 0 var(--space-5) 0 max(var(--live-window-controls-space), var(--space-5)); }
       .live__barleft { gap: var(--space-5); }
       .live__brand { font-size: 14px; }
       .live__race { gap: var(--space-4); }
@@ -410,6 +414,9 @@
     }
     .pane__controls { position: absolute; top: var(--space-5); right: var(--space-6); z-index: 5; display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity var(--dur-fast) var(--ease-standard); }
     .pane:not(.pane--bc) .pane__controls { top: auto; bottom: var(--space-5); }
+    /* F1 TV feed in a custom tile: drop the volume/16:9 controls to the bottom-right, above the scrub bar, instead of over the top of the feed. */
+    .custom-tile .pane--bc .pane__controls { top: auto; bottom: var(--space-5); }
+    .custom-tile .pane--bc[data-replay="true"] .pane__controls { bottom: calc(var(--space-4) + 58px); }
     .pane__controls .pane__driverselect { opacity: 1; pointer-events: auto; }
     .pane:hover .pane__controls, .pane:focus-within .pane__controls { opacity: 1; }
     .pane__ctl { appearance: none; -webkit-appearance: none; display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border-radius: var(--radius-xs); background: var(--scrim); backdrop-filter: blur(6px); color: var(--text-secondary); cursor: pointer; border: 1px solid var(--border-default); }
@@ -616,41 +623,79 @@
     .session-library--inline { position: relative; inset: auto; z-index: 2; width: 100%; height: 100%; padding: 0; background: transparent; backdrop-filter: none; }
     .session-library--inline .session-library__panel { width: 100%; height: 100%; border-radius: 0; border: 0; box-shadow: none; }
     .session-library--inline .session-library__close { display: none; }
-    .session-library__head { display: flex; align-items: center; gap: var(--space-7); padding: var(--space-7) var(--space-8); border-bottom: 1px solid var(--border-subtle); }
-    .session-library__glyph { display: inline-grid; place-items: center; width: 46px; height: 46px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent) 18%, var(--bg-sunken)); color: var(--accent); flex: none; }
-    .session-library__title { margin: 0; font-family: var(--font-display); font-size: 24px; line-height: 1; font-weight: 900; color: var(--text-strong); }
-    .session-library__sub { margin-top: 8px; color: var(--text-tertiary); font-size: var(--text-md); }
-    .session-library__close { margin-left: auto; }
-    .session-library__body { display: grid; grid-template-columns: 320px minmax(0, 1fr); min-height: 0; }
-    .session-library__rail { display: flex; flex-direction: column; gap: var(--space-5); padding: var(--space-8) var(--space-6); border-right: 1px solid var(--border-subtle); background: rgba(3,5,9,0.54); overflow-y: auto; }
-    .session-library__eyebrow { color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 800; text-transform: uppercase; letter-spacing: var(--tracking-caps); }
-    .session-library__race { appearance: none; -webkit-appearance: none; display: grid; gap: var(--space-3); padding: var(--space-6); border-radius: var(--radius-sm); border: 1px solid transparent; background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; }
-    .session-library__race:hover { background: var(--surface-hover); color: var(--text-primary); }
-    .session-library__race[data-active="true"] { background: color-mix(in srgb, var(--accent) 16%, var(--bg-sunken)); border-color: var(--accent-border); color: var(--text-primary); box-shadow: inset 3px 0 0 var(--accent); }
-    .session-library__race-top { display: flex; align-items: center; gap: var(--space-5); color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-sm); }
-    .session-library__race-name { color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-lg); font-weight: 900; line-height: 1.12; }
-    .session-library__race-meta { display: flex; align-items: center; gap: var(--space-4); min-width: 0; color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 800; text-transform: uppercase; letter-spacing: 0; }
-    .session-library__content { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-    .session-library__summary { display: flex; align-items: center; gap: var(--space-5); padding: var(--space-8); border-bottom: 1px solid var(--border-subtle); }
-    .session-library__summary h3 { margin: 0; color: var(--text-strong); font-family: var(--font-display); font-size: 26px; line-height: 1; font-weight: 900; }
-    .session-library__summary p { margin: var(--space-4) 0 0; color: var(--text-tertiary); font-size: var(--text-md); }
-    .session-library__count { margin-left: auto; color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-sm); white-space: nowrap; }
-    .session-library__rows { display: flex; flex-direction: column; gap: var(--space-5); padding: var(--space-7); overflow-y: auto; }
-    .session-library__row { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; align-items: center; gap: var(--space-7); min-height: 78px; padding: var(--space-6); border-radius: var(--radius-md); border: 1px solid var(--border-default); background: var(--surface-card); color: var(--text-primary); }
-    .session-library__row[data-active="true"] { border-color: var(--accent-border); background: color-mix(in srgb, var(--accent) 14%, var(--surface-card)); }
-    .session-library__row[data-available="false"] { opacity: 0.58; }
-    .session-library__code { display: inline-grid; place-items: center; width: 48px; height: 48px; border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--accent); font-family: var(--font-display); font-weight: 900; font-size: var(--text-sm); }
-    .session-library__kind { font-family: var(--font-display); font-weight: 900; font-size: var(--text-lg); color: var(--text-primary); }
-    .session-library__when { display: flex; align-items: center; gap: var(--space-4); margin-top: 7px; color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-sm); }
+    .session-library__head { display: flex; align-items: center; gap: var(--space-6); padding: var(--space-7) var(--space-8); border-bottom: 1px solid var(--border-subtle); background: linear-gradient(180deg, rgba(20,26,36,0.55), transparent); }
+    .session-library__glyph { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent) 18%, var(--bg-sunken)); color: var(--accent); flex: none; }
+    .session-library__title { margin: 0; font-family: var(--font-display); font-size: 23px; line-height: 1; font-weight: 900; color: var(--text-strong); }
+    .session-library__sub { margin-top: 7px; color: var(--text-tertiary); font-size: var(--text-sm); }
+    .session-library__tools { margin-left: auto; display: flex; align-items: center; gap: var(--space-5); }
+    .session-library__season { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-default); background: var(--surface-raised); color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--text-sm); font-weight: 700; }
+    .session-library__season b { color: var(--text-primary); }
+    .session-library--inline .session-library__close { display: none; }
+
+    /* ===== Direction 03 — The Season (spine) ===== */
+    .session-library__season-scroll { min-height: 0; overflow-y: auto; padding: var(--space-8) var(--space-9); }
+    .session-library--inline .session-library__season-scroll { padding: var(--space-7); }
+    .session-library__spine { position: relative; padding-left: 40px; display: flex; flex-direction: column; gap: var(--space-5); }
+    .session-library__spine::before { content: ""; position: absolute; left: 13px; top: 12px; bottom: 12px; width: 2px; background: linear-gradient(180deg, var(--border-subtle), var(--accent) 26%, var(--accent) 52%, var(--border-subtle)); }
+    .slr { position: relative; }
+    .slr__node { position: absolute; left: -33px; top: 22px; width: 14px; height: 14px; border-radius: 50%; background: var(--bg-app); border: 2px solid var(--ink-500); z-index: 1; }
+    .slr[data-state="done"] .slr__node { border-color: var(--success); background: var(--success); }
+    .slr[data-state="live"] .slr__node { border-color: var(--live); background: var(--live); box-shadow: 0 0 0 5px var(--live-weak); }
+    .slr[data-state="next"] .slr__node { border-color: var(--accent); }
+    .slr--open .slr__node { top: 30px; }
+    .slr__row { appearance: none; -webkit-appearance: none; width: 100%; display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: var(--space-6); padding: var(--space-5) var(--space-6); border-radius: var(--radius-md); border: 1px solid var(--border-subtle); background: var(--surface-card); color: var(--text-primary); text-align: left; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+    .slr__row:hover { border-color: var(--accent-border); background: var(--surface-hover); }
+    .slr[data-state="done"] .slr__row { background: rgba(255,255,255,0.015); }
+    .slr[data-state="upcoming"] .slr__row { opacity: 0.55; }
+    .slr__rnd { font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: var(--text-tertiary); text-align: center; }
+    .slr__main { min-width: 0; }
+    .slr__name { display: block; font-family: var(--font-display); font-weight: 800; font-size: var(--text-lg); color: var(--text-primary); line-height: 1.1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .slr__meta { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 5px; font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); }
+    .slr__cta { display: inline-flex; align-items: center; gap: 6px; color: var(--text-tertiary); font-family: var(--font-sans); font-size: var(--text-sm); font-weight: 700; white-space: nowrap; }
+
+    .slr__chip { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 9px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; }
+    .slr__chip--live { color: #fff; background: var(--live); box-shadow: var(--glow-live); }
+    .slr__chip--live i { width: 6px; height: 6px; border-radius: 50%; background: #fff; }
+    .slr__chip--done { color: var(--success); background: var(--success-quiet); }
+    .slr__chip--soon { color: var(--warning); background: var(--warning-quiet); }
+
+    .slr__expand { position: relative; border-radius: var(--radius-lg); border: 1px solid var(--accent-border); background: linear-gradient(180deg, rgba(20,28,42,0.7), rgba(8,12,20,0.7)); box-shadow: var(--glow-soft); overflow: hidden; }
+    .slr--open[data-state="live"] .slr__expand { border-color: rgba(255,59,59,0.4); box-shadow: var(--glow-live); }
+    .slr__exhead { position: relative; overflow: hidden; display: flex; align-items: center; gap: var(--space-6); padding: var(--space-7); border-bottom: 1px solid var(--border-subtle); }
+    .slr__exhead > :not(.slr__map) { position: relative; z-index: 1; }
+    .slr__map { position: absolute; right: -20px; top: -30px; width: 200px; height: 170px; color: var(--accent); opacity: 0.18; pointer-events: none; z-index: 0; }
+    .slr__map svg { display: block; width: 100%; height: 100%; }
+    .slr__map path { fill: none; }
+    .slr__code { display: inline-grid; place-items: center; width: 52px; height: 52px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent) 16%, var(--bg-sunken)); border: 1px solid var(--accent-border); color: var(--accent); font-family: var(--font-display); font-weight: 900; font-size: 13px; flex: none; }
+    .slr--open[data-state="live"] .slr__code { background: color-mix(in srgb, var(--live) 18%, var(--bg-sunken)); border-color: rgba(255,59,59,0.4); color: #ff8a8a; }
+    .slr__exname { display: block; font-family: var(--font-display); font-weight: 900; font-size: 23px; color: var(--text-strong); line-height: 1; }
+    .slr__exmeta { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); margin-top: 6px; }
+    .slr__exstatus { margin-left: auto; display: inline-flex; align-items: center; gap: var(--space-5); }
+    .slr__exstatus .session-library__count { color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-sm); white-space: nowrap; }
+    .slr__metatext { min-width: 0; }
+    .slr__drv { display: inline-flex; align-items: center; gap: 5px; vertical-align: middle; font-family: var(--font-display); font-weight: 800; font-size: 11px; color: var(--text-secondary); }
+    .slr__drv i { width: 4px; height: 12px; border-radius: 2px; background: var(--tc, var(--accent)); flex: none; }
+    .slr__drv--chip { color: inherit; }
+    .slr__drv--chip i { height: 10px; }
+    .slr__grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--border-subtle); }
+    .slr-cell { background: var(--bg-base); padding: var(--space-6); display: flex; flex-direction: column; gap: 10px; min-height: 118px; }
+    .slr-cell[data-live="true"] { background: linear-gradient(180deg, rgba(255,59,59,0.12), transparent); }
+    .slr-cell[data-available="false"] { opacity: 0.6; }
+    .slr-cell__nm { font-family: var(--font-display); font-weight: 800; font-size: var(--text-md); color: var(--text-primary); }
+    .slr-cell[data-live="true"] .slr-cell__nm { color: #ff8a8a; }
+    .slr-cell__mt { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); line-height: 1.4; }
+    .slr-cell__btn { margin-top: auto; }
+    .slr-cell__btn > button { width: 100%; }
     .session-library__empty { margin: var(--space-8); color: var(--text-tertiary); font-size: var(--text-sm); }
     @media (max-width: 860px) {
       .session-library { padding: 12px; }
       .session-library__panel { width: calc(100vw - 24px); height: calc(100vh - 24px); grid-template-rows: auto minmax(0, 1fr); }
-      .session-library__head { padding: var(--space-6); }
-      .session-library__body { grid-template-columns: 1fr; }
-      .session-library__rail { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--border-subtle); }
-      .session-library__row { grid-template-columns: 48px minmax(0, 1fr); }
-      .session-library__row > button { grid-column: 1 / -1; justify-self: stretch; }
+      .session-library__head { padding: var(--space-6); flex-wrap: wrap; }
+      .session-library__season-scroll { padding: var(--space-6); }
+      .session-library__spine { padding-left: 28px; }
+      .slr__node { left: -25px; }
+      .slr__grid { grid-template-columns: repeat(2, 1fr); }
+      .slr__cta { display: none; }
     }
     .stream-modal__hd { display: flex; align-items: center; gap: var(--space-5); padding: var(--space-7) var(--space-8); border-bottom: 1px solid var(--border-subtle); }
     .stream-modal__title { font-family: var(--font-display); font-weight: 700; color: var(--text-primary); font-size: var(--text-lg); }
@@ -1000,7 +1045,7 @@
   }
   function buildActiveAiSnapshot(options) {
     options = options || {};
-    const { mode = "live", timingRows = [], baseData = {}, sourceLabel = "", weather = {}, sessionClock = null, replay = null } = options;
+    const { mode = "live", timingRows = [], baseData = {}, sourceLabel = "", weather = {}, sessionClock = null, replay = null, raceControl = [] } = options;
     const battlePairs = buildActiveBattlePairs(timingRows);
     return {
       mode,
@@ -1015,6 +1060,7 @@
       weather,
       sessionClock,
       replay: mode === "replay" ? replay : null,
+      raceControl: Array.isArray(raceControl) ? raceControl.slice(-8) : [],
       news: (baseData.news || []).slice(0, 8),
       source: sourceLabel,
     };
@@ -1025,6 +1071,16 @@
     const replayElapsed = telemetryNumber(snapshot.replay?.elapsedSeconds);
     const lapCount = snapshot.sessionClock?.lapCount || {};
     const timingRows = Array.isArray(snapshot.timing) ? snapshot.timing : [];
+    const battles = (snapshot.battlePairs || []).slice(0, 3).map((pair) => ({
+      title: pair.title || "",
+      a: pair.a || "",
+      b: pair.b || "",
+      gap: pair.gap || "",
+      body: pair.body || "",
+    }));
+    const battleCodes = new Set(battles.flatMap((pair) => [pair.a, pair.b]).filter(Boolean));
+    const insightTimingRows = timingRows.slice(0, 10)
+      .concat(timingRows.slice(10).filter((row) => row?.code && battleCodes.has(row.code)));
     return {
       mode,
       capturedAtMs,
@@ -1052,7 +1108,7 @@
         sessionKind: snapshot.replay?.sessionKind || "",
         raceName: snapshot.replay?.raceName || "",
       } : null,
-      timing: timingRows.slice(0, 10).map((row) => ({
+      timing: insightTimingRows.map((row) => ({
         pos: row.pos,
         code: row.code,
         gap: row.gap || "",
@@ -1063,12 +1119,12 @@
         last: row.last || "",
         best: row.best || "",
       })),
-      battles: (snapshot.battlePairs || []).slice(0, 3).map((pair) => ({
-        title: pair.title || "",
-        a: pair.a || "",
-        b: pair.b || "",
-        gap: pair.gap || "",
-        body: pair.body || "",
+      battles,
+      raceControl: (Array.isArray(snapshot.raceControl) ? snapshot.raceControl : []).slice(-5).map((message) => ({
+        lap: message.lap ?? "",
+        utc: message.utc || "",
+        tag: message.status || message.category || "",
+        text: message.text || "",
       })),
     };
   }
@@ -1100,13 +1156,15 @@
     if (!body) return null;
     const text = `${rawTitle} ${body}`.toLowerCase();
     const rawKind = String(alert?.kind || "").toLowerCase();
-    const kind = rawKind === "battle" || /gap|drs|pressure|attack|defend|battle|traffic/.test(text)
-      ? "battle"
-      : rawKind === "strategy" || /pit|stop|tyre|tire|compound|undercut|overcut|stint/.test(text)
-        ? "strategy"
-        : "track";
+    const kind = rawKind === "battle" || rawKind === "strategy" || rawKind === "track"
+      ? rawKind
+      : /gap|drs|pressure|attack|defend|battle|traffic/.test(text)
+        ? "battle"
+        : /pit|stop|tyre|tire|compound|undercut|overcut|stint/.test(text)
+          ? "strategy"
+          : "track";
     const confidence = telemetryNumber(alert?.confidence ?? alert?.conf ?? answer?.confidence);
-    const conf = confidence == null ? 0.76 : Math.max(0.52, Math.min(0.94, confidence > 1 ? confidence / 100 : confidence));
+    const conf = confidence == null ? null : Math.max(0.52, Math.min(0.94, confidence > 1 ? confidence / 100 : confidence));
     return {
       kind,
       title: rawTitle.slice(0, 72),
@@ -1117,21 +1175,23 @@
       replayElapsedSeconds: context.mode === "replay" ? telemetryNumber(context.replayElapsedSeconds) : null,
     };
   }
-  function activeAiInsightPayload(current, history) {
+  function activeAiInsightPayload(current, history, recentInsights) {
     const priorSnapshots = (Array.isArray(history) ? history : []).slice(0, -1);
     return {
+      task: "live_racing_insight",
       prompt: [
         "Generate exactly one useful Live Racing AI insight for the visible session.",
         "Find something a viewer would not know from a single timing row by comparing the current situation with priorSnapshots.",
-        "Use gaps, intervals, tyre age, compounds, pit counts, lap-time hints, session clock, track status, weather, and battle candidates when present.",
-        "Do not repeat the running order, generic hype, or obvious facts.",
+        "Use gaps, intervals, tyre age, compounds, pit counts, lap-time hints, session clock, track status, race control messages, weather, and battle candidates when present.",
+        "Do not repeat the running order, generic hype, obvious facts, or anything already covered by recentInsights.",
         "Do not use future replay knowledge; in replay mode, replay.elapsedSeconds is the hard knowledge boundary.",
-        "Return JSON in the configured schema with one alert in alerts[0]; set its kind to battle, strategy, or track.",
+        "Return JSON in the configured schema: title, body, kind (battle, strategy, or track), and confidence from 0 to 1.",
       ].join(" "),
       snapshot: {
         purpose: "live_racing_auto_insight",
         current,
         priorSnapshots,
+        recentInsights: (Array.isArray(recentInsights) ? recentInsights : []).map((item) => ({ title: item.title, body: item.body })),
       },
       presentation: "single_insight_card",
     };
@@ -1541,10 +1601,44 @@
     }
     return snapped;
   }
+  function resolveCustomOnboardCode(source = {}, context = {}) {
+    const cleanCode = (value) => String(value || "").trim().toUpperCase();
+    const byCode = context.byCode || {};
+    const hasByCode = Boolean(Object.keys(byCode).length);
+    const validCode = (value) => {
+      const code = cleanCode(value);
+      if (!code) return "";
+      return !hasByCode || byCode[code] ? code : "";
+    };
+    const unique = (codes) => {
+      const picked = [];
+      codes.forEach((code) => {
+        const clean = validCode(code);
+        if (clean && !picked.includes(clean)) picked.push(clean);
+      });
+      return picked;
+    };
+    if (source.type === "onboard") return validCode(source.code);
+    if (source.type !== "smart-onboard") return "";
+    const timingCodes = (context.timingRows || []).map((row) => row.code);
+    const standingCodes = (context.standings || []).map((row) => row.code);
+    const driverCodes = (context.drivers || []).map((driver) => driver.code);
+    const fallbackCodes = unique([context.selectedCode, ...(context.fallbackCodes || []), ...timingCodes, ...standingCodes, ...driverCodes]);
+    const leader = validCode(context.timingRows?.[0]?.code) || validCode(context.standings?.[0]?.code) || validCode(context.drivers?.[0]?.code) || fallbackCodes[0] || "";
+    const favorites = unique(context.profile?.favoriteDrivers || []);
+    if (source.mode === "leader") return leader;
+    if (source.mode === "favorite1") return favorites[0] || "";
+    if (source.mode === "favorite2") return favorites[1] || "";
+    if (source.mode === "battle-secondary") {
+      return favorites.find((code) => code !== leader) || fallbackCodes.find((code) => code !== leader) || "";
+    }
+    return "";
+  }
   function normalizeCustomTileSource(raw = {}) {
     if (!raw || typeof raw !== "object") return null;
     if (raw.type === "timing") return { type: "timing" };
     if (raw.type === "onboard" && typeof raw.code === "string" && raw.code) return { type: "onboard", code: raw.code };
+    if (raw.type === "smart-onboard" && ["leader", "favorite1", "favorite2", "battle-secondary"].includes(raw.mode)) return { type: "smart-onboard", mode: raw.mode };
     if (raw.type === "channel" && typeof raw.feedId === "string" && raw.feedId) return { type: "channel", feedId: raw.feedId };
     return null;
   }
@@ -1552,6 +1646,7 @@
     if (!source) return "";
     if (source.type === "timing") return "timing";
     if (source.type === "onboard") return "onboard:" + source.code;
+    if (source.type === "smart-onboard") return "smart-onboard:" + source.mode;
     if (source.type === "channel") return "channel:" + source.feedId;
     return "";
   }
@@ -1559,6 +1654,7 @@
     if (!source) return "";
     if (source.type === "timing") return "TIMING";
     if (source.type === "onboard") return "DRIVER-" + source.code;
+    if (source.type === "smart-onboard") return "SMART-ONBOARD-" + source.mode;
     if (source.type === "channel") return "CHANNEL-" + source.feedId;
     return "";
   }
@@ -1594,12 +1690,18 @@
     return candidate;
   }
   function defaultCustomTileRect(existingTiles = []) {
-    const w = 32;
-    const h = 32;
-    for (let y = 0; y + h <= 100; y += 4) {
-      for (let x = 0; x + w <= 100; x += 4) {
-        const rect = clampCustomTileGeometry({ x, y, w, h });
-        if (!customTileCollides(rect, existingTiles)) return rect;
+    const standard = 32;
+    const sizes = [];
+    for (let size = standard; size >= CUSTOM_TILE_MIN_PCT; size -= 4) sizes.push(size);
+    const candidates = [{ w: standard, h: standard }]
+      .concat(sizes.flatMap((w) => sizes.map((h) => ({ w, h }))).filter((rect) => rect.w !== standard || rect.h !== standard)
+        .sort((a, b) => (b.w * b.h) - (a.w * a.h)));
+    for (const candidate of candidates) {
+      for (let y = 0; y + candidate.h <= 100; y += 4) {
+        for (let x = 0; x + candidate.w <= 100; x += 4) {
+          const rect = clampCustomTileGeometry({ x, y, w: candidate.w, h: candidate.h });
+          if (!customTileCollides(rect, existingTiles)) return rect;
+        }
       }
     }
     return null;
@@ -1990,18 +2092,6 @@
         .map((race, index) => ({ ...race, rnd: index + 1 })),
     };
   }
-  function sessionShortCode(kind) {
-    const text = String(kind || "").toLowerCase();
-    if (text.includes("practice 1")) return "FP1";
-    if (text.includes("practice 2")) return "FP2";
-    if (text.includes("practice 3")) return "FP3";
-    if (text.includes("sprint qualifying")) return "SQ";
-    if (text.includes("shootout")) return "SQ";
-    if (text.includes("sprint")) return "SPR";
-    if (text.includes("qualifying")) return "QUAL";
-    if (text.includes("race")) return "RACE";
-    return String(kind || "SES").slice(0, 4).toUpperCase();
-  }
   function normalizeF1TvSessionKind(kind) {
     const text = String(kind || "").toLowerCase();
     if (text.includes("sprint qualifying") || text.includes("sprint shootout") || text === "shootout") return "Sprint Qualifying";
@@ -2042,6 +2132,70 @@
   function racePlace(race) {
     const loc = String(race?.loc || "").split(",")[0].trim();
     return loc || race?.circuit || "";
+  }
+  function compactRaceName(value) {
+    return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  }
+  // Resolve a winner display string (usually a full name) to a 3-letter driver code using the
+  // already-loaded driver list (window.PW_DATA.drivers) — no extra lookup or network call.
+  function driverCodeFromLabel(label) {
+    const text = String(label || "").trim();
+    if (!text) return "";
+    if (/^[A-Z]{3}$/.test(text)) return text;
+    const norm = (value) => String(value || "").toLowerCase().replace(/[^a-z]/g, "");
+    const drivers = D.drivers || [];
+    const full = norm(text);
+    const surname = norm(text.split(/\s+/).pop());
+    const hit = drivers.find((d) => norm(d.name) === full)
+      || (surname && drivers.find((d) => norm(d.name).endsWith(surname)))
+      || null;
+    return hit?.code || text;
+  }
+  // The race winner comes from the same snapshot the Schedule tab reads (window.PW_DATA.schedule),
+  // which Electron fetches once and caches (raceWinnerCache + disk snapshot, ~30 min). The F1 TV
+  // library that powers the Session Library carries no winner field, so we map each library round
+  // back to its schedule row here instead of triggering a separate results call, then shorten the
+  // winner to a driver code for the compact spine layout.
+  function scheduleWinnerLabel(race) {
+    const schedule = D.schedule || [];
+    if (!schedule.length || !race) return "";
+    const meetingKey = String(race.meetingKey || "");
+    const nameKey = compactRaceName(race.name);
+    const rnd = Number(race.rnd || 0);
+    const row = (meetingKey && schedule.find((r) => String(r.meetingKey || "") === meetingKey))
+      || (nameKey && schedule.find((r) => compactRaceName(r.name) === nameKey))
+      || (rnd && schedule.find((r) => Number(r.rnd || 0) === rnd))
+      || null;
+    return row && row.winner ? driverCodeFromLabel(row.winner) : "";
+  }
+  // Team/driver accent colour for a driver code, from the same loaded driver list.
+  function driverColor(code) {
+    if (!code) return "";
+    const driver = (D.byCode && D.byCode[code]) || (D.drivers || []).find((d) => d.code === code) || null;
+    return driver?.color || "";
+  }
+  const GENERIC_CIRCUIT = "M 250 196 C 392 110, 648 108, 786 210 C 894 290, 838 432, 706 476 C 560 524, 520 402, 398 432 C 268 464, 150 432, 152 318 C 153 244, 184 226, 250 196 Z";
+  // Faint circuit silhouette for the expanded round — built from the same real track geometry the
+  // Track Map screen renders (window.PW_TRACKMAP_CIRCUITS), resolved by the circuit's own match
+  // keywords then round, falling back to a generic loop so a map always renders.
+  function circuitSilhouette(race) {
+    const circuits = (typeof window !== "undefined" && window.PW_TRACKMAP_CIRCUITS) || {};
+    const list = Object.keys(circuits).map((key) => circuits[key]);
+    const hay = [race && race.name, race && race.circuit, race && race.loc].filter(Boolean).join(" ").toLowerCase();
+    const entry = (hay && list.find((ci) => (ci.match || []).some((m) => hay.includes(String(m).toLowerCase()))))
+      || (race && race.rnd && list.find((ci) => Number(ci.round) === Number(race.rnd)))
+      || null;
+    const points = entry && Array.isArray(entry.points) ? entry.points : null;
+    if (!points || points.length < 3) return { d: GENERIC_CIRCUIT, viewBox: "0 0 1000 664" };
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [x, y] of points) {
+      if (x < minX) minX = x; if (y < minY) minY = y;
+      if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+    }
+    const d = points.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ") + " Z";
+    const pad = 24;
+    const viewBox = [(minX - pad).toFixed(1), (minY - pad).toFixed(1), (maxX - minX + pad * 2).toFixed(1), (maxY - minY + pad * 2).toFixed(1)].join(" ");
+    return { d, viewBox };
   }
   function debugUrlParts(targetUrl) {
     try {
@@ -2710,7 +2864,7 @@
       onTickerRowsChange?.(clampBroadcastTickerRows(requestedTickerRows + (event.key === "ArrowDown" ? -1 : 1)));
     }
     return (
-      <div ref={paneRef} className="pane pane--bc" data-focus={focus} data-expanded={expanded} data-visible={String(visible)} data-zone={zone} data-lockar={String(Boolean(lockAspect))} data-noticker={String(Boolean(hideBuiltinTicker))} style={paneStyle}
+      <div ref={paneRef} className="pane pane--bc" data-focus={focus} data-expanded={expanded} data-visible={String(visible)} data-zone={zone} data-lockar={String(Boolean(lockAspect))} data-noticker={String(Boolean(hideBuiltinTicker))} data-replay={String(replaySync?.mode === "replay")} style={paneStyle}
         onClick={(event) => {
           if (!descriptor || !isPaneSurfaceClickTarget(event.target)) return;
           onSurfaceToggle?.();
@@ -3115,6 +3269,10 @@
     const latestAiSnapshotRef = React.useRef(null);
     const aiInsightHistoryRef = React.useRef([]);
     const autoAiInFlightRef = React.useRef(false);
+    const aiInsightRecentRef = React.useRef([]);
+    const autoAiBackoffRef = React.useRef({ failures: 0, untilMs: 0 });
+    const autoAiLastRequestRef = React.useRef(0);
+    const autoAiEventSignatureRef = React.useRef(null);
     const [replaySync, setReplaySync] = React.useState({ mode: "live", playing: true, masterTime: 0, duration: 0, masterKey: "WORLD" });
     const [replayTimingData, setReplayTimingData] = React.useState(null);
     const [liveTimingData, setLiveTimingData] = React.useState(null);
@@ -3603,13 +3761,20 @@
       }) }));
     }
     function addCustomTile(layoutId, source) {
-      const normalized = normalizeCustomTileSource(source);
-      if (!normalized) return;
+      addCustomTiles(layoutId, [source]);
+    }
+    function addCustomTiles(layoutId, sources) {
+      const normalizedSources = (Array.isArray(sources) ? sources : [sources]).map(normalizeCustomTileSource).filter(Boolean);
+      if (!normalizedSources.length) return;
       updateCustomLayout(layoutId, (entry) => {
-        if (entry.tiles.some((tile) => customTileSourceKey(tile.source) === customTileSourceKey(normalized))) return entry;
-        const rect = defaultCustomTileRect(entry.tiles);
-        if (!rect) return entry;
-        return { ...entry, tiles: [...entry.tiles, { id: "t-" + Math.random().toString(36).slice(2, 10), source: normalized, ...rect }] };
+        let tiles = entry.tiles;
+        normalizedSources.forEach((normalized) => {
+          if (tiles.some((tile) => customTileSourceKey(tile.source) === customTileSourceKey(normalized))) return;
+          const rect = defaultCustomTileRect(tiles);
+          if (!rect) return;
+          tiles = [...tiles, { id: "t-" + Math.random().toString(36).slice(2, 10), source: normalized, ...rect }];
+        });
+        return tiles === entry.tiles ? entry : { ...entry, tiles };
       });
     }
     function removeCustomTile(layoutId, tileId) {
@@ -4104,6 +4269,7 @@
           sessionKind: f1TvSessionKind,
           raceName: selectedF1TvRace?.name || D.race?.name || "",
         },
+        raceControl: activeRaceControlMessages || [],
       });
     }
 
@@ -4231,6 +4397,10 @@
     React.useEffect(() => {
       aiInsightHistoryRef.current = [];
       autoAiInFlightRef.current = false;
+      aiInsightRecentRef.current = [];
+      autoAiBackoffRef.current = { failures: 0, untilMs: 0 };
+      autoAiLastRequestRef.current = 0;
+      autoAiEventSignatureRef.current = null;
       setAutoAiInsights([]);
     }, [activeAiInsightScopeKey]);
     React.useEffect(() => {
@@ -4242,33 +4412,57 @@
       let cancelled = false;
       const requestAutoAiInsight = async () => {
         if (cancelled || autoAiInFlightRef.current) return;
+        if (Date.now() < autoAiBackoffRef.current.untilMs) return;
         const snapshot = latestAiSnapshotRef.current || activeAiSnapshot();
         if (!hasRealTimingRows(snapshot?.timing)) return;
         const current = compactAiInsightSnapshot(snapshot);
         const history = mergeAiInsightHistory(aiInsightHistoryRef.current, current, AI_INSIGHT_HISTORY_LIMIT);
         aiInsightHistoryRef.current = history;
         autoAiInFlightRef.current = true;
+        autoAiLastRequestRef.current = Date.now();
         try {
-          const answer = await window.pitwall.ai.ask(aiRequestOptions(activeAiInsightPayload(current, history)));
+          const answer = await window.pitwall.ai.ask(aiRequestOptions(activeAiInsightPayload(current, history, aiInsightRecentRef.current)));
           if (cancelled) return;
+          autoAiBackoffRef.current = { failures: 0, untilMs: 0 };
           const card = normalizeAutoAiInsight(answer, { mode: current.mode, capturedAtMs: current.capturedAtMs, replayElapsedSeconds: current.replay?.elapsedSeconds });
           if (!card) return;
+          aiInsightRecentRef.current = [...aiInsightRecentRef.current, { title: card.title, body: card.body }].slice(-AI_INSIGHT_RECENT_LIMIT);
           setAutoAiInsights((items) => {
             const duplicate = items.some((item) => item.title === card.title && item.body === card.body);
             return duplicate ? items : [card, ...items].slice(0, 2);
           });
         } catch (error) {
-          logPitWallDebug("ai.insight-error", { mode: snapshot.mode, message: error?.message || String(error || "") });
+          const failures = autoAiBackoffRef.current.failures + 1;
+          const backoffMs = AI_INSIGHT_INTERVAL_MS * Math.min(2 ** (failures - 1), 8);
+          autoAiBackoffRef.current = { failures, untilMs: Date.now() + backoffMs };
+          logPitWallDebug("ai.insight-error", { mode: snapshot.mode, failures, backoffMs, message: error?.message || String(error || "") });
         } finally {
           autoAiInFlightRef.current = false;
         }
       };
+      const checkInsightEvents = () => {
+        const snapshot = latestAiSnapshotRef.current;
+        if (cancelled || !snapshot || !hasRealTimingRows(snapshot.timing)) return;
+        const timingRows = Array.isArray(snapshot.timing) ? snapshot.timing : [];
+        const signature = [
+          JSON.stringify(snapshot.sessionClock?.trackStatus || ""),
+          timingRows.reduce((total, row) => total + (Number(row?.pits) || 0), 0),
+          timingRows[0]?.code || "",
+        ].join("|");
+        const previous = autoAiEventSignatureRef.current;
+        autoAiEventSignatureRef.current = signature;
+        if (previous == null || previous === signature) return;
+        if (Date.now() - autoAiLastRequestRef.current < AI_INSIGHT_EVENT_SPACING_MS) return;
+        requestAutoAiInsight();
+      };
       requestAutoAiInsight();
       const timer = setInterval(requestAutoAiInsight, AI_INSIGHT_INTERVAL_MS);
+      const eventTimer = setInterval(checkInsightEvents, AI_INSIGHT_EVENT_POLL_MS);
       return () => {
         cancelled = true;
         autoAiInFlightRef.current = false;
         clearInterval(timer);
+        clearInterval(eventTimer);
       };
     }, [connection.aiConfigured, activeAiInsightScopeKey]);
     const sessionClockLabel = sessionClockDisplayLabel(sessionClock, {
@@ -4281,9 +4475,20 @@
     });
     function resolvedOnboardFeedForCode(code) {
       const feeds = resolvedF1TvContent?.feeds || [];
-      if (!code) return null;
-      const exact = feeds.find((feed) => feed.driverCode === code || feed.feedId === code);
-      return exact || null;
+      const requestedCode = String(code || "").toUpperCase();
+      if (!requestedCode) return null;
+      const exact = feeds.find((feed) => String(feed.driverCode || "").toUpperCase() === requestedCode || String(feed.feedId || "").toUpperCase() === requestedCode);
+      if (exact) return exact;
+      const driver = D.byCode?.[requestedCode] || (D.drivers || []).find((entry) => entry.code === requestedCode) || null;
+      const compact = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const driverName = compact(driver?.name || "");
+      const driverSurname = compact(String(driver?.name || "").split(/\s+/).pop());
+      if (!driverName && !driverSurname) return null;
+      return feeds.find((feed) => {
+        if (!feed || feed.driverCode || feed.kind === "world" || feed.feedId === "WORLD") return false;
+        const text = compact([feed.title, feed.name, feed.label].filter(Boolean).join(" "));
+        return Boolean(text && ((driverName && text.includes(driverName)) || (driverSurname.length >= 4 && text.includes(driverSurname))));
+      }) || null;
     }
     function resolvedFeedForKey(key, code) {
       const feeds = resolvedF1TvContent?.feeds || [];
@@ -4476,10 +4681,32 @@
     };
     const sidecarActive = layout === "focus" && panelSizes.sidecarCount > 0;
     const presetOptions = Array.from(new Set((D.presets?.length ? D.presets : Object.keys(LAYOUTS)).map(normalizePresetName))).filter((name) => LAYOUTS[name]);
+    const customOnboardContext = {
+      timingRows,
+      standings: D.standings,
+      drivers: D.drivers,
+      byCode: D.byCode,
+      profile,
+      selectedCode,
+      fallbackCodes,
+    };
+    function customSmartOnboardLabel(source, code = "") {
+      const base = source.mode === "leader" ? "Leader"
+        : source.mode === "favorite1" ? "Favorite driver"
+        : source.mode === "favorite2" ? "Second favorite driver"
+        : source.mode === "battle-secondary" ? "Battle"
+        : "Intelligent onboard";
+      return code ? `${base} · ${code}` : base;
+    }
     function customTilePane(tile) {
       if (tile.source.type === "timing") return null;
       if (tile.source.type === "onboard") {
         return { feed: "Onboard", code: tile.source.code, slot: "custom-" + tile.id, telemetry: true, custom: true, tileId: tile.id, paneId: customPaneIdForSource(tile.source) };
+      }
+      if (tile.source.type === "smart-onboard") {
+        const code = resolveCustomOnboardCode(tile.source, customOnboardContext);
+        if (!code) return null;
+        return { feed: customSmartOnboardLabel(tile.source), code, slot: "custom-" + tile.id, telemetry: true, custom: true, tileId: tile.id, paneId: customPaneIdForSource(tile.source) };
       }
       const feeds = resolvedF1TvContent?.feeds || [];
       const feed = feeds.find((entry) => entry.feedId === tile.source.feedId) || null;
@@ -4730,6 +4957,7 @@
     function customTileLabel(tile) {
       if (tile.source.type === "timing") return "Live timing";
       if (tile.source.type === "onboard") return (D.byCode[tile.source.code]?.name || tile.source.code) + " onboard";
+      if (tile.source.type === "smart-onboard") return customSmartOnboardLabel(tile.source, resolveCustomOnboardCode(tile.source, customOnboardContext));
       const feed = (resolvedF1TvContent?.feeds || []).find((entry) => entry.feedId === tile.source.feedId);
       return channelDisplayName(feed || { feedId: tile.source.feedId });
     }
@@ -4809,8 +5037,21 @@
         color: driver.color,
         source: { type: "onboard", code: driver.code },
       }));
+      const smartSource = (mode) => ({ type: "smart-onboard", mode });
+      const smartCode = (mode) => resolveCustomOnboardCode(smartSource(mode), customOnboardContext);
+      const leaderCode = smartCode("leader");
+      const favorite1Code = smartCode("favorite1");
+      const favorite2Code = smartCode("favorite2");
+      const battleSecondaryCode = smartCode("battle-secondary");
+      const smartOnboardItems = [
+        leaderCode && { key: customTileSourceKey(smartSource("leader")), label: "Leader", sub: leaderCode, icon: "trophy", source: smartSource("leader") },
+        favorite1Code && { key: customTileSourceKey(smartSource("favorite1")), label: "Favorite driver", sub: favorite1Code, icon: "star", source: smartSource("favorite1") },
+        favorite2Code && { key: customTileSourceKey(smartSource("favorite2")), label: "Second favorite driver", sub: favorite2Code, icon: "star", source: smartSource("favorite2") },
+        leaderCode && battleSecondaryCode && { key: "smart-onboard:battle", label: "Battle", sub: `${leaderCode} + ${battleSecondaryCode}`, icon: "zap", sources: [smartSource("leader"), smartSource("battle-secondary")] },
+      ].filter(Boolean);
       const pickerGroups = [
         { group: "Channels", items: channelItems, empty: "No channels resolved for this session yet." },
+        { group: "Intelligent onboards", items: smartOnboardItems, empty: "No intelligent onboard choices are available yet." },
         { group: "Onboards", items: onboardItems, empty: "No drivers available yet." },
         { group: "App panels", items: [{ key: "timing", label: "Live timing tower", icon: "timer", source: { type: "timing" } }] },
       ];
@@ -4830,10 +5071,12 @@
                   ) : (
                     <div className="custom-picker__grid">
                       {group.items.map((item) => {
-                        const placed = placedKeys.has(item.key);
+                        const itemSources = item.sources || [item.source];
+                        const sourceKeys = itemSources.map(customTileSourceKey).filter(Boolean);
+                        const placed = sourceKeys.length > 0 && sourceKeys.every((key) => placedKeys.has(key));
                         return (
                           <button key={item.key} className="custom-picker__item" disabled={placed}
-                            onClick={() => { addCustomTile(activeCustomLayout.id, item.source); setCustomPickerOpen(false); }}>
+                            onClick={() => { addCustomTiles(activeCustomLayout.id, item.sources || [item.source]); setCustomPickerOpen(false); }}>
                             {item.num != null
                               ? <span className="custom-picker__num" style={{ background: item.color || "var(--surface-hover)" }}>{item.num}</span>
                               : <span className="custom-picker__icon"><Icon name={item.icon || "radio"} size={14} /></span>}
@@ -5008,7 +5251,7 @@
                 <div className="insight" key={i} data-kind={ins.kind}>
                   <span className="insight__icon"><Icon name={ins.kind === "battle" ? "zap" : ins.kind === "strategy" ? "flag" : "chart"} size={16} /></span>
                   <div style={{ minWidth: 0 }}>
-                    <div className="insight__t">{ins.title}<span className="insight__conf">· {Math.round(ins.conf * 100)}%</span></div>
+                    <div className="insight__t">{ins.title}{ins.conf != null && <span className="insight__conf">· {Math.round(ins.conf * 100)}%</span>}</div>
                     <div className="insight__b">{ins.body}</div>
                     {ins.kind === "battle" && (
                       <div className="insight__actions">
@@ -5031,74 +5274,147 @@
 
     function renderSessionLibrary(options = {}) {
       const inline = Boolean(options.inline);
+      const seasonLabel = String(f1TvSeason || currentSeason || "");
+      const selectedId = selectedF1TvRace ? raceLibraryId(selectedF1TvRace) : null;
+
+      const spineState = (race, index) => {
+        const status = String(race?.status || "").toLowerCase();
+        if (status === "live") return "live";
+        if (status === "done") return "done";
+        if (index === currentF1TvWeekendIndex) return "next";
+        return "upcoming";
+      };
+      const sessionDisplayName = (kind) => {
+        const text = String(kind || "");
+        const practice = text.match(/practice\s*([123])/i);
+        if (practice) return "FP" + practice[1];
+        if (/sprint qualifying|shootout/i.test(text)) return "Sprint Q";
+        return text;
+      };
+      const statusChip = (state) => {
+        if (state === "live") return <span className="slr__chip slr__chip--live"><i />Live</span>;
+        if (state === "done") return <span className="slr__chip slr__chip--done">Done</span>;
+        if (state === "next") return <span className="slr__chip slr__chip--soon">Up next</span>;
+        return null;
+      };
+
+      const renderCollapsed = (race, state) => {
+        const id = raceLibraryId(race);
+        const place = racePlace(race);
+        const count = race.sessions?.length || 0;
+        const lapText = state === "live" && race.lap && race.laps ? `lap ${race.lap}/${race.laps}` : "";
+        const detail = [place, race.date, lapText].filter(Boolean).join(" · ");
+        const winner = state === "done" ? scheduleWinnerLabel(race) : "";
+        const cta = state === "done"
+          ? `${count || 5} replay${(count || 5) === 1 ? "" : "s"}`
+          : state === "live" ? "Watch"
+          : state === "next" ? "Preview"
+          : "Scheduled";
+        return (
+          <div className="slr" data-state={state} key={id}>
+            <span className="slr__node" />
+            <button className="slr__row" type="button" onClick={() => chooseLibraryRace(race)}>
+              <span className="slr__rnd">{race.rnd ? "R" + race.rnd : "R-"}</span>
+              <span className="slr__main">
+                <span className="slr__name">{race.name || "Race weekend"}</span>
+                <span className="slr__meta">
+                  {statusChip(state)}
+                  <span className="slr__metatext">
+                    {detail}
+                    {winner && <>{detail ? " · " : ""}Winner <span className="slr__drv" style={{ "--tc": driverColor(winner) || "var(--accent)" }}><i />{winner}</span></>}
+                  </span>
+                </span>
+              </span>
+              <span className="slr__cta">{cta}<Icon name="chevronRight" size={14} /></span>
+            </button>
+          </div>
+        );
+      };
+
+      const renderExpanded = (race, state) => {
+        const id = raceLibraryId(race);
+        const winner = state === "done" ? scheduleWinnerLabel(race) : "";
+        const map = circuitSilhouette(race);
+        const exMeta = [
+          race.circuit,
+          race.date,
+          state === "live" && race.lap && race.laps ? `lap ${race.lap}/${race.laps}` : "",
+          winner ? `won by ${winner}` : "",
+        ].filter(Boolean).join(" · ");
+        return (
+          <div className="slr slr--open" data-state={state} key={id}>
+            <span className="slr__node" />
+            <div className="slr__expand">
+              <div className="slr__exhead">
+                <span className="slr__map" aria-hidden="true">
+                  <svg viewBox={map.viewBox} preserveAspectRatio="xMidYMid meet" fill="none">
+                    <path d={map.d} stroke="currentColor" strokeWidth="9" strokeLinejoin="round" strokeLinecap="round" />
+                  </svg>
+                </span>
+                <span className="slr__code">{race.rnd ? "R" + race.rnd : "R-"}</span>
+                <div>
+                  <span className="slr__exname">{race.name || "Race weekend"}</span>
+                  <div className="slr__exmeta">{exMeta}</div>
+                </div>
+                <span className="slr__exstatus">
+                  {state === "live" ? <span className="slr__chip slr__chip--live"><i />Live now</span>
+                    : state === "done" ? <span className="slr__chip slr__chip--done">{winner ? <>Winner <span className="slr__drv slr__drv--chip" style={{ "--tc": driverColor(winner) || "var(--accent)" }}><i />{winner}</span></> : "Replays"}</span>
+                    : <span className="slr__chip slr__chip--soon">Upcoming</span>}
+                  <span className="session-library__count">{sessionLibrarySessions.length} session{sessionLibrarySessions.length === 1 ? "" : "s"}</span>
+                </span>
+              </div>
+              <div className="slr__grid">
+                {sessionLibrarySessions.map((session) => {
+                  const active = f1TvSessionKind === session.kind;
+                  const live = session.status === "live";
+                  const available = canLoadF1TvSession(race, session);
+                  const note = session.kind === "Race" && winner ? ` · ${winner}` : "";
+                  return (
+                    <div className="slr-cell" data-live={String(live)} data-available={String(available)} key={session.kind}>
+                      <span className="slr-cell__nm">{sessionDisplayName(session.kind)}</span>
+                      <span className="slr-cell__mt">{sessionScheduleText(session)}{note}</span>
+                      <span className="slr-cell__btn">
+                        <Button variant={live ? "primary" : "secondary"} size="sm" onClick={() => loadLibrarySession(race, session)} disabled={f1TvResolving || !available} iconLeft={<Icon name="play" size={13} />}>
+                          {!available ? "Not started" : f1TvResolving && active ? "Loading..." : live ? "Watch live" : "Watch replay"}
+                        </Button>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      };
+
       return (
         <div className={"session-library" + (inline ? " session-library--inline" : "")} role="dialog" aria-modal={inline ? "false" : "true"} aria-label="Session Library">
           <div className="session-library__panel">
             <div className="session-library__head">
-              <span className="session-library__glyph"><Icon name="grid" size={24} /></span>
+              <span className="session-library__glyph"><Icon name="grid" size={22} /></span>
               <div>
                 <h2 className="session-library__title">Session Library</h2>
-                <div className="session-library__sub">Pick a weekend, then load any session into Live Racing</div>
+                <div className="session-library__sub">{seasonLabel ? `The ${seasonLabel} season, round by round` : "The season, round by round"}</div>
               </div>
-              <span className="session-library__close">
-                <IconButton variant="ghost" label="Close session library" onClick={() => setSessionLibraryOpen(false)}><Icon name="close" size={22} /></IconButton>
-              </span>
+              <div className="session-library__tools">
+                {seasonLabel && <span className="session-library__season">SEASON <b>{seasonLabel}</b></span>}
+                <span className="session-library__close">
+                  <IconButton variant="ghost" label="Close session library" onClick={() => setSessionLibraryOpen(false)}><Icon name="close" size={20} /></IconButton>
+                </span>
+              </div>
             </div>
-            <div className="session-library__body">
-              <aside className="session-library__rail">
-                <div className="session-library__eyebrow">Race weekends</div>
-                {visibleF1TvRaces.map((race, index) => {
-                  const id = raceLibraryId(race);
-                  const active = selectedF1TvRace && raceLibraryId(selectedF1TvRace) === id;
-                  const isCurrent = index === currentF1TvWeekendIndex;
-                  const sessions = race.sessions?.length || 0;
-                  return (
-                    <button className="session-library__race" data-active={String(active)} key={id} type="button" onClick={() => chooseLibraryRace(race)}>
-                      <span className="session-library__race-top">
-                        <span>{race.rnd ? "R" + race.rnd : "R-"}</span>
-                        {isCurrent && <Badge tone={race.status === "live" ? "live" : "accent"}>{race.status === "live" ? "LIVE" : "CURRENT"}</Badge>}
-                        {!isCurrent && sessions > 0 && <Badge tone="outline">{sessions} session{sessions === 1 ? "" : "s"}</Badge>}
-                      </span>
-                      <span className="session-library__race-name">{race.name || "Race weekend"}</span>
-                      <span className="session-library__race-meta"><Icon name="calendar" size={13} /> {[racePlace(race), race.date].filter(Boolean).join(" - ")}</span>
-                    </button>
-                  );
-                })}
-              </aside>
-              <section className="session-library__content">
-                {selectedF1TvRace ? (
-                  <>
-                    <div className="session-library__summary">
-                      <div>
-                        <h3>{selectedF1TvRace.name}</h3>
-                        <p>{[selectedF1TvRace.circuit, selectedF1TvRace.loc, selectedF1TvRace.date].filter(Boolean).join(" - ")}</p>
-                      </div>
-                      <span className="session-library__count">{sessionLibrarySessions.length} session{sessionLibrarySessions.length === 1 ? "" : "s"}</span>
-                    </div>
-                    <div className="session-library__rows">
-                      {sessionLibrarySessions.map((session) => {
-                        const active = f1TvSessionKind === session.kind;
-                        const live = session.status === "live";
-                        const available = canLoadF1TvSession(selectedF1TvRace, session);
-                        return (
-                          <div className="session-library__row" data-active={String(active)} data-available={String(available)} key={session.kind}>
-                            <span className="session-library__code">{sessionShortCode(session.kind)}</span>
-                            <div>
-                              <div className="session-library__kind">{session.kind}</div>
-                              <div className="session-library__when"><Icon name="calendar" size={13} /> {sessionScheduleText(session)}</div>
-                            </div>
-                            <Button variant={live ? "primary" : "secondary"} onClick={() => loadLibrarySession(selectedF1TvRace, session)} disabled={f1TvResolving || !available} iconLeft={<Icon name="play" size={14} />}>
-                              {!available ? "Not started" : f1TvResolving && active ? "Loading..." : live ? "Watch live" : "Watch replay"}
-                            </Button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </>
-                ) : (
-                  <div className="session-library__empty">No race weekends are loaded yet.</div>
-                )}
-              </section>
+            <div className="session-library__season-scroll">
+              {f1TvRaces.length ? (
+                <div className="session-library__spine">
+                  {f1TvRaces.map((race, index) => {
+                    const state = spineState(race, index);
+                    const open = selectedId !== null && raceLibraryId(race) === selectedId;
+                    return open ? renderExpanded(race, state) : renderCollapsed(race, state);
+                  })}
+                </div>
+              ) : (
+                <div className="session-library__empty">No race weekends are loaded yet.</div>
+              )}
             </div>
           </div>
         </div>

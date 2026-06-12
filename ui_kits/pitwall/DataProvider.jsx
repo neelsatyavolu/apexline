@@ -6,6 +6,7 @@
     favoriteDrivers: [],
     favoriteTeams: [],
     livePanelSizes: null,
+    liveCustomLayouts: null,
   };
   const EMPTY_DATA = {
     drivers: [],
@@ -156,6 +157,66 @@
     return ["max", "high", "medium", "low"].includes(text) ? text : "";
   }
 
+  function normalizeProfileCustomTileSource(raw = {}) {
+    if (!raw || typeof raw !== "object") return null;
+    if (raw.type === "timing") return { type: "timing" };
+    if (raw.type === "onboard" && typeof raw.code === "string" && raw.code) return { type: "onboard", code: raw.code.slice(0, 16) };
+    if (raw.type === "channel" && typeof raw.feedId === "string" && raw.feedId) return { type: "channel", feedId: raw.feedId.slice(0, 80) };
+    return null;
+  }
+
+  function profileCustomTileSourceKey(source) {
+    if (!source) return "";
+    if (source.type === "timing") return "timing";
+    if (source.type === "onboard") return "onboard:" + source.code;
+    if (source.type === "channel") return "channel:" + source.feedId;
+    return "";
+  }
+
+  function clampProfileCustomTileGeometry(rect = {}) {
+    const numeric = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
+    const round = (value) => Math.round(value * 10) / 10;
+    const w = round(Math.min(100, Math.max(12, numeric(rect.w, 32))));
+    const h = round(Math.min(100, Math.max(12, numeric(rect.h, 32))));
+    const x = round(Math.min(100 - w, Math.max(0, numeric(rect.x, 0))));
+    const y = round(Math.min(100 - h, Math.max(0, numeric(rect.y, 0))));
+    return { x, y, w, h };
+  }
+
+  function normalizeProfileCustomLayouts(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const seenLayoutIds = new Set();
+    const layouts = (Array.isArray(raw.layouts) ? raw.layouts : [])
+      .filter((layout) => layout && typeof layout === "object" && typeof layout.id === "string" && layout.id)
+      .filter((layout) => (seenLayoutIds.has(layout.id) ? false : (seenLayoutIds.add(layout.id), true)))
+      .slice(0, 24)
+      .map((layout) => {
+        const seenSources = new Set();
+        const tiles = (Array.isArray(layout.tiles) ? layout.tiles : [])
+          .slice(0, 64)
+          .map((tile) => {
+            const source = normalizeProfileCustomTileSource(tile?.source);
+            const sourceKey = profileCustomTileSourceKey(source);
+            if (!source || seenSources.has(sourceKey)) return null;
+            seenSources.add(sourceKey);
+            return {
+              id: typeof tile.id === "string" && tile.id ? tile.id.slice(0, 80) : "t-" + sourceKey,
+              source,
+              ...clampProfileCustomTileGeometry(tile),
+              tickerRows: clampProfilePanelSize(tile.tickerRows || 0, 0, 4),
+              tickerHeight: clampProfilePanelSize(tile.tickerHeight || 140, 64, 320),
+            };
+          })
+          .filter(Boolean);
+        return {
+          id: layout.id.slice(0, 80),
+          name: String(layout.name || "").trim().slice(0, 80) || "Custom layout",
+          tiles,
+        };
+      });
+    return { layouts };
+  }
+
   function normalizeProfile(profile = {}) {
     return {
       name: String(profile.name || ""),
@@ -163,12 +224,13 @@
       favoriteDrivers: Array.isArray(profile.favoriteDrivers) ? profile.favoriteDrivers : [],
       favoriteTeams: Array.isArray(profile.favoriteTeams) ? profile.favoriteTeams : [],
       livePanelSizes: normalizeLivePanelSizes(profile.livePanelSizes),
+      liveCustomLayouts: normalizeProfileCustomLayouts(profile.liveCustomLayouts),
       videoQuality: normalizeVideoQuality(profile.videoQuality),
     };
   }
 
   function profileHasContent(profile) {
-    return Boolean(profile?.name || profile?.profileImageUrl || profile?.favoriteDrivers?.length || profile?.favoriteTeams?.length || profile?.livePanelSizes || profile?.videoQuality);
+    return Boolean(profile?.name || profile?.profileImageUrl || profile?.favoriteDrivers?.length || profile?.favoriteTeams?.length || profile?.livePanelSizes || profile?.liveCustomLayouts || profile?.videoQuality);
   }
 
   function persistProfile(profile) {
@@ -334,6 +396,7 @@
             ...local,
             ...persisted,
             livePanelSizes: persisted.livePanelSizes != null ? persisted.livePanelSizes : local.livePanelSizes,
+            liveCustomLayouts: persisted.liveCustomLayouts != null ? persisted.liveCustomLayouts : local.liveCustomLayouts,
             videoQuality: persisted.videoQuality != null && persisted.videoQuality !== "" ? persisted.videoQuality : local.videoQuality,
           } : local;
           if (mounted) setProfile(next);

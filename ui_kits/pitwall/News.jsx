@@ -15,7 +15,6 @@
     .news2 { display: grid; grid-template-columns: 1fr 300px; gap: var(--space-9); align-items: start; }
     .news2__filters { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-8); }
     .news2__search { min-width: 240px; flex: 1; max-width: 360px; }
-    .news2__actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-4); }
     .feed { display: flex; flex-direction: column; gap: var(--space-7); }
     .lead { position: relative; overflow: hidden; border-radius: var(--radius-lg); border: 1px solid var(--border-default); background: var(--surface-card); }
     .lead__img { height: 240px; position: relative; overflow: hidden; background:
@@ -118,7 +117,6 @@
     const [selectedId, setSelectedId] = React.useState(stories[0]?.id);
     const [readerStory, setReaderStory] = React.useState(null);
     const [bookmarks, setBookmarks] = React.useState([]);
-    const [isRefreshing, setIsRefreshing] = React.useState(false);
     const filters = ["All", ...Array.from(new Set(stories.map((story) => story.tag).filter(Boolean)))];
     const q = query.trim().toLowerCase();
     const filtered = stories.filter((n) => {
@@ -152,15 +150,6 @@
       else window.open(url, "_blank", "noopener");
     }
 
-    async function handleRefreshNews() {
-      setIsRefreshing(true);
-      try {
-        await refreshData({ forceRefresh: true });
-      } finally {
-        setIsRefreshing(false);
-      }
-    }
-
     return (
       <div className="news2">
         <div>
@@ -170,10 +159,7 @@
             {filters.map((f) => <Tag key={f} selected={filter === f} onClick={() => setFilter(f)}>{f}</Tag>)}
             <Tag swatch="var(--team-mclaren)" selected={query === "mclaren"} onClick={() => setQuery("mclaren")}>McLaren</Tag>
             <Tag swatch="var(--team-ferrari)" selected={query === "ferrari"} onClick={() => setQuery("ferrari")}>Ferrari</Tag>
-            <div className="news2__actions">
-              <Button variant="ghost" size="sm" onClick={() => { setFilter("All"); setQuery(""); }} iconLeft={<Icon name="filter" size={14} />}>Reset</Button>
-              <Button variant="secondary" size="sm" loading={isRefreshing} onClick={handleRefreshNews}>Refresh</Button>
-            </div>
+            <div style={{ marginLeft: "auto" }}><Button variant="ghost" size="sm" onClick={() => { setFilter("All"); setQuery(""); }} iconLeft={<Icon name="filter" size={14} />}>Reset</Button></div>
           </div>
 
           <div className="feed">
@@ -198,7 +184,7 @@
                   </div>
                 </div>
               </article>
-            ) : <div className="empty">No live stories loaded from RSS yet. {dataSource}. <Button variant="ghost" size="sm" loading={isRefreshing} onClick={handleRefreshNews}>Refresh</Button></div>}
+            ) : <div className="empty">No live stories loaded from RSS yet. {dataSource}. <Button variant="ghost" size="sm" onClick={refreshData}>Refresh</Button></div>}
 
             {rest.length > 0 && (
               <div className="feed__grid">

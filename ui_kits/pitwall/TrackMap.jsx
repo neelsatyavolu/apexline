@@ -1,6 +1,6 @@
 /* Apexline — Track Map screen. window.PW.TrackMap
    Circuit map with live driver positions when a session is on, fully labelled
-   turns and sectors otherwise. Renders the body only; AppShell supplies the
+   turns / sectors otherwise. Renders the body only; AppShell supplies the
    sidebar + topbar chrome. All race data comes from usePitWall() (the Electron
    bridge); circuit outlines are real OSM centerlines (window.PW_TRACKMAP_CIRCUITS,
    see trackmap-circuits.js). Start/finish, sectors and numbered corners
@@ -16,8 +16,15 @@
   const TYRE = { S: "var(--tyre-soft)", M: "var(--tyre-medium)", H: "var(--tyre-hard)", I: "var(--tyre-inter)", W: "var(--tyre-wet)" };
   const FLAG_LABEL = { green: "GREEN FLAG", yellow: "YELLOW FLAG", sc: "SAFETY CAR", vsc: "VIRTUAL SC", red: "RED FLAG", chequered: "CHEQUERED" };
   const FLAG_VAR = { green: "var(--flag-green)", yellow: "var(--flag-yellow, #ffd23f)", sc: "var(--flag-yellow, #ffd23f)", vsc: "var(--flag-yellow, #ffd23f)", red: "var(--live)", chequered: "var(--text-1)" };
-  const TRACK_MAP_LIVE_TIMING_POLL_INTERVAL_MS = 250;
-  const TRACK_MAP_REPLAY_TIMING_POLL_INTERVAL_MS = 100;
+  const TRACK_MAP_REPLAY_TICK_MS = 100;
+  const TRACK_MAP_REPLAY_DATA_POLL_MS = 270;
+  const TRACK_MAP_MOTION_TAU_MS = 200;
+  const TRACK_MAP_FALLBACK_TAU_MS = 550;
+  const TRACK_MAP_DEAD_RECKON_MAX_MS = 900;
+  const TRACK_MAP_TARGET_STALL_MS = 1500;
+  const TRACK_MAP_OFFICIAL_TELEPORT_PX = 150;
+  const TRACK_MAP_SNAP_MAX_DIST_PX = 60;
+  const TRACK_MAP_RESNAP_WINDOW_PX = 110;
 
   /* ====================================================================== */
   /* Styles (ported from the design's Track Map.html, chrome rules dropped). */
@@ -41,9 +48,9 @@
     .tm-raceselect__select option { color: var(--text-primary); background: var(--bg-base); }
     .tm-raceselect__chev { position: absolute; right: var(--space-5); pointer-events: none; color: var(--text-tertiary); }
     .tm-head__actions { display: inline-flex; align-items: center; gap: var(--space-5); }
-    .tm-replayscrub { display: inline-flex; align-items: center; gap: 8px; width: 190px; height: 34px; padding: 0 10px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text-secondary); box-shadow: var(--inset-top-light); }
-    .tm-replayscrub__label { flex: none; min-width: 62px; font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; color: var(--text-primary); }
-    .tm-replayscrub__range { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
+    .tm-replayprogress { display: inline-flex; align-items: center; gap: 8px; width: 212px; height: 34px; padding: 0 10px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text-secondary); box-shadow: var(--inset-top-light); }
+    .tm-replayprogress__label { flex: none; min-width: 68px; font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; color: var(--text-primary); }
+    .tm-replayprogress__range { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
     .tm-replaybtn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid var(--accent-border); border-radius: var(--radius-sm); background: var(--accent-quiet); color: var(--text-primary); font-family: var(--font-sans); font-size: var(--text-sm); font-weight: 800; cursor: pointer; }
     .tm-replaybtn:hover { border-color: var(--accent); background: var(--surface-hover); }
     .tm-replaybtn:disabled { cursor: default; opacity: 0.55; }
@@ -101,7 +108,6 @@
     .tm-ctlbtn { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 11px; border-radius: var(--radius-pill); border: 1px solid var(--border-default); background: color-mix(in srgb, var(--bg-3) 86%, transparent); backdrop-filter: blur(8px); color: var(--text-secondary); font-family: var(--font-sans); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
     .tm-ctlbtn:hover { color: var(--text-primary); border-color: var(--border-strong); }
     .tm-ctlbtn--clear { color: var(--accent); border-color: var(--accent-border); }
-    .tm-replayclock { display: inline-flex; align-items: center; height: 30px; padding: 0 10px; border-radius: var(--radius-pill); border: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--bg-2) 76%, transparent); color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 800; }
     .tm-legend { position: absolute; bottom: var(--space-7); left: var(--space-7); display: flex; flex-wrap: wrap; gap: var(--space-7); padding: 8px 12px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--bg-2) 82%, transparent); backdrop-filter: blur(8px); border: 1px solid var(--border-subtle); }
     .tm-legend__it { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-2xs); color: var(--text-secondary); }
     .tm-legend__sw { width: 12px; height: 4px; border-radius: 2px; }
@@ -193,8 +199,8 @@
     const sessions = Array.isArray(race?.sessions) ? race.sessions : [];
     const sprint = sessions.find((session) => /^sprint$/i.test(session.kind || ""));
     const grandPrix = sessions.find((session) => /^race$/i.test(session.kind || ""));
-    const options = [sprint, grandPrix].filter(Boolean);
-    if (options.length) return options;
+    if (sprint && grandPrix) return [sprint, grandPrix];
+    if (grandPrix) return [grandPrix];
     return [{ kind: "Race", status: race?.status || "unknown", startsAt: race?.startsAt || "" }];
   }
   function canLoadReplayRace(race) {
@@ -207,27 +213,171 @@
     const s = value % 60;
     return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
   }
-  function viewBoxRect(vb) {
-    const parts = String(vb || "").split(/\s+/).map(Number);
-    return parts.length === 4 && parts.every(Number.isFinite) ? { x: parts[0], y: parts[1], w: parts[2], h: parts[3] } : null;
+  function distanceToSegment(p, a, b) {
+    const vx = b[0] - a[0], vy = b[1] - a[1];
+    const wx = p.x - a[0], wy = p.y - a[1];
+    const len2 = vx * vx + vy * vy || 1;
+    const t = Math.max(0, Math.min(1, (wx * vx + wy * vy) / len2));
+    const x = a[0] + vx * t, y = a[1] + vy * t;
+    return { x, y, t, d: Math.hypot(p.x - x, p.y - y) };
   }
-  function officialPositionProjector(cars, geom) {
-    const vb = viewBoxRect(geom?.vb);
-    const points = cars
+  // Nearest point on the closed track polyline, with the along-path distance s.
+  // An optional hint { s, total, window } keeps the snap on the car's current
+  // track leg when an almost-as-close segment elsewhere (e.g. the opposite leg
+  // of a hairpin) would otherwise capture it.
+  function nearestTrackPoint(p, pts, hint = null) {
+    let best = null, bestNear = null, len = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const hit = distanceToSegment(p, a, b);
+      const s = len + hit.t * segLen;
+      if (!best || hit.d < best.d) best = { x: hit.x, y: hit.y, d: hit.d, s };
+      if (hint && hint.total) {
+        let ds = Math.abs(s - hint.s) % hint.total;
+        ds = Math.min(ds, hint.total - ds);
+        if (ds <= hint.window && (!bestNear || hit.d < bestNear.d)) bestNear = { x: hit.x, y: hit.y, d: hit.d, s };
+      }
+      len += segLen;
+    }
+    if (!best) return null;
+    if (bestNear && bestNear.d <= best.d + 14) return { ...bestNear, total: len };
+    return { ...best, total: len };
+  }
+  // Official Formula 1 telemetry uses a session-local coordinate frame that is
+  // rotated by an arbitrary angle relative to the drawn OSM centerline. Axis
+  // flips/swaps alone leave whole track sections up to ~130px off the road, and
+  // snapping that weaving trace makes cars slide backwards through corners and
+  // leap over apexes. Fit a full similarity transform instead:
+  // mirror -> rotate -> uniform scale -> translate.
+  //
+  // Scoring blends mean distance to the track polyline with a driving-direction
+  // penalty: the sample is a time-ordered single-driver trace, and a candidate
+  // whose consecutive points move backwards along the polyline is a
+  // direction-reversed overlay. On elongated circuits a reversed overlay can
+  // beat the true one on distance alone (the two long sides land on each
+  // other), so distance-only scoring is not enough.
+  function applyOfficialFit(point, fit) {
+    const mx = (point.x - fit.scx) * (fit.mirror ? -1 : 1);
+    const my = point.y - fit.scy;
+    return {
+      x: (fit.cos * mx - fit.sin * my) * fit.scale + fit.tx,
+      y: (fit.sin * mx + fit.cos * my) * fit.scale + fit.ty,
+    };
+  }
+  function fitOfficialSimilarity(points, trackPts) {
+    let scx = 0, scy = 0;
+    points.forEach((p) => { scx += p.x; scy += p.y; });
+    scx /= points.length; scy /= points.length;
+    let sr = 0;
+    points.forEach((p) => { sr += (p.x - scx) ** 2 + (p.y - scy) ** 2; });
+    sr = Math.sqrt(sr / points.length) || 1;
+    let tcx = 0, tcy = 0;
+    trackPts.forEach((p) => { tcx += p[0]; tcy += p[1]; });
+    tcx /= trackPts.length; tcy /= trackPts.length;
+    let tr = 0;
+    trackPts.forEach((p) => { tr += (p[0] - tcx) ** 2 + (p[1] - tcy) ** 2; });
+    tr = Math.sqrt(tr / trackPts.length) || 1;
+    const baseScale = tr / sr;
+    if (!Number.isFinite(baseScale) || baseScale <= 0) return null;
+    const BACKWARD_PENALTY_PX = 40;
+    const score = (fit, sample) => {
+      let sum = 0, backward = 0, pairs = 0, lastS = null;
+      for (const p of sample) {
+        const snapped = nearestTrackPoint(applyOfficialFit(p, fit), trackPts);
+        sum += snapped.d;
+        if (lastS != null) {
+          let ds = snapped.s - lastS;
+          if (ds < -snapped.total / 2) ds += snapped.total;
+          if (ds > snapped.total / 2) ds -= snapped.total;
+          if (Math.abs(ds) > 2) {
+            pairs += 1;
+            if (ds < 0) backward += 1;
+          }
+        }
+        lastS = snapped.s;
+      }
+      return sum / sample.length + (pairs ? (backward / pairs) * BACKWARD_PENALTY_PX : 0);
+    };
+    const makeFit = (mirror, deg, scale, tx, ty) => {
+      const rad = (deg * Math.PI) / 180;
+      return { mirror, deg, cos: Math.cos(rad), sin: Math.sin(rad), scale, scx, scy, tx, ty };
+    };
+    const coarseStep = Math.max(1, Math.floor(points.length / 60));
+    const coarseSample = points.filter((_, index) => index % coarseStep === 0);
+    let best = null;
+    [false, true].forEach((mirror) => {
+      for (let deg = 0; deg < 360; deg += 6) {
+        const fit = makeFit(mirror, deg, baseScale, tcx, tcy);
+        const value = score(fit, coarseSample);
+        if (!best || value < best.score) best = { fit, score: value };
+      }
+    });
+    if (!best) return null;
+    const refine = (degSpan, degStep, scales) => {
+      const current = best.fit;
+      for (let deg = current.deg - degSpan; deg <= current.deg + degSpan + 1e-9; deg += degStep) {
+        for (const scale of scales) {
+          if (deg === current.deg && scale === current.scale) continue;
+          const fit = makeFit(current.mirror, deg, scale, current.tx, current.ty);
+          const value = score(fit, points);
+          if (value < best.score) best = { fit, score: value };
+        }
+      }
+    };
+    refine(6, 1, [best.fit.scale]);
+    refine(1, 0.25, [best.fit.scale]);
+    for (let pass = 0; pass < 2; pass += 1) {
+      let dx = 0, dy = 0;
+      points.forEach((p) => {
+        const projected = applyOfficialFit(p, best.fit);
+        const snapped = nearestTrackPoint(projected, trackPts);
+        dx += snapped.x - projected.x;
+        dy += snapped.y - projected.y;
+      });
+      const shifted = { ...best.fit, tx: best.fit.tx + dx / points.length, ty: best.fit.ty + dy / points.length };
+      const shiftedScore = score(shifted, points);
+      if (shiftedScore < best.score) best = { fit: shifted, score: shiftedScore };
+      refine(0, 1, [0.97, 0.98, 0.99, 1.01, 1.02, 1.03].map((k) => k * best.fit.scale));
+      refine(0.75, 0.25, [best.fit.scale]);
+    }
+    return best;
+  }
+  const TRACK_MAP_FIT_MAX_AVG_PX = 45;
+  const officialFitCache = new Map();
+  function officialPositionProjector(cars, geom, bounds, samplePoints) {
+    const sample = (Array.isArray(samplePoints) ? samplePoints : [])
+      .filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y));
+    // Session-wide sample points (replay archives) give a stable orientation
+    // even when the cars themselves are clustered on the grid; live falls back
+    // to fitting against the current car positions.
+    const points = sample.length >= 8 ? sample : cars
       .map((car) => car.trackPosition)
       .filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y));
-    if (!vb || points.length < 3) return null;
-    const xs = points.map((point) => point.x);
-    const ys = points.map((point) => point.y);
-    const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-    const srcW = Math.max(1, maxX - minX), srcH = Math.max(1, maxY - minY);
-    const pad = 42;
-    const scale = Math.min((vb.w - pad * 2) / srcW, (vb.h - pad * 2) / srcH);
-    if (!Number.isFinite(scale) || scale <= 0) return null;
-    const usedW = srcW * scale, usedH = srcH * scale;
-    const ox = vb.x + (vb.w - usedW) / 2 - minX * scale;
-    const oy = vb.y + (vb.h - usedH) / 2 - minY * scale;
-    return (point) => ({ x: point.x * scale + ox, y: point.y * scale + oy });
+    if (points.length < 3 || !geom?.points?.length) return null;
+    const cacheKey = sample.length >= 8 && bounds
+      ? `${geom.vb}|${bounds.minX},${bounds.minY},${bounds.maxX},${bounds.maxY}|${sample.length}`
+      : `${geom.vb}|live|${points.length}`;
+    const cached = officialFitCache.get(cacheKey);
+    let best = cached && (sample.length >= 8 || Date.now() - cached.at < 10000) ? cached.best : null;
+    if (!best) {
+      best = fitOfficialSimilarity(points, geom.points) || { fit: null, score: Infinity };
+      if (best.fit) {
+        const distinct = new Set(points.map((point) => {
+          const snapped = nearestTrackPoint(applyOfficialFit(point, best.fit), geom.points);
+          return snapped ? `${Math.round(snapped.x / 4)}:${Math.round(snapped.y / 4)}` : "";
+        }).filter(Boolean));
+        if (distinct.size < Math.min(8, Math.ceil(points.length / 2))) best = { fit: null, score: Infinity };
+      }
+      if (best.score > TRACK_MAP_FIT_MAX_AVG_PX) best = { fit: null, score: Infinity };
+      officialFitCache.set(cacheKey, { best, at: Date.now() });
+      if (officialFitCache.size > 40) officialFitCache.delete(officialFitCache.keys().next().value);
+    }
+    if (!best.fit) return null;
+    const fit = best.fit;
+    // Returns the raw projected point; the motion layer snaps it to the track
+    // with continuity so hairpin legs are not crossed.
+    return (point) => applyOfficialFit(point, fit);
   }
 
   /* ====================================================================== */
@@ -255,7 +405,7 @@
   /* Geometry: build the drawable map from a real circuit outline.          */
   /*   - road path is the actual centerline polyline (closed)               */
   /*   - corners detected by path curvature, capped to the official count   */
-  /*   - main straight / start-finish and sector thirds derived             */
+  /*   - main straight / start-finish and sector thirds derived            */
   /* ====================================================================== */
   function linePath(pts, closed) {
     if (!pts.length) return "";
@@ -263,12 +413,6 @@
     for (let i = 1; i < pts.length; i++) d += ` L ${pts[i][0]} ${pts[i][1]}`;
     if (closed) d += " Z";
     return d;
-  }
-  function sliceIdx(pts, from, to) {
-    const n = pts.length, out = [pts[from]];
-    let i = from;
-    while (i !== to) { i = (i + 1) % n; out.push(pts[i]); }
-    return out;
   }
   // Cluster vertices satisfying pred() into contiguous runs, starting the scan in
   // a gap so no run is split across the array seam. Returns [{startK,endK}] in a
@@ -464,39 +608,119 @@
     const pad = 34;
     const vb = `${(minX - pad).toFixed(1)} ${(minY - pad).toFixed(1)} ${(maxX - minX + pad * 2).toFixed(1)} ${(maxY - minY + pad * 2).toFixed(1)}`;
 
-    return { d, turns, sectors, startNode, vb };
+    return { d, points: pts, turns, sectors, startNode, vb };
   }
 
   /* ====================================================================== */
   /* SVG renderer (consumes a prebuilt geom).                               */
   /* ====================================================================== */
-  function TrackMapView({ geom, mode, layers, cars, focusCode, onFocus, selectedTurn, onSelectTurn, speed = 1, paused = false }) {
+  function TrackMapView({ geom, mode, layers, cars, focusCode, onFocus, selectedTurn, onSelectTurn, speed = 1, paused = false, trackPositionBounds = null, trackPositionSample = null, lapPaceSeconds = 0 }) {
     const pathRef = useRef(null);
     const carRefs = useRef({});
+    const carsRef = useRef(cars);
+    const motionRef = useRef({});
+    const projectorRef = useRef(null);
+    const officialProjector = useMemo(() => officialPositionProjector(cars, geom, trackPositionBounds, trackPositionSample), [cars, geom, trackPositionBounds, trackPositionSample]);
+    useEffect(() => {
+      carsRef.current = cars;
+      projectorRef.current = officialProjector;
+    }, [cars, officialProjector]);
 
     // Position + animate cars. Cars are PLACED immediately via a timer-based retry
     // (runs even when rAF is throttled), then rAF drives smooth motion in foreground.
+    //
+    // Motion lives in s-space: each car tracks its distance along the track
+    // centerline, eases toward a dead-reckoned target with velocity-continuous
+    // exponential smoothing, and renders via getPointAtLength — so dots always
+    // sit on the road and follow it through corners instead of gliding across
+    // them in straight lines.
     const stateRef = useRef({ u: 0 });
     useEffect(() => {
       if (mode !== "live") return;
       let raf, timer, killed = false, prev = null;
-      const lapViewSeconds = 16 / Math.max(0.15, speed);
+      const lapViewSeconds = Math.max(8, lapPaceSeconds || 16) / Math.max(0.15, speed);
       const st = stateRef.current;
-      const place = (u) => {
+      const pts = geom.points;
+      let trackTotal = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        trackTotal += Math.hypot(b[0] - a[0], b[1] - a[1]);
+      }
+      const maxV = (trackTotal / Math.max(30, lapPaceSeconds || 80)) * 2.5;
+      const wrapMod = (s) => ((s % trackTotal) + trackTotal) % trackTotal;
+      const wrapDelta = (d) => {
+        const m = wrapMod(d);
+        return m > trackTotal * 0.85 ? m - trackTotal : m; // forward-biased: cars race forward
+      };
+      const place = (u, now = performance.now()) => {
         const path = pathRef.current, L = path && path.getTotalLength();
-        if (!L) return false;
-        const projectOfficialPosition = officialPositionProjector(cars, geom);
+        if (!L || !trackTotal) return false;
+        const cars = carsRef.current;
+        const projectOfficialPosition = projectorRef.current;
+        const activeCodes = new Set(cars.map((car) => car.code));
         cars.forEach((c) => {
           const el = carRefs.current[c.code];
           if (!el) return;
-          const officialPoint = projectOfficialPosition && c.trackPosition ? projectOfficialPosition(c.trackPosition) : null;
-          const cu = (u - c.frac + 1) % 1;
-          const pt = officialPoint || path.getPointAtLength(cu * L);
-          const back = officialPoint ? pt : path.getPointAtLength(((cu - 0.009 + 1) % 1) * L);
+          const raw = projectOfficialPosition && c.trackPosition ? projectOfficialPosition(c.trackPosition) : null;
+          let motion = motionRef.current[c.code] || null;
+          const hint = motion ? { s: wrapMod(motion.s), total: trackTotal, window: TRACK_MAP_RESNAP_WINDOW_PX } : null;
+          const snap = raw ? nearestTrackPoint(raw, pts, hint) : null;
+          const official = snap && snap.d <= TRACK_MAP_SNAP_MAX_DIST_PX ? snap : null;
+          const fallbackS = ((u - c.frac + 1) % 1) * trackTotal;
+          const dataAtMs = Date.parse(c.trackPosition?.date || "");
+          if (!motion) {
+            const startS = official ? official.s : fallbackS;
+            motion = { s: startS, v: 0, targetS: startS, targetAt: now, frameAt: now, dataAtMs };
+          }
+          const dtFrame = Math.max(0, Math.min(0.1, (now - motion.frameAt) / 1000));
+          motion.frameAt = now;
+          if (official) {
+            const dTarget = wrapDelta(official.s - wrapMod(motion.targetS));
+            if (Math.abs(dTarget) > TRACK_MAP_OFFICIAL_TELEPORT_PX) {
+              // Seek or data resume: jump rather than racing around the lap.
+              motion.targetS += dTarget;
+              motion.s = motion.targetS;
+              motion.v = 0;
+              motion.targetAt = now;
+              motion.dataAtMs = dataAtMs;
+            } else if (Math.abs(dTarget) > 0.5) {
+              // Speed comes from the data clock when the packet carries one:
+              // wall-clock gaps between poll arrivals overestimate velocity
+              // when snapshots arrive in bursts, dead-reckoning past the car
+              // and rubber-banding it backwards on the next update.
+              const dtData = Number.isFinite(dataAtMs) && Number.isFinite(motion.dataAtMs)
+                ? (dataAtMs - motion.dataAtMs) / 1000
+                : 0;
+              const dtTarget = dtData > 0.04 ? dtData : Math.max(0.05, (now - motion.targetAt) / 1000);
+              motion.v = Math.max(0, Math.min(maxV, dTarget / dtTarget));
+              motion.targetS += dTarget;
+              motion.targetAt = now;
+              motion.dataAtMs = dataAtMs;
+            }
+            const sinceTarget = now - motion.targetAt;
+            const reckonSec = paused || sinceTarget > TRACK_MAP_TARGET_STALL_MS
+              ? 0
+              : Math.min(sinceTarget, TRACK_MAP_DEAD_RECKON_MAX_MS) / 1000;
+            const predictedS = motion.targetS + motion.v * reckonSec;
+            motion.s += (predictedS - motion.s) * (1 - Math.exp(-dtFrame * 1000 / TRACK_MAP_MOTION_TAU_MS));
+          } else {
+            // No usable official point: ease toward the gap-spaced fallback slot.
+            const dFallback = wrapDelta(fallbackS - wrapMod(motion.s));
+            if (Math.abs(dFallback) > TRACK_MAP_OFFICIAL_TELEPORT_PX * 2) motion.s += dFallback;
+            else motion.s += dFallback * (1 - Math.exp(-dtFrame * 1000 / TRACK_MAP_FALLBACK_TAU_MS));
+            motion.targetS = motion.s;
+            motion.v = 0;
+            motion.targetAt = now;
+          }
+          motionRef.current[c.code] = motion;
+          const sMod = wrapMod(motion.s);
+          const pt = path.getPointAtLength((sMod / trackTotal) * L);
+          const back = path.getPointAtLength((wrapMod(sMod - 9) / trackTotal) * L);
           el.style.transform = `translate(${pt.x.toFixed(2)}px, ${pt.y.toFixed(2)}px)`;
           const trail = el.querySelector(".tm-car__trail");
           if (trail) { trail.setAttribute("x2", (back.x - pt.x).toFixed(2)); trail.setAttribute("y2", (back.y - pt.y).toFixed(2)); }
         });
+        Object.keys(motionRef.current).forEach((code) => { if (!activeCodes.has(code)) delete motionRef.current[code]; });
         return true;
       };
       const ensurePlaced = () => { if (killed) return; if (!place(st.u)) timer = setTimeout(ensurePlaced, 30); };
@@ -511,7 +735,7 @@
       };
       raf = requestAnimationFrame(tick);
       return () => { killed = true; cancelAnimationFrame(raf); clearTimeout(timer); };
-    }, [cars, mode, speed, paused, geom]);
+    }, [mode, speed, paused, geom, lapPaceSeconds]);
 
     const { turns: showTurns, names: showNames, sectors: showSectors } = layers;
     const roadW = 15, surfW = 10.5;
@@ -631,19 +855,23 @@
     );
   }
 
-  function ReplayLapScrubber({ replay, lap, laps, onSeekLap }) {
-    const currentLap = Number(lap);
-    const totalLaps = Number(laps);
-    if (!replay || !Number.isFinite(currentLap) || !Number.isFinite(totalLaps) || totalLaps < 2) return null;
+  function ReplayProgress({ replay, onSeekReplay }) {
+    if (!replay?.active && !replay?.loading) return null;
+    const duration = Math.max(1, Math.round(Number(replay?.data?.durationSeconds || replay?.durationSeconds || 1)));
+    const elapsed = Math.max(0, Math.min(duration, Math.round(Number(replay?.elapsedSeconds || 0))));
+    const lap = replay?.data?.sessionClock?.lapCount?.lap || "";
+    const laps = replay?.data?.sessionClock?.lapCount?.laps || "";
+    const label = lap ? `L${lap}/${laps || "-"}` : formatReplayClock(elapsed);
     return (
-      <label className="tm-replayscrub">
-        <span className="tm-replayscrub__label">Lap {currentLap}/{totalLaps}</span>
-        <input className="tm-replayscrub__range" type="range" aria-label="Replay lap" min="1" max={totalLaps} step="1" value={currentLap} onChange={(event) => onSeekLap(event.target.value)} />
+      <label className="tm-replayprogress" aria-label="Replay race progress">
+        <span className="tm-replayprogress__label">{label}</span>
+        <input className="tm-replayprogress__range" type="range" min="0" max={duration} value={elapsed}
+          onChange={(event) => onSeekReplay(Number(event.target.value))} />
       </label>
     );
   }
 
-  function Header({ round, gp, name, loc, live, replay, replayLoading, race, countdownTarget, raceStartLabel, races, selectedRaceKey, onSelectRace, canLoadReplay, onLoadReplay, replayLap, replayLaps, onSeekReplayLap }) {
+  function Header({ round, gp, name, loc, live, replay, race, countdownTarget, raceStartLabel, races, selectedRaceKey, onSelectRace, canLoadReplay, onLoadReplay, onSeekReplay }) {
     const cd = useCountdown(countdownTarget);
     const wx = (race && race.weather) || {};
     const flag = (race && race.flag) || "green";
@@ -656,18 +884,18 @@
         </div>
         <div className="tm-head__status">
           <div className="tm-head__actions">
-            <ReplayLapScrubber replay={replay} lap={replayLap} laps={replayLaps} onSeekLap={onSeekReplayLap} />
+            <ReplayProgress replay={replay} onSeekReplay={onSeekReplay} />
             <RaceSelector races={races} selectedRaceKey={selectedRaceKey} onSelectRace={onSelectRace} />
-            {canLoadReplay && (
-              <button className="tm-replaybtn" type="button" onClick={onLoadReplay} disabled={replayLoading}>
-                <Icon name="play" size={14} /> {replayLoading ? "Loading..." : "Load Replay"}
+            {!replay?.active && (
+              <button className="tm-replaybtn" type="button" disabled={!canLoadReplay || replay?.loading} onClick={onLoadReplay}>
+                <Icon name="play" size={14} /> {replay?.loading ? "Loading..." : "Load replay"}
               </button>
             )}
           </div>
           {live ? (
             <>
               <div className="tm-statline">
-                <span className="pw-badge pw-badge--live tm-livebadge"><span className="tm-livedot" />{replay ? "REPLAY" : "LIVE"}</span>
+                <span className="pw-badge pw-badge--live tm-livebadge"><span className="tm-livedot" />{replay?.active ? "REPLAY" : "LIVE"}</span>
                 <span className="tm-flag" style={{ color: FLAG_VAR[flag] || "var(--flag-green)" }}>{FLAG_LABEL[flag] || "GREEN FLAG"}</span>
               </div>
               <div className="tm-lap">
@@ -797,7 +1025,7 @@
         <button className="tm-ctlbtn" onClick={() => setPaused(!paused)}>
           {paused ? <Icon name="play" size={14} /> : <PauseGlyph size={14} />} {paused ? "Resume" : "Pause"}
         </button>
-        {replay && <span className="tm-replayclock">REPLAY {formatReplayClock(elapsedSeconds)}</span>}
+        {replay && <span className="tm-ctlbtn">REPLAY {formatReplayClock(elapsedSeconds)}</span>}
         {replay && <button className="tm-ctlbtn tm-ctlbtn--clear" onClick={onStopReplay}><Icon name="close" size={13} /> Exit replay</button>}
         {focusCode && (
           <button className="tm-ctlbtn tm-ctlbtn--clear" onClick={onClear}><Icon name="close" size={13} /> {focusCode}</button>
@@ -836,16 +1064,17 @@
     const [selTurn, setSelTurn] = useState(null);
     const [paused, setPaused] = useState(false);
     const [selectedRaceKey, setSelectedRaceKey] = useState("");
-    const [liveTimingData, setLiveTimingData] = useState(null);
     const [replay, setReplay] = useState({ active: false, playing: false, loading: false, raceKey: "", sessionKind: "Race", session: null, elapsedSeconds: 0, data: null, error: "", needsInitialLapStart: false });
     const [replayChoiceRace, setReplayChoiceRace] = useState(null);
-    const liveTimingInFlightRef = useRef(false);
     const replayRequestRef = useRef(0);
     const replayTimingInFlightRef = useRef(false);
+
+    const timing = Array.isArray(data.timing) ? data.timing : [];
 
     const races = Array.isArray(data.schedule) ? data.schedule : [];
     const liveRace = useMemo(() => races.find((r) => r.status === "live") || null, [races]);
     const liveSession = useMemo(() => (Array.isArray(data.sessions) ? data.sessions : []).find((s) => s.status === "live") || null, [data.sessions]);
+    const live = timing.length > 0 && Boolean(liveRace || liveSession);
     const upcomingRace = useMemo(() => races.find((r) => r.status === "upcoming") || null, [races]);
     const latestCompletedRace = useMemo(() => races.filter((r) => r.status === "done").at(-1) || null, [races]);
     const autoRace = liveRace || upcomingRace || latestCompletedRace || races[0] || null;
@@ -853,44 +1082,14 @@
     const selectedRace = selectedRaceKey ? races.find((race) => raceKey(race) === selectedRaceKey) || autoRace : autoRace;
     const selectedRaceValue = raceKey(selectedRace);
     const replayActive = replay.active && replay.raceKey === selectedRaceValue;
-    const timing = Array.isArray(liveTimingData?.timing) && !replayActive
-        ? liveTimingData.timing
-        : replayActive && Array.isArray(replay.data?.timing)
-          ? replay.data.timing
-          : [];
-    const live = !replayActive && timing.length > 0;
-    const mapLive = !replayActive && live && liveRaceKey && (!selectedRaceKey || selectedRaceKey === liveRaceKey);
+    const activeTiming = replayActive ? (Array.isArray(replay.data?.timing) ? replay.data.timing : []) : timing;
+    const mapLive = live && (!selectedRaceKey || selectedRaceKey === liveRaceKey);
     const mapTracking = mapLive || replayActive;
+    const replayDataBucket = replayActive ? Math.floor((Number(replay.elapsedSeconds || 0) * 1000) / TRACK_MAP_REPLAY_DATA_POLL_MS) : 0;
 
     useEffect(() => {
       if (selectedRaceKey && !races.some((race) => raceKey(race) === selectedRaceKey)) setSelectedRaceKey("");
     }, [selectedRaceKey, races]);
-    useEffect(() => {
-      if (replayActive || !window.pitwall?.data?.liveTiming) {
-        if (replayActive) setLiveTimingData(null);
-        return undefined;
-      }
-      let cancelled = false;
-      const loadLiveTiming = async () => {
-        if (liveTimingInFlightRef.current) return;
-        liveTimingInFlightRef.current = true;
-        try {
-          const result = await window.pitwall.data.liveTiming({ source: "f1", targetLatencySeconds: 0 });
-          if (!cancelled) setLiveTimingData(result || null);
-        } catch (error) {
-          if (!cancelled) setLiveTimingData({ ok: false, timing: [], weather: {}, message: error?.message || "Formula 1 live timing is unavailable." });
-        } finally {
-          liveTimingInFlightRef.current = false;
-        }
-      };
-      loadLiveTiming();
-      const timer = setInterval(loadLiveTiming, TRACK_MAP_LIVE_TIMING_POLL_INTERVAL_MS);
-      return () => {
-        cancelled = true;
-        liveTimingInFlightRef.current = false;
-        clearInterval(timer);
-      };
-    }, [replayActive]);
     useEffect(() => {
       if (replay.active && replay.raceKey && replay.raceKey !== selectedRaceValue) {
         setReplay((current) => ({ ...current, active: false, playing: false }));
@@ -905,35 +1104,35 @@
         const delta = Math.max(0, Math.min(2, (now - prev) / 1000));
         prev = now;
         setReplay((current) => current.active && current.playing ? { ...current, elapsedSeconds: current.elapsedSeconds + delta } : current);
-      }, TRACK_MAP_REPLAY_TIMING_POLL_INTERVAL_MS);
+      }, TRACK_MAP_REPLAY_TICK_MS);
       return () => clearInterval(timer);
     }, [replayActive, replay.playing]);
 
     useEffect(() => {
-      if (!replayActive || !selectedRace || !window.pitwall?.data?.replayTiming) return undefined;
+      if (!replayActive || !selectedRace || !window.pitwall?.data?.trackMapReplayTiming) return undefined;
       let cancelled = false;
       let lastBucket = "";
       const loadReplayTiming = async () => {
         if (replayTimingInFlightRef.current) return;
         const elapsedSeconds = Math.max(0, replay.elapsedSeconds || 0);
-        const bucket = `${selectedRaceValue}:${replay.sessionKind}:${Math.floor(elapsedSeconds * 10)}`;
+        const bucket = `${selectedRaceValue}:${replay.sessionKind}:${Math.floor((elapsedSeconds * 1000) / TRACK_MAP_REPLAY_DATA_POLL_MS)}`;
         if (bucket === lastBucket) return;
         lastBucket = bucket;
         const requestId = replayRequestRef.current + 1;
         replayRequestRef.current = requestId;
         replayTimingInFlightRef.current = true;
-        setReplay((current) => ({ ...current, loading: true, error: "" }));
+        setReplay((current) => ({ ...current, loading: !current.data, error: "" }));
         try {
           const session = replay.session || trackMapReplaySessionOptions(selectedRace).find((item) => item.kind === replay.sessionKind) || null;
-          const result = await window.pitwall.data.replayTiming({
-            source: "f1timing",
-            meetingKey: selectedRace.meetingKey || "",
+          const result = await window.pitwall.data.trackMapReplayTiming({
             season: data.seasonSummary?.season || "",
             raceName: selectedRace.name || "",
             raceStartsAt: selectedRace.startsAt || session?.startsAt || "",
             sessionStartsAt: session?.startsAt || selectedRace.startsAt || "",
             sessionKind: replay.sessionKind,
             elapsedSeconds,
+            raceRelative: true,
+            preStartSeconds: 5,
           });
           if (cancelled || requestId !== replayRequestRef.current) return;
           setReplay((current) => ({ ...current, loading: false, data: result || null, error: result?.ok === false ? result.message || "Replay timing is unavailable." : "" }));
@@ -945,45 +1144,19 @@
         }
       };
       loadReplayTiming();
-      const timer = setInterval(loadReplayTiming, TRACK_MAP_REPLAY_TIMING_POLL_INTERVAL_MS);
       return () => {
         cancelled = true;
         replayRequestRef.current += 1;
         replayTimingInFlightRef.current = false;
-        clearInterval(timer);
       };
-    }, [replayActive, selectedRaceValue, selectedRace?.meetingKey, replay.sessionKind, replay.elapsedSeconds]);
-
-    useEffect(() => {
-      if (!replayActive || !replay.needsInitialLapStart) return;
-      const lapTimeline = Array.isArray(replay.data?.lapTimeline) ? replay.data.lapTimeline : [];
-      const target = lapTimeline.find((item) => Number(item.lap) === 1);
-      const elapsedSeconds = Number(target?.elapsedSeconds);
-      if (!Number.isFinite(elapsedSeconds)) return;
-      replayRequestRef.current += 1;
-      replayTimingInFlightRef.current = false;
-      setReplay((current) => ({
-        ...current,
-        needsInitialLapStart: false,
-        loading: true,
-        error: "",
-        elapsedSeconds,
-        data: current.data ? {
-          ...current.data,
-          sessionClock: {
-            ...(current.data.sessionClock || {}),
-            lapCount: { ...(current.data.sessionClock?.lapCount || {}), lap: 1 },
-          },
-        } : current.data,
-      }));
-    }, [replayActive, replay.needsInitialLapStart, replay.data?.lapTimeline]);
+    }, [replayActive, selectedRaceValue, replay.sessionKind, replayDataBucket]);
 
     function startTrackMapReplay(race, session) {
       const kind = session?.kind || "Race";
       setSelectedRaceKey(raceKey(race));
       setReplayChoiceRace(null);
       setPaused(false);
-      setReplay({ active: true, playing: true, loading: true, raceKey: raceKey(race), sessionKind: kind, session: session || null, elapsedSeconds: 0, data: null, error: "", needsInitialLapStart: true });
+      setReplay({ active: true, playing: true, loading: true, raceKey: raceKey(race), sessionKind: kind, session: session || null, elapsedSeconds: 0, data: null, error: "", needsInitialLapStart: false });
     }
     function loadTrackMapReplay() {
       if (!selectedRace) return;
@@ -997,28 +1170,10 @@
     function stopTrackMapReplay() {
       setReplay((current) => ({ ...current, active: false, playing: false }));
     }
-    function seekReplayLap(lapValue) {
-      const lap = Math.max(1, Math.floor(Number(lapValue || 1)));
-      const lapTimeline = Array.isArray(replay.data?.lapTimeline) ? replay.data.lapTimeline : [];
-      const target = lapTimeline.find((item) => Number(item.lap) === lap);
-      const elapsedSeconds = Number(target?.elapsedSeconds);
-      if (!Number.isFinite(elapsedSeconds)) return;
+    function seekReplaySeconds(seconds) {
       replayRequestRef.current += 1;
       replayTimingInFlightRef.current = false;
-      setReplay((current) => ({
-        ...current,
-        needsInitialLapStart: false,
-        loading: true,
-        error: "",
-        elapsedSeconds,
-        data: current.data ? {
-          ...current.data,
-          sessionClock: {
-            ...(current.data.sessionClock || {}),
-            lapCount: { ...(current.data.sessionClock?.lapCount || {}), lap },
-          },
-        } : current.data,
-      }));
+      setReplay((current) => ({ ...current, needsInitialLapStart: false, loading: true, error: "", elapsedSeconds: Math.max(0, Number(seconds || 0)) }));
     }
     function setTrackPaused(nextPaused) {
       setPaused(nextPaused);
@@ -1027,44 +1182,53 @@
 
     const replayLap = replay.data?.sessionClock?.lapCount?.lap || "-";
     const replayLaps = replay.data?.sessionClock?.lapCount?.laps || "-";
-    const liveWeather = liveTimingData?.weather && Object.values(liveTimingData.weather).some((value) => value !== "" && value != null) ? liveTimingData.weather : data.race?.weather;
-    const liveLap = liveTimingData?.sessionClock?.lapCount?.lap || data.race?.lap || "-";
-    const liveLaps = liveTimingData?.sessionClock?.lapCount?.laps || data.race?.laps || "-";
-    const headerRace = mapTracking
-      ? { ...(replayActive ? selectedRace : data.race || {}), lap: replayActive ? replayLap : liveLap, laps: replayActive ? replayLaps : liveLaps, weather: replayActive ? replay.data?.weather || {} : liveWeather }
-      : selectedRace;
+    const headerRace = replayActive
+      ? { ...(selectedRace || {}), lap: replayLap, laps: replayLaps, weather: replay.data?.weather || {} }
+      : mapLive ? { ...(data.race || {}), lap: data.race?.lap || "-", laps: data.race?.laps || "-" } : selectedRace;
     const circuit = resolveCircuit(headerRace) || (mapLive ? resolveCircuit(data.race) : null);
     const geom = useMemo(() => (circuit ? buildGeom(circuit) : null), [circuit]);
 
     const circuitId = circuit?.id || "none";
-    useEffect(() => { setFocus(null); setSelTurn(null); }, [circuitId, mapLive]);
+    useEffect(() => { setFocus(null); setSelTurn(null); }, [circuitId, mapTracking]);
 
-    // Live cars spaced around the lap from cumulative gap-to-leader seconds.
+    // Cars use official Formula 1 track positions when replay archives provide
+    // them, otherwise fall back to cumulative gap spacing around the lap.
+    // Retired cars stay in the timing tower but must not be drawn on the
+    // circuit: with no live position data the fallback would keep lapping them.
     const cars = useMemo(() => {
       if (!mapTracking) return [];
-      const lapT = lapSeconds(timing[0]?.last) || 90;
+      const runningRows = activeTiming.filter((row) => !row.retired);
+      const lapT = lapSeconds(runningRows[0]?.last) || 90;
       let cum = 0;
-      return timing.map((row, i) => {
+      return runningRows.map((row, i) => {
         const drv = data.byCode[row.code] || {};
-        cum += i === 0 ? 0 : gapSeconds(row.interval, lapT);
-        return { code: row.code, pos: row.pos, num: drv.num || row.number, color: drv.color || "var(--accent)", abbr: drv.abbr, name: drv.name, comp: row.comp, gap: row.gap, frac: (cum / lapT) % 1, trackPosition: row.trackPosition || null };
+        const intervalGap = gapSeconds(row.interval, lapT);
+        cum += i === 0 ? 0 : intervalGap;
+        const fallbackFrac = i === 0 || intervalGap ? (cum / lapT) % 1 : i / Math.max(1, runningRows.length);
+        return { code: row.code, pos: row.pos, num: drv.num || row.number, color: drv.color || row.color || "var(--accent)", abbr: drv.abbr, name: drv.name, comp: row.comp, gap: row.gap, frac: fallbackFrac, trackPosition: row.trackPosition || null };
       });
-    }, [mapTracking, timing, data.byCode]);
+    }, [mapTracking, activeTiming, data.byCode]);
 
     const layers = { turns: true, names: true, sectors: true, start: true };
     const selTurnObj = useMemo(() => (geom ? geom.turns.find((t) => t.n === selTurn) || null : null), [geom, selTurn]);
 
-    const round = mapLive ? data.race?.round : selectedRace?.rnd;
-    const gp = mapLive ? data.race?.name : selectedRace?.name;
-    const circuitName = (mapLive ? data.race?.circuit : selectedRace?.circuit) || circuit?.name || "";
-    const loc = (mapLive ? data.race?.loc : selectedRace?.loc) || circuit?.loc || "";
+    const round = mapLive && !replayActive ? data.race?.round : selectedRace?.rnd;
+    const gp = mapLive && !replayActive ? data.race?.name : selectedRace?.name;
+    const circuitName = (mapLive && !replayActive ? data.race?.circuit : selectedRace?.circuit) || circuit?.name || "";
+    const loc = (mapLive && !replayActive ? data.race?.loc : selectedRace?.loc) || circuit?.loc || "";
 
     const raceSession = useMemo(
       () => (selectedRace?.sessions || []).find((s) => /race/i.test(s.kind) && !/sprint/i.test(s.kind)) || null,
       [selectedRace]
     );
-    const countdownTarget = !mapLive ? (raceSession?.startsAt || selectedRace?.startsAt || "") : "";
-    const raceStartLabel = !mapLive && raceSession ? `Race start · ${raceSession.day || ""} ${raceSession.time || ""} local`.trim() : "";
+    const countdownTarget = !mapTracking ? (raceSession?.startsAt || selectedRace?.startsAt || "") : "";
+    const raceStartLabel = !mapTracking && raceSession ? `Race start · ${raceSession.day || ""} ${raceSession.time || ""} local`.trim() : "";
+
+    const replayLapPace = useMemo(() => {
+      if (!replayActive) return 0;
+      const pace = lapSeconds(activeTiming[0]?.last);
+      return pace ? Math.round(pace) : 80;
+    }, [replayActive, activeTiming]);
 
     const battles = replayActive ? [] : Array.isArray(data.battlePairs) ? data.battlePairs : [];
     const loadableReplay = !replayActive && canLoadReplayRace(selectedRace);
@@ -1072,18 +1236,20 @@
 
     return (
       <div className="tm-screen">
-        <Header round={round} gp={gp} name={circuitName} loc={loc} live={mapTracking} replay={replayActive} replayLoading={replay.loading}
+        <Header round={round} gp={gp} name={circuitName} loc={loc} live={mapTracking} replay={replayActive ? replay : null}
           race={mapTracking ? headerRace : null} countdownTarget={countdownTarget} raceStartLabel={raceStartLabel}
           races={races} selectedRaceKey={selectedRaceValue} onSelectRace={setSelectedRaceKey}
-          canLoadReplay={loadableReplay} onLoadReplay={loadTrackMapReplay}
-          replayLap={replayLap} replayLaps={replayLaps} onSeekReplayLap={seekReplayLap} />
+          canLoadReplay={loadableReplay} onLoadReplay={loadTrackMapReplay} onSeekReplay={seekReplaySeconds} />
         <div className="tm-stage">
           <div className="tm-mapwrap">
             <div className="tm-mapcard">
               {geom ? (
                 <>
                   <TrackMapView geom={geom} mode={mapTracking ? "live" : "map"} layers={layers} cars={cars}
-                    focusCode={focusCode} onFocus={setFocus} selectedTurn={selTurn} onSelectTurn={setSelTurn} paused={paused} />
+                    focusCode={focusCode} onFocus={setFocus} selectedTurn={selTurn} onSelectTurn={setSelTurn} paused={paused}
+                    trackPositionBounds={replayActive ? replay.data?.trackPositionBounds : null}
+                    trackPositionSample={replayActive ? replay.data?.trackPositionSample : null}
+                    lapPaceSeconds={replayLapPace} />
                   {mapTracking && <MapControls paused={paused} setPaused={setTrackPaused} focusCode={focusCode} onClear={() => setFocus(null)}
                     replay={replayActive} elapsedSeconds={replay.elapsedSeconds} onStopReplay={stopTrackMapReplay} />}
                   <MapLegend live={mapTracking} layers={layers} carCount={cars.length} />
@@ -1101,7 +1267,7 @@
           </div>
           <div className="tm-railwrap">
             {mapTracking ? (
-              <TimingTower rows={timing} byCode={data.byCode} lap={headerRace.lap} laps={headerRace.laps}
+              <TimingTower rows={activeTiming} byCode={data.byCode} lap={headerRace.lap} laps={headerRace.laps}
                 battles={battles} focusCode={focusCode} onFocus={setFocus} />
             ) : geom ? (
               <CircuitFacts circuit={circuit} turns={geom.turns} selTurn={selTurn} onSelTurn={setSelTurn} />
@@ -1113,6 +1279,7 @@
             )}
           </div>
         </div>
+        {replay.error && <div className="tm-empty"><Icon name="timer" size={13} /> {replay.error}</div>}
         {replayChoiceRace && (
           <div className="tm-modal" role="dialog" aria-modal="true" aria-label="Choose replay session">
             <div className="tm-modal__panel">

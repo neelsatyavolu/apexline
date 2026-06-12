@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, session, Notification, components } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, shell, session, Notification, components } = require("electron");
 const { execFile, spawn } = require("node:child_process");
 const { createHash, randomBytes } = require("node:crypto");
 const fs = require("node:fs");
@@ -88,9 +88,10 @@ const KEY_PROVIDERS = new Set(["codex", "grok", "f1tv-email", "f1tv-token"]);
 const VIDEO_QUALITY_LEVELS = new Set(["max", "high", "medium", "low"]);
 const DEFAULT_USER_PROFILE = { name: "", profileImageUrl: "", favoriteDrivers: [], favoriteTeams: [], livePanelSizes: null, videoQuality: "" };
 const PROFILE_FILE = "pitwall-profile.json";
+const AI_PREFERENCES_FILE = "pitwall-ai-preferences.json";
 const SOCIAL_FILE = "apexline-social.json";
 const COPILOT_INSIGHTS_FILE = "pitwall-copilot-insights.json";
-const COPILOT_INSIGHTS_SCHEMA_VERSION = 6;
+const COPILOT_INSIGHTS_SCHEMA_VERSION = 7;
 const DEBUG_LOG_FILE = "pitwall-debug.log";
 const ANALYTICS_SESSION_CACHE_FILE = "pitwall-analytics-session-cache.json";
 const F1TV_LIBRARY_CACHE_FILE = "pitwall-f1tv-library-cache.json";
@@ -107,6 +108,7 @@ const F1TV_HOSTS = new Set(["f1tv.formula1.com", "account.formula1.com", "formul
 const F1TV_MEDIA_CDN_HOSTS = new Set(["f1prodlive.akamaized.net"]);
 const DATA_CACHE_MS = 1000 * 60 * 3;
 const COPILOT_INSIGHT_RETRY_MS = 1000 * 60 * 10;
+const AI_PROVIDER_TIMEOUT_MS = 90000;
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback";
 const CODEX_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
@@ -168,8 +170,17 @@ const LIVE_CORE_DATA_URLS = {
   openF1Weather: "https://api.openf1.org/v1/weather?session_key=latest",
   ...LIVE_NEWS_URLS,
 };
-const LIVE_DATA_URLS = { ...LIVE_CORE_DATA_URLS };
-const OPTIONAL_LIVE_DATA_KEYS = new Set();
+const LIVE_TIMING_ENRICHMENT_URLS = {
+  openF1Drivers: "https://api.openf1.org/v1/drivers?session_key=latest",
+  openF1CarData: "https://api.openf1.org/v1/car_data?session_key=latest",
+  openF1Intervals: "https://api.openf1.org/v1/intervals?session_key=latest",
+  openF1Laps: "https://api.openf1.org/v1/laps?session_key=latest",
+  openF1Pit: "https://api.openf1.org/v1/pit?session_key=latest",
+  openF1Position: "https://api.openf1.org/v1/position?session_key=latest",
+  openF1Stints: "https://api.openf1.org/v1/stints?session_key=latest",
+};
+const LIVE_DATA_URLS = { ...LIVE_CORE_DATA_URLS, ...LIVE_TIMING_ENRICHMENT_URLS };
+const OPTIONAL_LIVE_DATA_KEYS = new Set(["openF1CarData", "openF1Laps", "openF1Pit", "openF1Stints"]);
 const COPILOT_INSIGHT_PAGES = [
   { id: "drivers-championship", title: "Drivers championship", kicker: "Overall standings" },
   { id: "constructors-championship", title: "Constructors championship", kicker: "Team standings" },
@@ -226,8 +237,12 @@ let f1TvLibraryCache = new Map();
 let replayTimingCache = new Map();
 let replayOpenF1Cache = new Map();
 let replayF1TimingCache = new Map();
+let trackMapReplaySessionCache = new Map();
+let trackMapReplayTimingCache = new Map();
+let trackMapReplayStreamCache = new Map();
 const f1TimingTelemetrySampleCache = new WeakMap();
 const f1TimingPositionSampleCache = new WeakMap();
+const f1TimingStateCursorCache = new WeakMap();
 let liveTimingCache = null;
 let f1LiveTimingClient = null;
 let f1LiveTimingState = null;
@@ -462,6 +477,10 @@ function profileFilePath() {
   return path.join(app.getPath("userData"), PROFILE_FILE);
 }
 
+function aiPreferencesFilePath() {
+  return path.join(app.getPath("userData"), AI_PREFERENCES_FILE);
+}
+
 function socialFilePath() {
   return path.join(app.getPath("userData"), SOCIAL_FILE);
 }
@@ -578,6 +597,33 @@ async function setUserProfile(profile) {
   return next;
 }
 
+function normalizePreferredAiModel(value) {
+  const text = String(value || "").trim();
+  if (text === "local") return "local";
+  const [provider, ...modelParts] = text.split(":");
+  const model = modelParts.join(":");
+  if (provider === "codex" && knownModel(model, CODEX_MODELS, "") === model) return text;
+  if (provider === "grok" && knownModel(model, GROK_MODELS, "") === model) return text;
+  return "";
+}
+
+async function getPreferredAiModel() {
+  try {
+    const raw = await fs.promises.readFile(aiPreferencesFilePath(), "utf8");
+    return normalizePreferredAiModel(JSON.parse(raw)?.preferredModel);
+  } catch {
+    return "";
+  }
+}
+
+async function setPreferredAiModel(value) {
+  const preferredModel = normalizePreferredAiModel(value);
+  const filePath = aiPreferencesFilePath();
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.promises.writeFile(filePath, JSON.stringify({ preferredModel }, null, 2), "utf8");
+  return { preferredModel };
+}
+
 function sanitizeSocialText(value, limit = 160) {
   return String(value || "").trim().replace(/[\u0000-\u001f]+/g, " ").slice(0, limit);
 }
@@ -685,6 +731,8 @@ ipcMain.handle("pitwall:key:set", (_event, provider, value) => setSecret(provide
 ipcMain.handle("pitwall:key:delete", (_event, provider) => deleteSecret(provider));
 ipcMain.handle("pitwall:profile:get", () => getUserProfile());
 ipcMain.handle("pitwall:profile:set", (_event, profile) => setUserProfile(profile));
+ipcMain.handle("pitwall:ai:preferredModel:get", () => getPreferredAiModel());
+ipcMain.handle("pitwall:ai:preferredModel:set", (_event, value) => setPreferredAiModel(value));
 ipcMain.handle("pitwall:social:bootstrap", bootstrapSocial);
 ipcMain.handle("pitwall:social:friends", socialFriends);
 ipcMain.handle("pitwall:social:addFriend", socialAddFriend);
@@ -2892,6 +2940,73 @@ function parseF1TimingJsonStream(text, options = {}) {
     });
 }
 
+function f1TimingRequestJsonStreamEntries(targetUrl, options = {}) {
+  const targetSeconds = finiteNumber(options.targetSeconds);
+  const stopSeconds = targetSeconds == null ? Infinity : targetSeconds + Number(options.bufferSeconds ?? 2);
+  return new Promise((resolve, reject) => {
+    const endpoint = new URL(targetUrl);
+    const entries = [];
+    let pending = "";
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const parseLine = (line) => {
+      const clean = stripJsonBom(line).trim();
+      if (!clean) return false;
+      const seconds = f1TimingSeconds(clean.slice(0, 12));
+      if (seconds > stopSeconds) return true;
+      const raw = JSON.parse(clean.slice(12));
+      entries.push({
+        time: clean.slice(0, 12),
+        seconds,
+        data: options.zipped ? decodeF1TimingZPayload(raw) : raw,
+      });
+      return false;
+    };
+    const req = https.get(targetUrl, {
+      headers: f1TimingHeaders(),
+      timeout: Number(options.timeout || 18000),
+    }, (res) => {
+      res.setEncoding("utf8");
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        res.resume();
+        fail(new Error(`HTTP ${res.statusCode} ${endpoint.pathname}`));
+        return;
+      }
+      res.on("data", (chunk) => {
+        if (settled) return;
+        pending += chunk;
+        const lines = pending.split(/\r?\n/);
+        pending = lines.pop() || "";
+        for (const line of lines) {
+          if (parseLine(line)) {
+            finish(entries);
+            req.destroy();
+            return;
+          }
+        }
+      });
+      res.on("end", () => {
+        if (!settled && pending) parseLine(pending);
+        finish(entries);
+      });
+    });
+    req.on("timeout", () => req.destroy(new Error(`Timeout ${endpoint.pathname}`)));
+    req.on("error", (error) => {
+      if (settled && /aborted|socket hang up/i.test(error?.message || "")) return;
+      fail(error);
+    });
+  });
+}
+
 function mergeF1TimingDelta(target, source, key = "") {
   if (!source || typeof source !== "object") return source;
   if (Array.isArray(source)) {
@@ -2920,11 +3035,19 @@ function mergeF1TimingDelta(target, source, key = "") {
 }
 
 function f1TimingStateAt(entries, targetSeconds) {
-  let state = {};
-  for (const entry of entries || []) {
-    if (entry.seconds > targetSeconds) break;
-    state = mergeF1TimingDelta(state, entry.data);
+  if (!Array.isArray(entries) || !entries.length) return {};
+  // Entries are chronological and mergeF1TimingDelta never mutates its inputs,
+  // so resume merging from a cached cursor while the target moves forward
+  // (every replay poll) instead of re-merging the whole stream from zero.
+  // Seeking backwards rebuilds from the start once.
+  let cursor = f1TimingStateCursorCache.get(entries);
+  if (!cursor || cursor.targetSeconds > targetSeconds) cursor = { index: 0, state: {} };
+  let { index, state } = cursor;
+  while (index < entries.length && !(entries[index].seconds > targetSeconds)) {
+    state = mergeF1TimingDelta(state, entries[index].data);
+    index += 1;
   }
+  f1TimingStateCursorCache.set(entries, { index, state, targetSeconds });
   return state;
 }
 
@@ -3192,10 +3315,12 @@ function f1TimingTelemetryFromCarData(state) {
 
 function f1TimingTelemetrySamples(sessionData) {
   if (!sessionData || typeof sessionData !== "object") return { samples: [], driverCount: 0 };
-  const cached = f1TimingTelemetrySampleCache.get(sessionData);
+  const cacheKey = Array.isArray(sessionData.carDataEntries) ? sessionData.carDataEntries : sessionData;
+  const cached = f1TimingTelemetrySampleCache.get(cacheKey);
   if (cached) return cached;
   const driverNumbers = new Set();
   const samples = [];
+  let sequence = 0;
   for (const outer of sessionData?.carDataEntries || []) {
     for (const entry of Array.isArray(outer?.data?.Entries) ? outer.data.Entries : []) {
       const utc = entry?.Utc || "";
@@ -3225,7 +3350,7 @@ function f1TimingTelemetrySamples(sessionData) {
   }
   samples.sort((a, b) => a.utcMs - b.utcMs || a.driverNumber - b.driverNumber);
   const indexed = { samples, driverCount: driverNumbers.size };
-  f1TimingTelemetrySampleCache.set(sessionData, indexed);
+  f1TimingTelemetrySampleCache.set(cacheKey, indexed);
   return indexed;
 }
 
@@ -3253,52 +3378,109 @@ function f1TimingTelemetryRowsAt(sessionData, targetSeconds) {
 
 function f1TimingPositionSamples(sessionData) {
   if (!sessionData || typeof sessionData !== "object") return { samples: [], driverCount: 0 };
-  const cached = f1TimingPositionSampleCache.get(sessionData);
+  // Key the cache by the entries array (shared across replay polls), not the
+  // per-poll sessionData wrapper, so the flatten+sort of ~100k samples runs
+  // once per session instead of on every poll.
+  const cacheKey = Array.isArray(sessionData.positionEntries) ? sessionData.positionEntries : sessionData;
+  const cached = f1TimingPositionSampleCache.get(cacheKey);
   if (cached) return cached;
   const driverNumbers = new Set();
   const samples = [];
-  for (const outer of sessionData?.positionEntries || []) {
-    const groups = Array.isArray(outer?.data?.Position)
-      ? outer.data.Position
-      : Array.isArray(outer?.data?.Entries)
-        ? outer.data.Entries
-        : [];
-    for (const group of groups) {
-      const utc = group?.Timestamp || group?.Utc || group?.Date || "";
+  let sequence = 0;
+  for (const entry of sessionData?.positionEntries || []) {
+    const packets = [];
+    const data = entry?.data || {};
+    const seconds = finiteNumber(entry?.seconds);
+    if (Array.isArray(data.Position)) packets.push(...data.Position);
+    if (Array.isArray(data.Positions)) packets.push(...data.Positions);
+    if (Array.isArray(data.Entries)) packets.push(...data.Entries);
+    if (!packets.length && data.Cars) packets.push(data);
+    for (const packet of packets) {
+      const utc = packet?.Timestamp || packet?.Utc || packet?.Date || data.Timestamp || data.Utc || "";
       const utcMs = Date.parse(utc);
       if (!Number.isFinite(utcMs)) continue;
-      const entries = group?.Entries || group?.Cars || {};
-      for (const [number, position] of Object.entries(entries)) {
-        const driverNumber = Number(number);
-        if (!Number.isFinite(driverNumber)) continue;
-        const x = finiteNumber(position?.X ?? position?.x);
-        const y = finiteNumber(position?.Y ?? position?.y);
-        if (x == null || y == null) continue;
+      const cars = packet?.Entries || packet?.Cars || {};
+      for (const [numberText, car] of Object.entries(cars)) {
+        const driverNumber = Number(car?.RacingNumber || car?.Number || numberText);
+        const x = finiteNumber(car?.X ?? car?.x);
+        const y = finiteNumber(car?.Y ?? car?.y);
+        const z = finiteNumber(car?.Z ?? car?.z);
+        if (!Number.isFinite(driverNumber) || x == null || y == null) continue;
         driverNumbers.add(driverNumber);
-        samples.push({
-          utcMs,
-          driverNumber,
-          row: {
-            driver_number: driverNumber,
-            date: utc,
-            x,
-            y,
-            z: finiteNumber(position?.Z ?? position?.z) ?? 0,
-            status: String(position?.Status || position?.status || "").trim(),
-          },
-        });
+        samples.push({ seconds, sequence: sequence++, utcMs, driverNumber, row: { date: utc, x, y, z, status: car?.Status || car?.status || "" } });
       }
     }
   }
   samples.sort((a, b) => a.utcMs - b.utcMs || a.driverNumber - b.driverNumber);
   const indexed = { samples, driverCount: driverNumbers.size };
-  f1TimingPositionSampleCache.set(sessionData, indexed);
+  f1TimingPositionSampleCache.set(cacheKey, indexed);
   return indexed;
 }
 
+function f1TimingInterpolatedPositionRowsAt(samples, driverCount, targetUtcMs) {
+  // Position packets carry ~200ms-resolution UTC timestamps even though archive
+  // entries batch them ~1s apart; interpolating between the bracketing packets
+  // keeps replay cars moving continuously instead of stepping once per batch.
+  const maxGapMs = 4000;
+  let lo = 0;
+  let hi = samples.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (samples[mid].utcMs <= targetUtcMs) lo = mid + 1;
+    else hi = mid;
+  }
+  const prevByDriver = new Map();
+  for (let index = lo - 1; index >= 0; index -= 1) {
+    const sample = samples[index];
+    if (!prevByDriver.has(sample.driverNumber)) prevByDriver.set(sample.driverNumber, sample);
+    if (driverCount && prevByDriver.size >= driverCount) break;
+  }
+  const nextByDriver = new Map();
+  for (let index = lo; index < samples.length; index += 1) {
+    const sample = samples[index];
+    if (sample.utcMs - targetUtcMs > maxGapMs) break;
+    if (!nextByDriver.has(sample.driverNumber)) nextByDriver.set(sample.driverNumber, sample);
+    if (driverCount && nextByDriver.size >= driverCount) break;
+  }
+  return Array.from(prevByDriver, ([driverNumber, prev]) => {
+    const next = nextByDriver.get(driverNumber);
+    const gapMs = next ? next.utcMs - prev.utcMs : Infinity;
+    if (!next || gapMs <= 0 || gapMs > maxGapMs) return { driver_number: driverNumber, ...prev.row };
+    const t = Math.min(1, Math.max(0, (targetUtcMs - prev.utcMs) / gapMs));
+    // Interpolated coordinates are valid at the interpolation instant; stamping
+    // them with the older bracket packet would make the staleness filter and
+    // the renderer's data-clock velocity estimate treat fresh data as old.
+    return {
+      driver_number: driverNumber,
+      date: new Date(targetUtcMs).toISOString(),
+      x: prev.row.x + (next.row.x - prev.row.x) * t,
+      y: prev.row.y + (next.row.y - prev.row.y) * t,
+      z: finiteNumber(prev.row.z) != null && finiteNumber(next.row.z) != null ? prev.row.z + (next.row.z - prev.row.z) * t : prev.row.z,
+      status: prev.row.status,
+    };
+  });
+}
+
 function f1TimingPositionRowsAt(sessionData, targetSeconds) {
+  const targetValue = finiteNumber(targetSeconds);
   const targetUtcMs = f1TimingTargetUtcMs(sessionData, targetSeconds);
   const { samples, driverCount } = f1TimingPositionSamples(sessionData);
+  if (Number.isFinite(targetUtcMs) && samples.length) {
+    const interpolated = f1TimingInterpolatedPositionRowsAt(samples, driverCount, targetUtcMs);
+    if (interpolated.length) return interpolated;
+  }
+  if (targetValue != null && targetValue < 1000000000 && samples.some((sample) => sample.seconds != null)) {
+    const bySeconds = samples
+      .filter((sample) => sample.seconds != null && sample.seconds <= targetValue)
+      .sort((a, b) => a.seconds - b.seconds || a.sequence - b.sequence || a.driverNumber - b.driverNumber);
+    const latestBySeconds = new Map();
+    for (let index = bySeconds.length - 1; index >= 0; index -= 1) {
+      const sample = bySeconds[index];
+      if (!latestBySeconds.has(sample.driverNumber)) latestBySeconds.set(sample.driverNumber, sample.row);
+      if (driverCount && latestBySeconds.size >= driverCount) break;
+    }
+    if (latestBySeconds.size) return Array.from(latestBySeconds, ([driverNumber, row]) => ({ driver_number: driverNumber, ...row }));
+  }
   if (!Number.isFinite(targetUtcMs)) {
     const entry = f1TimingLatestEntryAt(sessionData?.positionEntries || [], targetSeconds);
     const groups = Array.isArray(entry?.data?.Position)
@@ -3336,7 +3518,62 @@ function f1TimingPositionRowsAt(sessionData, targetSeconds) {
     if (!latest.has(sample.driverNumber)) latest.set(sample.driverNumber, sample.row);
     if (driverCount && latest.size >= driverCount) break;
   }
-  return Array.from(latest.values());
+  return Array.from(latest, ([driverNumber, row]) => ({ driver_number: driverNumber, ...row }));
+}
+
+function f1TimingPositionBounds(sessionData) {
+  const { samples } = f1TimingPositionSamples(sessionData);
+  const points = samples.map((sample) => sample.row).filter((row) => row && row.x != null && row.y != null);
+  if (!points.length) return null;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+    minY = Math.min(minY, point.y);
+    maxY = Math.max(maxY, point.y);
+  }
+  return {
+    minX,
+    maxX,
+    minY,
+    maxY,
+  };
+}
+
+function f1TimingPositionSamplePoints(sessionData, maxPoints = 240) {
+  // Downsampled, time-ordered trace of a single driver across the whole
+  // session, so the renderer can lock the map orientation even while cars are
+  // clustered (e.g. on the starting grid). A single driver in time order also
+  // carries the driving direction: consecutive points trace the lap, letting
+  // the renderer reject direction-reversed map fits that pure point-to-track
+  // distance cannot distinguish on elongated circuits.
+  const { samples } = f1TimingPositionSamples(sessionData);
+  if (!samples.length) return [];
+  const byDriver = new Map();
+  for (const sample of samples) {
+    if (!byDriver.has(sample.driverNumber)) byDriver.set(sample.driverNumber, []);
+    byDriver.get(sample.driverNumber).push(sample);
+  }
+  let trace = [];
+  for (const list of byDriver.values()) if (list.length > trace.length) trace = list;
+  trace = trace.filter((sample) => sample.row && sample.row.x != null && sample.row.y != null);
+  const onTrack = trace.filter((sample) => /^ontrack$/i.test(String(sample.row.status || "")));
+  const usable = onTrack.length >= 60 ? onTrack : trace;
+  // Drop stationary stretches (garage, grid, red flags): clusters of repeated
+  // off-line coordinates would otherwise bias the renderer's map fit.
+  const moving = [];
+  for (const sample of usable) {
+    const prev = moving[moving.length - 1];
+    if (!prev || Math.hypot(sample.row.x - prev.row.x, sample.row.y - prev.row.y) > 80) moving.push(sample);
+  }
+  const source = moving.length >= 60 ? moving : usable;
+  const step = Math.max(1, Math.floor(source.length / maxPoints));
+  const points = [];
+  for (let index = 0; index < source.length; index += step) {
+    const row = source[index].row;
+    points.push({ x: row.x, y: row.y });
+  }
+  return points;
 }
 
 function parseF1TimingWeatherState(state) {
@@ -3545,39 +3782,7 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
   } };
 }
 
-async function getReplayF1TimingSessionData(meetingKey, sessionKind, options = {}) {
-  const normalizedKind = normalizeOpenF1SessionKind(sessionKind || "Race");
-  const identityKey = [options.raceName, options.raceStartsAt, options.sessionStartsAt].filter(Boolean).join(":");
-  const cacheKey = `${meetingKey || "race"}:${normalizedKind}:${identityKey}`;
-  const cached = replayF1TimingCache.get(cacheKey);
-  const maxAgeMs = 1000 * 60 * 60;
-  if (cached && Date.now() - cached.createdAt < maxAgeMs) return cached.data;
-
-  const optionIdentity = f1TimingArchiveIdentityFromOptions(options, sessionKind);
-  let archive = null;
-  let resolvedMeeting = {};
-  let resolvedSession = {};
-  if (optionIdentity) {
-    try {
-      archive = await resolveF1TimingArchiveBase(optionIdentity.meeting, optionIdentity.session);
-      resolvedMeeting = optionIdentity.meeting;
-      resolvedSession = { ...optionIdentity.session };
-    } catch {}
-  }
-  if (!archive) {
-    if (!meetingKey) throw new Error("Formula 1 livetiming replay needs a race identity or OpenF1 meeting key.");
-    const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { meeting_key: meetingKey })).catch(() => []);
-    const sessions = await requestOpenF1Json(openF1ApiUrl("sessions", { meeting_key: meetingKey }));
-    const meeting = meetings?.[0] || {};
-    const selectedSession = (sessions || [])
-      .slice()
-      .sort((a, b) => scoreOpenF1ReplaySession(b, sessionKind) - scoreOpenF1ReplaySession(a, sessionKind))[0];
-    if (!selectedSession?.session_key) throw new Error(`No ${sessionKind} session matched this replay.`);
-    archive = await resolveF1TimingArchiveBase(meeting, selectedSession);
-    resolvedMeeting = meeting;
-    resolvedSession = selectedSession;
-  }
-  const baseUrl = archive.baseUrl;
+async function readF1TimingArchiveSessionData(resolvedMeeting, resolvedSession, baseUrl) {
   const [driverListText, timingText, appText, clockText, sessionDataText, statusText, trackStatusText, raceControlText, lapCountText, weatherText, carText, positionText] = await Promise.all([
     f1TimingRequestText(`${baseUrl}DriverList.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}TimingData.jsonStream`),
@@ -3611,8 +3816,263 @@ async function getReplayF1TimingSessionData(meetingKey, sessionKind, options = {
     carDataEntries: carText ? parseF1TimingJsonStream(carText, { zipped: true }) : [],
     positionEntries: positionText ? parseF1TimingJsonStream(positionText, { zipped: true }) : [],
   };
+  return data;
+}
+
+async function getReplayF1TimingSessionData(meetingKey, sessionKind, options = {}) {
+  const normalizedKind = normalizeOpenF1SessionKind(sessionKind || "Race");
+  const identityKey = [options.raceName, options.raceStartsAt, options.sessionStartsAt].filter(Boolean).join(":");
+  const cacheKey = `${meetingKey}:${normalizedKind}:${identityKey}`;
+  const cached = replayF1TimingCache.get(cacheKey);
+  const maxAgeMs = 1000 * 60 * 60;
+  if (cached && Date.now() - cached.createdAt < maxAgeMs) return cached.data;
+
+  const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { meeting_key: meetingKey })).catch(() => []);
+  const sessions = await requestOpenF1Json(openF1ApiUrl("sessions", { meeting_key: meetingKey }));
+  const meeting = meetings?.[0] || {};
+  const selectedSession = (sessions || [])
+    .slice()
+    .sort((a, b) => scoreOpenF1ReplaySession(b, sessionKind) - scoreOpenF1ReplaySession(a, sessionKind))[0];
+  if (!selectedSession?.session_key) throw new Error(`No ${sessionKind} session matched this replay.`);
+  const optionIdentity = f1TimingArchiveIdentityFromOptions(options, sessionKind);
+  let archive = null;
+  let resolvedMeeting = meeting;
+  let resolvedSession = selectedSession;
+  if (optionIdentity) {
+    try {
+      archive = await resolveF1TimingArchiveBase(optionIdentity.meeting, optionIdentity.session);
+      resolvedMeeting = optionIdentity.meeting;
+      resolvedSession = { ...selectedSession, ...optionIdentity.session };
+    } catch {}
+  }
+  if (!archive) archive = await resolveF1TimingArchiveBase(meeting, selectedSession);
+  const data = await readF1TimingArchiveSessionData(resolvedMeeting, resolvedSession, archive.baseUrl);
   replayF1TimingCache.set(cacheKey, { createdAt: Date.now(), data });
   if (replayF1TimingCache.size > 12) replayF1TimingCache = new Map(Array.from(replayF1TimingCache.entries()).slice(-8));
+  return data;
+}
+
+async function getTrackMapStaticF1TimingSessionData(options = {}) {
+  const sessionKind = String(options.sessionKind || "Race");
+  const identity = f1TimingArchiveIdentityFromOptions(options, sessionKind);
+  if (!identity) throw new Error("Track Map replay needs a race name and session start date.");
+  const staticCacheKey = [
+    identity.meeting?.meeting_name || identity.meeting?.name || "",
+    identity.session?.date_start || "",
+    sessionKind,
+  ].join(":");
+  const cached = trackMapReplaySessionCache.get(staticCacheKey);
+  if (cached && Date.now() - cached.createdAt < 1000 * 60 * 60) return cached.data;
+  const archive = await resolveF1TimingArchiveBase(identity.meeting, identity.session);
+  const baseUrl = archive.baseUrl;
+  const [driverListText, sessionDataText, lapCountText, weatherText, positionText] = await Promise.all([
+    f1TimingRequestText(`${baseUrl}DriverList.jsonStream`).catch(() => ""),
+    f1TimingRequestText(`${baseUrl}SessionData.jsonStream`).catch(() => ""),
+    f1TimingRequestText(`${baseUrl}LapCount.jsonStream`).catch(() => ""),
+    f1TimingRequestText(`${baseUrl}WeatherData.jsonStream`).catch(() => ""),
+    f1TimingRequestText(`${baseUrl}Position.z.jsonStream`).catch(() => ""),
+  ]);
+  const data = {
+    ok: true,
+    source: "Formula 1 livetiming",
+    meeting: identity.meeting,
+    selectedSession: identity.session,
+    baseUrl,
+    driverListEntries: driverListText ? parseF1TimingJsonStream(driverListText) : [],
+    sessionDataEntries: sessionDataText ? parseF1TimingJsonStream(sessionDataText) : [],
+    lapCountEntries: lapCountText ? parseF1TimingJsonStream(lapCountText) : [],
+    weatherEntries: weatherText ? parseF1TimingJsonStream(weatherText) : [],
+    carDataEntries: [],
+    positionEntries: positionText ? parseF1TimingJsonStream(positionText, { zipped: true }) : [],
+  };
+  trackMapReplaySessionCache.set(staticCacheKey, { createdAt: Date.now(), data });
+  if (trackMapReplaySessionCache.size > 8) trackMapReplaySessionCache = new Map(Array.from(trackMapReplaySessionCache.entries()).slice(-6));
+  return data;
+}
+
+function f1TimingRaceStartArchiveSeconds(sessionData) {
+  const timeline = f1TimingLapTimeline(sessionData);
+  const lap1 = timeline.find((item) => Number(item.lap) === 1);
+  const lap2 = timeline.find((item) => Number(item.lap) === 2);
+  const lapDiffs = [];
+  for (let index = 2; index < timeline.length; index += 1) {
+    const diff = finiteNumber(timeline[index].elapsedSeconds) - finiteNumber(timeline[index - 1].elapsedSeconds);
+    if (Number.isFinite(diff) && diff >= 40 && diff <= 180) lapDiffs.push(diff);
+  }
+  lapDiffs.sort((a, b) => a - b);
+  const typicalLapSeconds = lapDiffs.length ? lapDiffs[Math.floor(lapDiffs.length / 2)] : 90;
+  const lap1Seconds = finiteNumber(lap1?.elapsedSeconds) ?? finiteNumber(timeline[0]?.elapsedSeconds) ?? 0;
+  const lap2Seconds = finiteNumber(lap2?.elapsedSeconds);
+  if (lap2Seconds != null && lap2Seconds - lap1Seconds > typicalLapSeconds * 5) {
+    return Math.max(0, lap2Seconds - typicalLapSeconds);
+  }
+  return Math.max(0, lap1Seconds);
+}
+
+function getTrackMapF1TimingStreamEntries(baseUrl) {
+  // Full-session timing streams are fetched and parsed ONCE per session and
+  // shared across replay polls. Re-streaming TimingData from byte zero on
+  // every 270ms poll costs megabytes of bandwidth and hundreds of
+  // milliseconds of parsing by the late race, which starves the renderer of
+  // position updates. Downstream consumers stop merging at their target time,
+  // so complete chronological arrays behave exactly like windowed slices —
+  // and stable array references are what the state/sample caches key on.
+  const cached = trackMapReplayStreamCache.get(baseUrl);
+  if (cached && Date.now() - cached.createdAt < 1000 * 60 * 60) return cached.promise;
+  const promise = Promise.all([
+    f1TimingRequestJsonStreamEntries(`${baseUrl}TimingData.jsonStream`),
+    f1TimingRequestJsonStreamEntries(`${baseUrl}TimingAppData.jsonStream`).catch(() => []),
+    f1TimingRequestJsonStreamEntries(`${baseUrl}ExtrapolatedClock.jsonStream`).catch(() => []),
+    f1TimingRequestJsonStreamEntries(`${baseUrl}SessionStatus.jsonStream`).catch(() => []),
+    f1TimingRequestJsonStreamEntries(`${baseUrl}TrackStatus.jsonStream`).catch(() => []),
+    f1TimingRequestJsonStreamEntries(`${baseUrl}RaceControlMessages.jsonStream`).catch(() => []),
+  ]).then(([timingEntries, timingAppEntries, clockEntries, sessionStatusEntries, trackStatusEntries, raceControlEntries]) => ({
+    timingEntries,
+    timingAppEntries,
+    clockEntries,
+    sessionStatusEntries,
+    trackStatusEntries,
+    raceControlEntries,
+  }));
+  promise.catch(() => {
+    if (trackMapReplayStreamCache.get(baseUrl)?.promise === promise) trackMapReplayStreamCache.delete(baseUrl);
+  });
+  trackMapReplayStreamCache.set(baseUrl, { createdAt: Date.now(), promise });
+  if (trackMapReplayStreamCache.size > 4) trackMapReplayStreamCache = new Map(Array.from(trackMapReplayStreamCache.entries()).slice(-3));
+  return promise;
+}
+
+async function getTrackMapF1TimingSessionData(options = {}) {
+  const elapsedSeconds = Math.max(0, Number(options.elapsedSeconds || 0));
+  const staticData = await getTrackMapStaticF1TimingSessionData(options);
+  const preStartSeconds = Math.max(0, Number(options.preStartSeconds ?? 5));
+  const raceStartArchiveSeconds = f1TimingRaceStartArchiveSeconds(staticData);
+  const targetSeconds = options.raceRelative
+    ? Math.max(0, raceStartArchiveSeconds - preStartSeconds + elapsedSeconds)
+    : elapsedSeconds;
+  const streams = await getTrackMapF1TimingStreamEntries(staticData.baseUrl);
+  return {
+    ...staticData,
+    ...streams,
+    raceStartArchiveSeconds,
+    replayTargetSeconds: targetSeconds,
+    replayRelativeSeconds: elapsedSeconds,
+    replayPreStartSeconds: preStartSeconds,
+  };
+}
+
+function f1TimingReplayDurationSeconds(sessionData, parsed) {
+  const fromLapTimeline = f1TimingLapTimeline(sessionData).at(-1)?.elapsedSeconds;
+  const lastSeconds = (entries) => {
+    let max = 0;
+    for (const entry of entries || []) {
+      const value = finiteNumber(entry?.seconds);
+      if (value != null && value > max) max = value;
+    }
+    return max;
+  };
+  // Timing/SessionStatus streams now span the whole archive (fetched once per
+  // session) and often run long past the chequered flag, so the scrub range
+  // comes from the lap timeline and position coverage; raw stream extents are
+  // only a fallback when both are missing.
+  const primary = Math.max(fromLapTimeline || 0, lastSeconds(sessionData?.lapCountEntries), lastSeconds(sessionData?.positionEntries));
+  const fallback = primary > 0 ? 0 : Math.max(lastSeconds(sessionData?.timingEntries), lastSeconds(sessionData?.sessionStatusEntries));
+  return Math.max(1, primary, fallback, parsed?.diagnostics?.targetSeconds || 0);
+}
+
+function trackMapPositionOnlyTimingRows(sessionData, targetSeconds, positionByNumber) {
+  const timestampState = f1TimingStateAt(sessionData?.driverListEntries || [], targetSeconds) || {};
+  const driverState = Object.keys(timestampState).length ? timestampState : sessionData?.driverListEntries?.[0]?.data || {};
+  return Object.entries(driverState).map(([numberText, driver], index) => {
+    const number = Number(driver?.RacingNumber || numberText);
+    const trackPosition = positionByNumber.get(number);
+    if (!Number.isFinite(number)) return null;
+    return {
+      pos: finiteNumber(driver?.Line) ?? index + 1,
+      code: String(driver?.Tla || driver?.BroadcastName || numberText).slice(0, 3).toUpperCase(),
+      number,
+      last: "",
+      best: "",
+      gap: "—",
+      interval: "—",
+      trend: "flat",
+      comp: "",
+      age: "",
+      pits: "",
+      sectors: { s1: [], s2: [], s3: [] },
+      sectorTimes: { s1: "", s2: "", s3: "" },
+      bestSectorTimes: { s1: "", s2: "", s3: "" },
+      telemetry: {},
+      trackPosition,
+    };
+  }).filter(Boolean).sort((a, b) => a.pos - b.pos);
+}
+
+async function getTrackMapReplayTimingSnapshot(options = {}) {
+  const sessionKind = String(options.sessionKind || "Race");
+  const elapsedSeconds = Math.max(0, Number(options.elapsedSeconds || 0));
+  const cacheKey = [
+    options.raceName || options.eventName || "",
+    options.raceStartsAt || options.startsAt || "",
+    options.sessionStartsAt || "",
+    sessionKind,
+    options.raceRelative ? "relative" : "program",
+    Math.floor((elapsedSeconds * 1000) / 270),
+  ].join(":");
+  const cached = trackMapReplayTimingCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < 5000) return cached.data;
+
+  const sessionData = await getTrackMapF1TimingSessionData({ ...options, elapsedSeconds });
+  const targetSeconds = sessionData.replayTargetSeconds ?? elapsedSeconds;
+  const parsed = parseF1TimingArchiveRows(sessionData, targetSeconds, { timingAnchor: "program" });
+  const targetUtcMs = f1TimingTargetUtcMs(sessionData, targetSeconds);
+  const positionByNumber = new Map(f1TimingPositionRowsAt(sessionData, parsed.diagnostics?.targetSeconds ?? targetSeconds).map((row) => [
+    Number(row.driver_number),
+    { date: row.date, x: row.x, y: row.y, z: row.z, status: row.status },
+  ]).filter(([, row]) => {
+    const rowUtcMs = Date.parse(row.date || "");
+    // 4s matches the interpolation bracket limit: anything older is a real
+    // coverage hole, and holding frozen cars for 10s before the fallback took
+    // over looked like the field stalling at gap edges.
+    return !Number.isFinite(targetUtcMs) || !Number.isFinite(rowUtcMs) || Math.abs(targetUtcMs - rowUtcMs) <= 4000;
+  }));
+  const timingRows = parsed.timing.length
+    ? parsed.timing
+    : trackMapPositionOnlyTimingRows(sessionData, parsed.diagnostics?.targetSeconds ?? targetSeconds, positionByNumber);
+  const timing = timingRows.map((row) => ({
+    ...row,
+    trackPosition: positionByNumber.get(Number(row.number)) || null,
+  }));
+  const relativeOffset = options.raceRelative ? Math.max(0, (sessionData.raceStartArchiveSeconds || 0) - (sessionData.replayPreStartSeconds || 0)) : 0;
+  const lapTimeline = f1TimingLapTimeline(sessionData).map((item) => ({
+    ...item,
+    elapsedSeconds: Math.max(0, Number((item.elapsedSeconds - relativeOffset).toFixed(3))),
+  }));
+  const data = {
+    ok: timing.length > 0,
+    sessionKind: sessionData.selectedSession?.session_name || sessionKind,
+    elapsedSeconds,
+    targetSeconds,
+    durationSeconds: Math.max(1, f1TimingReplayDurationSeconds(sessionData, parsed) - relativeOffset),
+    sourceLabel: "Formula 1 livetiming track map replay",
+    timing,
+    weather: parsed.weather,
+    sessionClock: parsed.sessionClock,
+    raceControlMessages: parsed.raceControlMessages,
+    lapTimeline,
+    trackPositionBounds: f1TimingPositionBounds(sessionData),
+    trackPositionSample: f1TimingPositionSamplePoints(sessionData),
+    diagnostics: {
+      ...(parsed.diagnostics || {}),
+      raceStartArchiveSeconds: sessionData.raceStartArchiveSeconds,
+      replayTargetSeconds: targetSeconds,
+      positionEntries: sessionData.positionEntries?.length || 0,
+      positionedCars: timing.filter((row) => row.trackPosition).length,
+    },
+    message: timing.length ? "" : "Formula 1 livetiming has no replay rows at this timestamp yet.",
+  };
+  trackMapReplayTimingCache.set(cacheKey, { createdAt: Date.now(), data });
+  if (trackMapReplayTimingCache.size > 120) trackMapReplayTimingCache = new Map(Array.from(trackMapReplayTimingCache.entries()).slice(-80));
   return data;
 }
 
@@ -4021,19 +4481,16 @@ async function getReplayOpenF1TimingSnapshot(options = {}) {
 
 async function getReplayTimingSnapshot(options = {}) {
   const meetingKey = String(options.meetingKey || "").replace(/[^0-9]/g, "");
+  if (!meetingKey) return { ok: false, timing: [], weather: {}, message: "Replay timing needs an OpenF1 meeting key." };
   const sessionKind = String(options.sessionKind || "Race");
   const elapsedSeconds = Math.max(0, Number(options.elapsedSeconds || 0));
-  const strictF1Timing = /f1timing|formula1|official/i.test(String(options.source || options.provider || ""));
-  const identityKey = [options.raceName, options.raceStartsAt || options.startsAt, options.sessionStartsAt].filter(Boolean).join(":");
-  if (!meetingKey && !identityKey) return { ok: false, timing: [], weather: {}, message: "Replay timing needs a race identity or meeting key." };
   const videoStartKey = options.videoStartUtc || String(finiteNumber(options.videoStartArchiveSeconds) ?? "");
-  const cacheKey = `f1:${meetingKey || identityKey}:${normalizeOpenF1SessionKind(sessionKind)}:${Math.floor(elapsedSeconds * 10)}:${videoStartKey}:${strictF1Timing ? "strict" : "fallback"}`;
+  const cacheKey = `f1:${meetingKey}:${normalizeOpenF1SessionKind(sessionKind)}:${Math.floor(elapsedSeconds * 10)}:${videoStartKey}`;
   const cached = replayTimingCache.get(cacheKey);
   if (cached && Date.now() - cached.createdAt < 5000) return cached.data;
 
-  let f1TimingError = null;
   try {
-    const sessionData = await getReplayF1TimingSessionData(meetingKey, sessionKind, options);
+    const sessionData = await getReplayF1TimingSessionData(meetingKey, sessionKind);
     const parsed = parseF1TimingArchiveRows(sessionData, elapsedSeconds, {
       timingAnchor: "program",
       videoStartUtc: options.videoStartUtc,
@@ -4053,7 +4510,6 @@ async function getReplayTimingSnapshot(options = {}) {
         weather: parsed.weather,
         sessionClock: parsed.sessionClock,
         raceControlMessages: parsed.raceControlMessages,
-        lapTimeline: parsed.lapTimeline,
         diagnostics: parsed.diagnostics,
         message: parsed.timing.some((row) => row.last || row.best) ? "" : "Formula 1 timing is loaded; lap times will appear once the session has data.",
       };
@@ -4061,45 +4517,12 @@ async function getReplayTimingSnapshot(options = {}) {
       if (replayTimingCache.size > 120) replayTimingCache = new Map(Array.from(replayTimingCache.entries()).slice(-80));
       return data;
     }
-    if (parsed.lapTimeline?.length) {
-      const data = {
-        ok: true,
-        sessionKey: sessionData.selectedSession?.session_key,
-        sessionKind: sessionData.selectedSession?.session_name || sessionKind,
-        elapsedSeconds,
-        targetDate: "",
-        sourceLabel: "F1 timing waiting for race start",
-        timing: [],
-        weather: parsed.weather,
-        sessionClock: parsed.sessionClock,
-        raceControlMessages: parsed.raceControlMessages,
-        lapTimeline: parsed.lapTimeline,
-        diagnostics: parsed.diagnostics,
-        message: "Formula 1 timing is loaded; jumping to the start of lap 1.",
-      };
-      replayTimingCache.set(cacheKey, { createdAt: Date.now(), data });
-      if (replayTimingCache.size > 120) replayTimingCache = new Map(Array.from(replayTimingCache.entries()).slice(-80));
-      return data;
-    }
   } catch (error) {
-    f1TimingError = error;
     writePitWallDebugLog("f1timing.replay-fallback", {
       meetingKey,
       sessionKind,
       message: error?.message || "Formula 1 timing unavailable",
     });
-  }
-
-  if (strictF1Timing || !meetingKey) {
-    return {
-      ok: false,
-      timing: [],
-      weather: {},
-      sessionClock: null,
-      raceControlMessages: [],
-      sourceLabel: "Formula 1 replay timing unavailable",
-      message: f1TimingError?.message || "Formula 1 livetiming replay data is unavailable for this selection.",
-    };
   }
 
   const fallback = await getReplayOpenF1TimingSnapshot(options);
@@ -4112,17 +4535,54 @@ async function getReplayTimingSnapshot(options = {}) {
 
 async function getLiveTimingSnapshot(options = {}) {
   const targetLatencySeconds = Math.max(0, Math.min(90, Number(options.targetLatencySeconds || 0)));
+  const requestedSource = String(options.source || options.provider || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const f1Only = requestedSource === "f1" || requestedSource === "formula1";
   const f1Timing = getF1LiveTimingSnapshot({ targetLatencySeconds });
   if (f1Timing?.timing?.length) return f1Timing;
-  return {
-    ok: false,
-    sourceLabel: "Formula 1 live timing unavailable",
+  if (f1Only) {
+    return {
+      ok: false,
+      sourceLabel: "Formula 1 live timing unavailable",
+      fetchedAt: new Date().toISOString(),
+      timing: [],
+      weather: {},
+      errors: f1LiveTimingState?.lastError ? [f1LiveTimingState.lastError] : [],
+      message: f1LiveTimingState?.lastMessageAt ? "Formula 1 live timing has no current rows." : "Formula 1 live timing is still connecting.",
+    };
+  }
+  const cacheKey = `openf1:${Math.round(targetLatencySeconds)}`;
+  if (liveTimingCache?.key === cacheKey && Date.now() - liveTimingCache.createdAt < 15000) return liveTimingCache.data;
+  const keys = ["openF1Drivers", "openF1Position", "openF1Intervals", "openF1Laps", "openF1Stints", "openF1Pit", "openF1Weather", "openF1CarData"];
+  const entries = [];
+  for (const key of keys) {
+    try {
+      const url = key === "openF1CarData"
+        ? openF1ApiUrl("car_data", { session_key: "latest", "date>": new Date(Date.now() - 10000).toISOString() })
+        : LIVE_DATA_URLS[key];
+      entries.push({ key, value: await requestOpenF1Json(url) });
+    } catch (error) {
+      entries.push({ key, error });
+    }
+  }
+  const raw = {};
+  const errors = [];
+  for (const result of entries) {
+    if (!result.error) raw[result.key] = result.value;
+    else if (!OPTIONAL_LIVE_DATA_KEYS.has(result.key)) errors.push(result.error.message);
+  }
+  const timing = parseTiming(raw.openF1Drivers, raw.openF1Position, raw.openF1Intervals, [], raw.openF1Stints, raw.openF1Pit, raw.openF1Laps, raw.openF1CarData);
+  const weather = parseWeather(raw.openF1Weather || []);
+  const data = {
+    ok: timing.length > 0,
+    sourceLabel: errors.length ? `Live timing (${errors.length} source issue${errors.length === 1 ? "" : "s"})` : "Live timing",
     fetchedAt: new Date().toISOString(),
-    timing: [],
-    weather: {},
-    errors: f1LiveTimingState?.lastError ? [f1LiveTimingState.lastError] : [],
-    message: f1LiveTimingState?.lastMessageAt ? "Formula 1 live timing has no current rows." : "Formula 1 live timing is still connecting.",
+    timing,
+    weather,
+    errors,
+    message: timing.length ? "" : "OpenF1 has no current live timing rows.",
   };
+  liveTimingCache = { key: cacheKey, createdAt: Date.now(), data };
+  return data;
 }
 
 function latestLapsByDriverNumber(rows) {
@@ -4226,9 +4686,30 @@ function copilotInsightsFilePath() {
 }
 
 function sanitizeAiError(error) {
-  return String(error?.message || error || "AI calculation failed.")
+  const message = String(error?.message || error || "AI calculation failed.");
+  if (/Timeout for https:\/\/chatgpt\.com\/backend-api\/codex\/responses/i.test(message)) {
+    return "ChatGPT/Codex provider timed out. Apexline will retry daily projections shortly.";
+  }
+  return message
     .replace(/[A-Za-z0-9_-]{80,}/g, "[redacted]")
     .slice(0, 240);
+}
+
+function sanitizeCopilotInsightsCache(value) {
+  if (Array.isArray(value)) return value.map(sanitizeCopilotInsightsCache);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeCopilotInsightsCache(item)]));
+  }
+  if (typeof value !== "string") return value;
+  return value.replace(
+    /Timeout for https:\/\/chatgpt\.com\/backend-api\/codex\/responses/gi,
+    () => sanitizeAiError("Timeout for https://chatgpt.com/backend-api/codex/responses"),
+  );
+}
+
+function copilotCacheHasRawAiTimeout(value) {
+  const text = typeof value === "string" ? value : JSON.stringify(value || {});
+  return /Timeout for https:\/\/chatgpt\.com\/backend-api\/codex\/responses/i.test(String(text || ""));
 }
 
 async function readCopilotInsightsCache() {
@@ -4594,6 +5075,35 @@ function fallbackCopilotInsightPages(data, summary) {
   }));
 }
 
+function dailyCopilotProgress({ status = "pending", currentPage = null, currentIndex = 0, completedPages = 0, error = "" } = {}) {
+  const totalPages = COPILOT_INSIGHT_PAGES.length;
+  const pageIndex = Math.max(0, Math.min(totalPages - 1, Number(currentIndex) || 0));
+  const activePage = currentPage || COPILOT_INSIGHT_PAGES[pageIndex] || null;
+  const items = COPILOT_INSIGHT_PAGES.map((page, index) => ({
+    id: page.id,
+    title: page.title,
+    status: index < completedPages ? "computed" : page.id === activePage?.id && status === "thinking" ? "thinking" : status === "failed" && page.id === activePage?.id ? "failed" : "waiting",
+  }));
+  const statusText = status === "completed"
+    ? "Daily AI projections are computed."
+    : status === "failed"
+      ? `Stopped while computing ${activePage?.title || "daily projections"}.`
+      : status === "thinking"
+        ? `Thinking through ${activePage?.title || "daily projections"}...`
+        : "Daily AI projection generation is queued.";
+  return {
+    status,
+    currentPageId: activePage?.id || "",
+    currentPageTitle: activePage?.title || "",
+    completedPages,
+    totalPages,
+    statusText,
+    error: String(error || ""),
+    items,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 async function hasConfiguredAiProvider() {
   try {
     const [grok, codex] = await Promise.all([
@@ -4607,6 +5117,7 @@ async function hasConfiguredAiProvider() {
 }
 
 function dailyInsightPrompt(page) {
+  const projectionEvidenceGuide = "For projections, provide these possible evidence sources without prescribing weights: 1. This week's F1 news, or the ability to search for it when available. 2. Every race this season's results. 3. Past results at this track. 4. Driver skill overall. 5. Freedom to find and use other relevant sources. The model decides how to weigh these sources, synthesize contradictions, and explain which data supports each pick.";
   const instructions = [
     `Build the daily precomputed Apexline Copilot page for: ${page.title}.`,
     "Use only the provided snapshot. Do not invent tyre data, session results, weather, or factual claims not present in the snapshot.",
@@ -4614,13 +5125,13 @@ function dailyInsightPrompt(page) {
     "Return concise race-engineer language with alerts only for real risks or uncertainties in the supplied data.",
   ];
   if (page.id === "current-weekend") {
-    instructions.push("For this Current weekend page, compute AI predictions for the race winner, podium, and watchlist using only the supplied snapshot. Use snapshot.weekendSessionSummaries for FP1-FP3, sprint, qualifying, race-pace, weather, tyre, and session-result evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. If qualifying, race pace, weather, or timing data is missing, lower confidence and say so instead of filling gaps.");
+    instructions.push(`For this Current weekend page, compute AI predictions for the race winner, podium, and watchlist. ${projectionEvidenceGuide} Use supplied snapshot.weekendSessionSummaries for FP1-FP3, sprint, qualifying, race-pace, weather, tyre, and session-result evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. If qualifying, race pace, weather, or timing data is missing, lower confidence and say so instead of filling gaps.`);
   } else if (page.id === "next-weekend") {
-    instructions.push("For this Next weekend page, compute AI predictions for the race winner, podium, watchlist, and the next upcoming session full predicted leaderboard using only the supplied snapshot. Treat snapshot.nextUpcomingSession as the target when it exists; otherwise use snapshot.nextRaceWeekend. Use cumulative evidence from snapshot.performanceContext plus the rest of the snapshot: current-season race performance across completed tracks, performance last season, target-circuit history, standings, constructors, strategy context, schedule, weather/tyre evidence, and relevant news. Do not use a fixed weighting; synthesize the evidence, call out contradictions, and explain which supplied data supports each pick. Put predictions in predictions with available=true, include the full predicted leaderboard in predictions.leaderboard in finishing order, label it as a projection, and explain the data behind each pick. If session, race pace, weather, tyre, season-performance, track-history, or timing data is missing for the next weekend, lower confidence and say so instead of filling gaps.");
+    instructions.push(`For this Next weekend page, compute AI predictions for the Grand Prix race winner, podium, watchlist, and full predicted race finishing order. Treat snapshot.nextRaceWeekend as the race target; snapshot.nextUpcomingSession is schedule context only and must not change the leaderboard into FP1, qualifying, sprint, or any other session projection. ${projectionEvidenceGuide} Use supplied snapshot.performanceContext plus the rest of the snapshot when present. Put predictions in predictions with available=true, include the full predicted race finishing order in predictions.leaderboard, label it as a race projection, and explain the data behind each pick. If race pace, weather, tyre, season-performance, track-history, or timing data is missing for the next weekend, lower confidence and say so instead of filling gaps.`);
   } else if (page.id === "drivers-championship") {
-    instructions.push("For this Drivers championship page, compute AI predictions for the drivers' championship winner, leading title contenders, and watchlist using only the supplied snapshot. Use standings, wins, constructors, schedule, season summary, timing, strategy context, and news evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. If remaining-race count, form, reliability, or pace data is missing, lower confidence and say so instead of filling gaps.");
+    instructions.push(`For this Drivers championship page, compute AI predictions for the drivers' championship winner, leading title contenders, and watchlist. ${projectionEvidenceGuide} Use supplied standings, wins, constructors, schedule, season summary, timing, strategy context, and news evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. If remaining-race count, form, reliability, or pace data is missing, lower confidence and say so instead of filling gaps.`);
   } else if (page.id === "constructors-championship") {
-    instructions.push("For this Constructors championship page, compute AI predictions for the constructors' championship winner, leading title contenders, and watchlist using only the supplied snapshot. Use constructors standings, driver standings, schedule, season summary, timing, strategy context, and news evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. Use constructor abbreviations or names in prediction candidate code fields. If remaining-race count, form, reliability, or pace data is missing, lower confidence and say so instead of filling gaps.");
+    instructions.push(`For this Constructors championship page, compute AI predictions for the constructors' championship winner, leading title contenders, and watchlist. ${projectionEvidenceGuide} Use supplied constructors standings, driver standings, schedule, season summary, timing, strategy context, and news evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. Use constructor abbreviations or names in prediction candidate code fields. If remaining-race count, form, reliability, or pace data is missing, lower confidence and say so instead of filling gaps.`);
   } else {
     instructions.push("For predictions, set available=false with empty winner, podium, leaderboard, and watchlist arrays.");
   }
@@ -4680,12 +5191,24 @@ async function refreshDailyCopilotInsights(data, generatedOn) {
     generatedOn: "",
     generatedAt: "",
     updatedAt: new Date().toISOString(),
+    progress: dailyCopilotProgress(),
     pages: fallbackCopilotInsightPages(data, "Daily AI insight generation has started and has not finished yet."),
   };
+  if (liveDataCache?.data) liveDataCache.data.copilot = { daily: pending };
   await writeCopilotInsightsCache(pending);
+  let progress = pending.progress;
+  const pages = [];
   try {
-    const pages = [];
-    for (const page of COPILOT_INSIGHT_PAGES) {
+    for (const [index, page] of COPILOT_INSIGHT_PAGES.entries()) {
+      progress = dailyCopilotProgress({ status: "thinking", currentPage: page, currentIndex: index, completedPages: pages.length });
+      const progressUpdate = {
+        ...pending,
+        updatedAt: new Date().toISOString(),
+        progress,
+        pages: pages.concat(fallbackCopilotInsightPages(data, progress.statusText).slice(pages.length)),
+      };
+      if (liveDataCache?.data) liveDataCache.data.copilot = { daily: progressUpdate };
+      await writeCopilotInsightsCache(progressUpdate);
       const answer = await askConfiguredAi({
         prompt: dailyInsightPrompt(page),
         snapshot: await dailyInsightSnapshot(data, page.id),
@@ -4699,6 +5222,7 @@ async function refreshDailyCopilotInsights(data, generatedOn) {
       generatedOn,
       generatedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      progress: dailyCopilotProgress({ status: "completed", currentPage: COPILOT_INSIGHT_PAGES.at(-1), currentIndex: COPILOT_INSIGHT_PAGES.length - 1, completedPages: COPILOT_INSIGHT_PAGES.length }),
       pages,
     };
     if (liveDataCache?.data) liveDataCache.data.copilot = { daily: ready };
@@ -4712,6 +5236,7 @@ async function refreshDailyCopilotInsights(data, generatedOn) {
       generatedAt: "",
       updatedAt: new Date().toISOString(),
       error: sanitizeAiError(error),
+      progress: dailyCopilotProgress({ status: "failed", currentPage: COPILOT_INSIGHT_PAGES.find((page) => page.id === progress.currentPageId), completedPages: pages.length, error: sanitizeAiError(error) }),
       pages: fallbackCopilotInsightPages(data, `No AI projection computed today. Daily calculation failed: ${sanitizeAiError(error)}`),
     };
     if (liveDataCache?.data) liveDataCache.data.copilot = { daily: failed };
@@ -4721,11 +5246,13 @@ async function refreshDailyCopilotInsights(data, generatedOn) {
 
 async function getDailyCopilotInsights(data) {
   const today = localDateKey();
-  const cached = await readCopilotInsightsCache();
+  const rawCached = await readCopilotInsightsCache();
+  const cachedHadRawAiTimeout = copilotCacheHasRawAiTimeout(rawCached);
+  const cached = sanitizeCopilotInsightsCache(rawCached);
   const cachedSchemaMatches = cached?.schemaVersion === COPILOT_INSIGHTS_SCHEMA_VERSION;
   const usableCached = cachedSchemaMatches ? cached : null;
   if (usableCached?.generatedOn === today && usableCached.status === "ready") return usableCached;
-  if (usableCached?.attemptedOn === today && usableCached.status !== "ready" && !shouldRetryDailyCopilotInsights(usableCached, today)) return usableCached;
+  if (usableCached?.attemptedOn === today && usableCached.status !== "ready" && !cachedHadRawAiTimeout && !shouldRetryDailyCopilotInsights(usableCached, today)) return usableCached;
   if (!(await hasConfiguredAiProvider())) {
     return {
       schemaVersion: COPILOT_INSIGHTS_SCHEMA_VERSION,
@@ -4734,6 +5261,7 @@ async function getDailyCopilotInsights(data) {
       generatedOn: "",
       generatedAt: "",
       updatedAt: new Date().toISOString(),
+      progress: dailyCopilotProgress({ status: "failed", error: "Connect an AI provider to generate daily prebuilt insights." }),
       pages: fallbackCopilotInsightPages(data, "No AI projection computed. Connect an AI provider to generate daily prebuilt insights."),
     };
   }
@@ -4749,6 +5277,7 @@ async function getDailyCopilotInsights(data) {
     generatedOn: "",
     generatedAt: "",
     updatedAt: new Date().toISOString(),
+    progress: dailyCopilotProgress(),
     pages: fallbackCopilotInsightPages(data, "Daily AI insight generation is queued for today."),
   };
 }
@@ -4824,10 +5353,10 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
       effectiveSchedule = applyScheduleWinners(effectiveSchedule, raceWinners);
     }
   }
-  const drivers = parseOpenDrivers([], fallbackData.drivers, driverResult.standings);
+  const drivers = parseOpenDrivers(raw.openF1Drivers, fallbackData.drivers, driverResult.standings);
   const byCode = Object.fromEntries(drivers.map((driver) => [driver.code, driver]));
   const recentForm = parseDriverRecentForm(raw.driverResults);
-  const timing = [];
+  const timing = parseTiming(raw.openF1Drivers, raw.openF1Position, raw.openF1Intervals, driverResult.standings, raw.openF1Stints, raw.openF1Pit, raw.openF1Laps, raw.openF1CarData);
   const battlePairs = detectBattlePairs(timing);
   const nextRace = effectiveSchedule.find((race) => race.status === "live") || effectiveSchedule.find((race) => race.status === "upcoming") || effectiveSchedule.at(-1) || {};
   let weatherRows = Array.isArray(raw.openF1Weather) ? raw.openF1Weather : [];
@@ -4906,8 +5435,11 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
 function refreshLiveDataEnrichment(baseRaw, baseErrors, baseData) {
   if (liveDataEnrichmentRefresh) return liveDataEnrichmentRefresh;
   liveDataEnrichmentRefresh = (async () => {
-    const recentDriverResults = await fetchRecentDriverResults(baseData.schedule);
-    const raw = { ...baseRaw };
+    const [enrichment, recentDriverResults] = await Promise.all([
+      fetchLiveDataEntries(LIVE_TIMING_ENRICHMENT_URLS),
+      fetchRecentDriverResults(baseData.schedule),
+    ]);
+    const raw = { ...baseRaw, ...enrichment.raw };
     if (recentDriverResults) raw.driverResults = recentDriverResults;
     const data = await buildPitWallSnapshot(raw, baseErrors, {
       includeWeekendWeatherFallback: true,
@@ -5755,8 +6287,15 @@ async function fetchDirectF1TvPlayMetadata(webContents, contentId, playbackToken
           const licenseUrls = hints.filter((hint) => (/^https?:\\/\\//i.test(hint.text) || hint.text.startsWith("/")) && (rxLicense.test(hint.text) || rxLicense.test(hint.keyPath))).map((hint) => hint.text);
           const label = hints.filter((hint) => !/^https?:\\/\\//i.test(hint.text) && !hint.text.startsWith("/") && hint.text.length < 180)
             .map((hint) => hint.keyPath.split(".").slice(-1)[0] + ":" + hint.text).join(" ").slice(0, 700);
+          const titleHint = hints.find((hint) => {
+            const leaf = hint.keyPath.split(".").slice(-1)[0].toLowerCase();
+            return /^(title|name|channelname|feedname|displayname|caption|label)$/.test(leaf)
+              && hint.text && hint.text.length <= 60
+              && !/^https?:|^\\//i.test(hint.text) && !/[{}\\[\\]:]/.test(hint.text);
+          });
+          const title = titleHint ? titleHint.text.trim() : "";
           bucket.streamItems = bucket.streamItems || [];
-          manifestHints.forEach((hint) => bucket.streamItems.push({ manifest: hint.text, licenseUrls, label, path: path.join(".") }));
+          manifestHints.forEach((hint) => bucket.streamItems.push({ manifest: hint.text, licenseUrls, label, title, path: path.join(".") }));
         }
         Object.entries(value).forEach(([key, item]) => walk(item, path.concat(key), bucket));
       };
@@ -6029,6 +6568,7 @@ function f1TvStreamDescriptor(targetUrl, extra = {}) {
     feedId: extra.feedId || driverCode || genericFeed,
     kind: extra.kind || (driverCode ? "onboard" : "world"),
     label,
+    title: extra.title || "",
     driverCode,
     manifestUrl: targetUrl,
     manifestType,
@@ -6046,13 +6586,15 @@ function streamMetadataByManifest(directPlay = {}) {
     const manifest = String(item.manifest || "");
     if (!manifest || !isF1TvManifestUrl(manifest)) continue;
     const label = String(item.label || item.path || "");
-    const driverCode = driverCodeFromF1TvText(`${label} ${manifest}`);
+    const title = String(item.title || "").trim();
+    const driverCode = driverCodeFromF1TvText(`${title} ${label} ${manifest}`);
     const channelId = String(item.channelId || "").replace(/[^A-Za-z0-9_-]/g, "");
     metadata.set(manifest, {
       label: label || f1TvStreamLabel(manifest),
+      title,
       driverCode,
       feedId: driverCode || channelId || "",
-      kind: driverCode ? "onboard" : /main|world|wif|presentation/i.test(`${label} ${manifest}`) ? "world" : "feed",
+      kind: driverCode ? "onboard" : /main|world|wif|presentation/i.test(`${title} ${label} ${manifest}`) ? "world" : "feed",
     });
   }
   return metadata;
@@ -7139,7 +7681,7 @@ function aiPayload(options = {}) {
     prompt: String(options.prompt || "Summarize the live F1 snapshot."),
     snapshot: options.snapshot || {},
     visualizationGuide: "Return visualization.kind='none' for text-only answers. Use 'tyre_strategy' with one row per relevant driver when tyre, stint, pit, compound, or race-plan data is best shown visually.",
-    predictionGuide: "Return predictions.available=true only for daily Current weekend, Next weekend, Drivers championship, or Constructors championship projection pages. For Next weekend, include predictions.leaderboard as the full predicted next upcoming session order. Otherwise use available=false with empty winner, podium, leaderboard, and watchlist arrays.",
+    predictionGuide: "Return predictions.available=true only for daily Current weekend, Next weekend, Drivers championship, or Constructors championship projection pages. For Next weekend, include predictions.leaderboard as the full predicted Grand Prix race finishing order, not FP1, qualifying, sprint, or any other next scheduled session order. Otherwise use available=false with empty winner, podium, leaderboard, and watchlist arrays.",
     generatedAt: new Date().toISOString(),
   };
 }
@@ -7210,7 +7752,7 @@ function responsesBody(model, options = {}) {
     max_output_tokens: 900,
   };
   if (/^gpt-5\.(4|5)/.test(model)) {
-    body.reasoning = { effort: "low" };
+    body.reasoning = { effort: model === "gpt-5.4-mini" ? "high" : "low" };
     delete body.max_output_tokens;
   }
   return body;
@@ -7231,7 +7773,7 @@ function codexResponsesBody(model, options = {}) {
         schema: AI_RESPONSE_SCHEMA,
       },
     },
-    reasoning: { effort: "low" },
+    reasoning: { effort: model === "gpt-5.4-mini" ? "high" : "low" },
     store: false,
     stream: true,
   };
@@ -7268,7 +7810,7 @@ async function requestCodexResponsesStream(targetUrl, body, headers = {}) {
   const text = await requestTextPost(targetUrl, body, {
     "Accept": "text/event-stream, application/json",
     ...headers,
-  });
+  }, AI_PROVIDER_TIMEOUT_MS);
   return parseCodexResponsesStream(text);
 }
 
@@ -7291,7 +7833,7 @@ async function askGrok(options = {}) {
   const tokens = await getActiveOAuthSession("grok");
   if (!tokens) throw new Error("Connect Grok in Settings first.");
   const model = knownModel(options.model, GROK_MODELS, DEFAULT_GROK_MODEL);
-  const raw = await requestJsonPost(GROK_CHAT_COMPLETIONS_URL, {
+  const body = {
     model,
     messages: [
       { role: "system", content: AI_SYSTEM_PROMPT },
@@ -7299,14 +7841,27 @@ async function askGrok(options = {}) {
     ],
     temperature: 0.4,
     max_tokens: 1200,
-  }, { Authorization: `Bearer ${tokens.accessToken}` });
+  };
+  if (model === "grok-4.3") body.reasoning = { effort: "high" };
+  const raw = await requestJsonPost(GROK_CHAT_COMPLETIONS_URL, body, { Authorization: `Bearer ${tokens.accessToken}` }, AI_PROVIDER_TIMEOUT_MS);
   return normalizeAiResult("grok", grokText(raw), raw);
+}
+
+async function getPreferredAiSelection() {
+  const preferredModel = await getPreferredAiModel();
+  if (!preferredModel || preferredModel === "local") return null;
+  const [provider, ...modelParts] = preferredModel.split(":");
+  const model = modelParts.join(":");
+  return provider && model ? { provider, model } : null;
 }
 
 async function askConfiguredAi(options = {}) {
   const preferred = String(options.provider || "").toLowerCase();
   if (preferred === "codex") return askCodex(options);
   if (preferred === "grok") return askGrok(options);
+  const selection = await getPreferredAiSelection();
+  if (selection?.provider === "codex" && await getActiveOAuthSession("codex")) return askCodex({ ...options, model: selection.model });
+  if (selection?.provider === "grok" && await getActiveOAuthSession("grok")) return askGrok({ ...options, model: selection.model });
   if (await getActiveOAuthSession("grok")) return askGrok(options);
   if (await getActiveOAuthSession("codex")) return askCodex(options);
   throw new Error("Connect ChatGPT or Grok in Settings first.");
@@ -8057,6 +8612,7 @@ ipcMain.handle("pitwall:f1tv:logout", async () => {
 ipcMain.handle("pitwall:data:snapshot", (_event, options = {}) => getPitWallSnapshot(options));
 ipcMain.handle("pitwall:data:liveTiming", (_event, options = {}) => getLiveTimingSnapshot(options));
 ipcMain.handle("pitwall:data:replayTiming", (_event, options = {}) => getReplayTimingSnapshot(options));
+ipcMain.handle("pitwall:data:trackMapReplayTiming", (_event, options = {}) => getTrackMapReplayTimingSnapshot(options));
 ipcMain.handle("pitwall:ai:authStatus", () => getAiAuthStatus());
 ipcMain.handle("pitwall:ai:authStart", (_event, provider) => startAiOAuth(provider));
 ipcMain.handle("pitwall:ai:authDisconnect", (_event, provider) => disconnectAiOAuth(provider));
@@ -8069,6 +8625,77 @@ ipcMain.handle("pitwall:window:state", (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   return { isFullScreen: Boolean(win?.isFullScreen()) };
 });
+
+function installApplicationMenu() {
+  if (process.platform !== "darwin") return;
+  const menu = Menu.buildFromTemplate([
+    {
+      label: app.name,
+      submenu: [
+        { role: "about" },
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    },
+    {
+      label: "File",
+      submenu: [{ role: "close" }],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "pasteAndMatchStyle" },
+        { role: "delete" },
+        { role: "selectAll" },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    {
+      label: "Window",
+      submenu: [
+        { role: "minimize" },
+        { role: "zoom" },
+        { type: "separator" },
+        { role: "front" },
+      ],
+    },
+    {
+      role: "help",
+      submenu: [
+        {
+          label: "Apexline Website",
+          click: () => shell.openExternal("https://apexline.io"),
+        },
+      ],
+    },
+  ]);
+  Menu.setApplicationMenu(menu);
+}
 
 async function createWindow() {
   const root = path.resolve(app.getAppPath());
@@ -8163,6 +8790,7 @@ app.whenReady().then(async () => {
   if (await runDashboardDiagnosticAndQuit()) return null;
   if (await runWeekendRecapDiagnosticAndQuit()) return null;
   if (await runF1TvDiagnosticAndQuit()) return null;
+  installApplicationMenu();
   return createWindow();
 });
 

@@ -21,10 +21,20 @@ assert.match(mainProcess, /"grok"/, "Grok OAuth session should be an allowed loc
 assert.match(mainProcess, /pitwall:ai:authStatus/, "Electron main should expose AI OAuth status IPC");
 assert.match(mainProcess, /pitwall:ai:authStart/, "Electron main should expose AI OAuth start IPC");
 assert.match(mainProcess, /pitwall:ai:authDisconnect/, "Electron main should expose AI OAuth disconnect IPC");
+assert.match(mainProcess, /pitwall:ai:preferredModel:get/, "Electron main should expose preferred AI model read IPC");
+assert.match(mainProcess, /pitwall:ai:preferredModel:set/, "Electron main should expose preferred AI model write IPC");
 assert.match(mainProcess, /preferred === "codex"/, "AI router should honor Codex as a preferred provider");
 assert.match(mainProcess, /preferred === "grok"/, "AI router should honor Grok as a preferred provider");
 assert.doesNotMatch(mainProcess, /preferred === "openai"|preferred === "anthropic"|Add an OpenAI\/Anthropic API key/, "AI router should not offer removed API-key providers");
 assert.match(mainProcess, /gpt-5\.4-mini/, "AI model list should include GPT 5.4 mini");
+assert.match(mainProcess, /This week's F1 news/, "Projection prompts should include this week's F1 news as an evidence source");
+assert.match(mainProcess, /Every race this season's results/, "Projection prompts should include every race this season's results");
+assert.match(mainProcess, /Past results at this track/, "Projection prompts should include past track results");
+assert.match(mainProcess, /Driver skill overall/, "Projection prompts should include overall driver skill");
+assert.match(mainProcess, /The model decides how to weigh these sources/, "Projection prompts should leave source weighting to the model");
+assert.match(mainProcess, /effort:\s*model === "gpt-5\.4-mini"\s*\?\s*"high"/, "GPT 5.4 mini should use high reasoning effort");
+assert.match(mainProcess, /model === "grok-4\.3"[\s\S]*body\.reasoning\s*=\s*\{\s*effort:\s*"high"\s*\}/, "Grok 4.3 should use high reasoning effort");
+assert.match(mainProcess, /getPreferredAiSelection\(\)/, "Daily AI projections should use the persisted preferred AI model");
 assert.match(mainProcess, /requestCodexResponsesStream/, "Codex OAuth should use the streaming Codex responses contract");
 assert.match(mainProcess, /instructions:\s*AI_SYSTEM_PROMPT/, "Codex OAuth should send system guidance as top-level instructions");
 assert.match(mainProcess, /stream:\s*true/, "Codex OAuth should request the required streaming response");
@@ -32,6 +42,7 @@ assert.match(mainProcess, /stream:\s*true/, "Codex OAuth should request the requ
 assert.match(preload, /authStatus/, "Preload should expose AI OAuth status");
 assert.match(preload, /authStart/, "Preload should expose AI OAuth start");
 assert.match(preload, /authDisconnect/, "Preload should expose AI OAuth disconnect");
+assert.match(preload, /preferredModel/, "Preload should expose preferred AI model sync");
 
 assert.match(settings, /ChatGPT \(Codex\)/, "Settings should offer ChatGPT/Codex OAuth");
 assert.match(settings, /Grok/, "Settings should offer Grok OAuth");
@@ -42,6 +53,7 @@ assert.match(settings, /GPT-5\.4 mini/, "Settings should show GPT 5.4 mini as a 
 assert.doesNotMatch(settings, /Anthropic API key|Anthropic · Claude|Claude 4|anthropic:claude/, "Settings should not offer Anthropic API-key options");
 assert.doesNotMatch(settings, /OpenAI API key|OpenAI fallback|GPT-4o|openai:gpt/, "Settings should not offer OpenAI API-key options");
 assert.match(settings, /pw-ai-model/, "Settings should persist the preferred AI model");
+assert.match(settings, /preferredModel\?\.set\?\.\(model\)/, "Settings should sync the preferred AI model to Electron main");
 assert.match(dataProvider, /authStatus/, "Connection status should include OAuth sessions");
 assert.doesNotMatch(dataProvider, /keys\.get\("anthropic"\)|keys\.get\("openai"\)/, "Connection status should not depend on removed API-key providers");
 assert.match(copilot, /aiRequestOptions/, "Copilot should send the selected AI provider/model");

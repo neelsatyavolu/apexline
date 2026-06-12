@@ -17,10 +17,6 @@
     .cop-page { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr); gap: var(--space-9); align-items: start; min-width: 0; }
     .cop-page--chat { grid-template-columns: minmax(0, 860px); }
     .insight-panel { display: flex; flex-direction: column; gap: var(--space-7); }
-    .insight-meta { display: flex; flex-wrap: wrap; gap: var(--space-5); color: var(--text-tertiary); font-size: var(--text-xs); }
-    .insight-list { display: flex; flex-direction: column; gap: var(--space-5); }
-    .insight-item { padding: var(--space-6); border-radius: var(--radius-sm); background: var(--surface-raised); border: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.45; }
-    .insight-empty { padding: var(--space-8); border-radius: var(--radius-md); border: 1px dashed var(--border-default); color: var(--text-tertiary); font-size: var(--text-sm); line-height: 1.5; }
 
     /* Hero analysis */
     .cop-hero { position: relative; overflow: hidden; border-radius: var(--radius-lg); border: 1px solid var(--accent-border);
@@ -76,6 +72,19 @@
 	    .race-watch__top { display: flex; justify-content: space-between; gap: var(--space-5); color: var(--text-primary); font-weight: 800; font-size: var(--text-sm); }
 	    .race-watch__body { color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.4; }
 	    .race-pred__caveat { color: var(--text-tertiary); font-size: var(--text-2xs); line-height: 1.4; }
+	    .champ-projection { display: flex; flex-direction: column; gap: var(--space-5); padding: var(--space-6); border-radius: var(--radius-sm); border: 1px solid color-mix(in srgb, var(--accent-border) 46%, var(--border-subtle)); background: linear-gradient(120% 140% at 100% 0, rgba(45,123,255,0.10), transparent 46%), var(--bg-sunken); }
+	    .champ-projection__head { display: flex; justify-content: space-between; gap: var(--space-5); align-items: baseline; padding-bottom: var(--space-4); border-bottom: 1px solid var(--border-subtle); }
+	    .champ-projection__title { color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-md); font-weight: 800; }
+	    .champ-projection__sub { color: var(--text-tertiary); font-size: var(--text-2xs); font-weight: 800; letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+	    .champ-projection__rows { display: flex; flex-direction: column; gap: var(--space-4); }
+	    .champ-proj-row { display: grid; grid-template-columns: 34px minmax(104px, 0.85fr) minmax(140px, 1.25fr) 58px; gap: var(--space-5); align-items: center; min-width: 0; }
+	    .champ-proj-row__rank { color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 900; }
+	    .champ-proj-row__name { display: flex; align-items: center; gap: var(--space-4); min-width: 0; color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-sm); font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	    .champ-proj-row__dot { width: 8px; height: 24px; border-radius: var(--radius-pill); background: var(--_c); box-shadow: 0 0 18px color-mix(in srgb, var(--_c) 42%, transparent); flex: none; }
+	    .champ-proj-row__bar { height: 10px; border-radius: var(--radius-pill); background: rgba(255,255,255,0.07); overflow: hidden; }
+	    .champ-proj-row__fill { width: var(--_w); height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--_c), color-mix(in srgb, var(--_c) 44%, #ffffff)); }
+	    .champ-proj-row__score { justify-self: end; color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 900; }
+	    .champ-proj-row__why { grid-column: 2 / -1; color: var(--text-tertiary); font-size: var(--text-2xs); line-height: 1.35; }
 
 	    /* Automatic analytics visuals */
     .insight-board { position: relative; overflow: hidden; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);
@@ -120,6 +129,19 @@
     .factor__ring span { position: relative; }
     .factor__l { font-size: var(--text-sm); color: var(--text-primary); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .factor__hint { font-size: var(--text-2xs); color: var(--text-tertiary); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cop-status-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); margin-bottom: var(--space-6); }
+    .cop-status-head__text { min-width: 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.35; }
+    .cop-progress { display: flex; flex-direction: column; gap: var(--space-4); margin-bottom: var(--space-6); padding: var(--space-5); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); background: var(--bg-sunken); }
+    .cop-progress__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); color: var(--text-secondary); font-size: var(--text-xs); }
+    .cop-progress__bar { height: 6px; border-radius: var(--radius-pill); background: rgba(255,255,255,0.07); overflow: hidden; }
+    .cop-progress__fill { width: var(--_w); height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--success)); }
+    .cop-progress__rows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+    .cop-progress__row { display: flex; align-items: center; gap: var(--space-4); min-width: 0; color: var(--text-tertiary); font-size: var(--text-xs); }
+    .cop-progress__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-tertiary); flex: none; }
+    .cop-progress__row[data-state="thinking"] .cop-progress__dot { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-quiet); }
+    .cop-progress__row[data-state="computed"] .cop-progress__dot { background: var(--success); }
+    .cop-progress__row[data-state="failed"] .cop-progress__dot { background: var(--danger); }
+    .cop-progress__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* Chat panel */
     .cop-chat { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-h) - var(--space-10) - 54px); position: relative; top: 0;
@@ -163,7 +185,7 @@
 	    .ai-vis__quality span { position: relative; }
 	    .ai-vis__rec { grid-column: 1 / -1; color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.35; }
 	    .ai-vis__notes { margin: 0; padding-left: 17px; color: var(--text-tertiary); font-size: var(--text-xs); line-height: 1.4; }
-	    @media (max-width: 1180px) { .cop-preds { grid-template-columns: 1fr; } .metric-strip { grid-template-columns: 1fr; } .champ-row { grid-template-columns: 38px minmax(96px, 0.8fr) minmax(120px, 1.2fr) 58px; } .champ-row__gap { display: none; } }
+	    @media (max-width: 1180px) { .cop-preds { grid-template-columns: 1fr; } .metric-strip { grid-template-columns: 1fr; } .champ-row { grid-template-columns: 38px minmax(96px, 0.8fr) minmax(120px, 1.2fr) 58px; } .champ-row__gap { display: none; } .cop-progress__rows { grid-template-columns: 1fr; } }
 	    @media (max-width: 980px) { .cop-page { grid-template-columns: 1fr; } .cop-chat { height: min(680px, calc(100vh - 140px)); } .ai-vis__row { grid-template-columns: 60px 1fr; } .ai-vis__bars, .ai-vis__rec { grid-column: 1 / -1; } .ai-vis__quality { grid-column: 2; justify-self: start; } .factors { grid-template-columns: 1fr; } }
 	    @media (max-width: 760px) { .race-pred__sections { grid-template-columns: 1fr; } }
 	    @keyframes pw-typing { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
@@ -333,6 +355,64 @@
 	    );
 	  }
 
+	  function constructorForPrediction(D, code, label) {
+	    const target = String(code || label || "").toLowerCase();
+	    return (D.constructors || []).find((team) => [team.abbr, team.code, team.name].filter(Boolean).some((value) => String(value).toLowerCase() === target)) || {};
+	  }
+
+	  function championshipPredictionRows(D, predictions, pageId) {
+	    if (pageId !== "drivers-championship" && pageId !== "constructors-championship") return [];
+	    const source = (Array.isArray(predictions?.leaderboard) && predictions.leaderboard.length ? predictions.leaderboard : [])
+	      .concat(Array.isArray(predictions?.winner) ? predictions.winner : [])
+	      .concat(Array.isArray(predictions?.podium) ? predictions.podium : []);
+	    const seen = new Set();
+	    return source.map((item, index) => {
+	      const key = String(item.code || item.label || index);
+	      const dedupe = key.toLowerCase();
+	      if (seen.has(dedupe)) return null;
+	      seen.add(dedupe);
+	      const isConstructor = pageId === "constructors-championship";
+	      const constructor = isConstructor ? constructorForPrediction(D, item.code, item.label) : {};
+	      const driver = isConstructor ? {} : (D.byCode?.[item.code] || {});
+	      const score = Math.max(finiteValue(item.probability), finiteValue(item.confidence));
+	      const color = constructor.color || driver.color || fallbackPalette[index % fallbackPalette.length];
+	      return {
+	        key,
+	        name: item.label || constructor.name || driver.name || item.code || "Projection",
+	        code: item.code || constructor.abbr || "",
+	        score,
+	        width: Math.max(5, Math.min(100, score * 100)),
+	        color,
+	        reason: item.reason || "",
+	      };
+	    }).filter(Boolean).slice(0, 8);
+	  }
+
+	  function ChampionshipPredictionVisual({ D, predictions, pageId }) {
+	    const rows = championshipPredictionRows(D, predictions, pageId);
+	    if (!rows.length) return null;
+	    const isConstructors = pageId === "constructors-championship";
+	    return (
+	      <div className="champ-projection">
+	        <div className="champ-projection__head">
+	          <span className="champ-projection__title">{isConstructors ? "Constructors title projection" : "Drivers title projection"}</span>
+	          <span className="champ-projection__sub">Prediction model</span>
+	        </div>
+	        <div className="champ-projection__rows">
+	          {rows.map((row, index) => (
+	            <div className="champ-proj-row" key={`${row.key}-${index}`} style={{ "--_c": row.color, "--_w": row.width + "%" }}>
+	              <span className="champ-proj-row__rank">#{index + 1}</span>
+	              <span className="champ-proj-row__name"><i className="champ-proj-row__dot" />{row.code ? `${row.code} · ` : ""}{row.name}</span>
+	              <span className="champ-proj-row__bar"><span className="champ-proj-row__fill" /></span>
+	              <span className="champ-proj-row__score">{predictionPercent(row.score)}</span>
+	              {row.reason && <span className="champ-proj-row__why">{row.reason}</span>}
+	            </div>
+	          ))}
+	        </div>
+	      </div>
+	    );
+	  }
+
 	  function predictionPercent(value) {
 	    const n = finiteValue(value, 0);
 	    return n > 0 ? `${Math.round(Math.max(0, Math.min(1, n)) * 100)}%` : "n/a";
@@ -342,9 +422,7 @@
 	    const code = item.code || "";
 	    const isConstructor = pageId === "constructors-championship";
 	    const driver = D.byCode?.[code] || {};
-	    const constructor = isConstructor
-	      ? (D.constructors || []).find((team) => [team.abbr, team.name].filter(Boolean).some((value) => String(value).toLowerCase() === String(code || item.label).toLowerCase())) || {}
-	      : {};
+	    const constructor = isConstructor ? constructorForPrediction(D, code, item.label) : {};
 	    const name = item.label || driver.name || code || "Driver";
 	    const confidence = Math.max(0, Math.min(1, finiteValue(item.confidence, 0)));
 	    const color = constructor.color || driver.color || standingsColor(index);
@@ -399,6 +477,7 @@
 	          <Badge tone="success">Computed</Badge>
 	        </div>
 	        {predictions.summary && <div className="race-pred__summary">{predictions.summary}</div>}
+	        <ChampionshipPredictionVisual D={D} predictions={predictions} pageId={pageId} />
 	        <div className="race-pred__sections">
 	          {winner.length > 0 && (
 	            <div className="race-pred__section">
@@ -502,12 +581,13 @@
 	  }
 
 	  function Copilot() {
-    const { data: D, connection, dataSource } = window.PW.usePitWall();
+    const { data: D, connection, dataSource, refreshData } = window.PW.usePitWall();
     const daily = D.copilot?.daily || {
       status: connection.aiConfigured ? "pending" : "not_configured",
       generatedOn: "",
       generatedAt: "",
       attemptedOn: "",
+      progress: null,
       pages: [],
     };
     const dailyPages = Array.isArray(daily.pages) ? daily.pages : [];
@@ -528,6 +608,15 @@
         : daily.status === "pending"
           ? "Daily AI insight generation is queued or running. This page will update after the daily calculation finishes."
           : "No AI projection computed. Connect an AI provider to generate daily prebuilt insights.";
+    const progress = daily.progress || {};
+    const progressItems = Array.isArray(progress.items) && progress.items.length ? progress.items : INSIGHT_TABS.filter((tab) => tab.id !== "ask-copilot").map((tab) => ({
+      id: tab.id,
+      title: tab.label,
+      status: daily.status === "ready" ? "computed" : daily.status === "failed" ? "failed" : "waiting",
+    }));
+    const progressTotal = Math.max(1, Number(progress.totalPages || progressItems.length || 1));
+    const progressCompleted = Math.max(0, Math.min(progressTotal, Number(progress.completedPages || (daily.status === "ready" ? progressTotal : 0))));
+    const progressPct = Math.round((progressCompleted / progressTotal) * 100);
     const standingsCards = leaderRows.map((row, index) => ({
       code: row.code,
       label: `P${index + 1} in standings`,
@@ -553,6 +642,7 @@
     const [messages, setMessages] = React.useState(initialChat);
     const [draft, setDraft] = React.useState("");
     const [typing, setTyping] = React.useState(false);
+    const [progressOpen, setProgressOpen] = React.useState(false);
     const msgsRef = React.useRef(null);
     const selectedTab = INSIGHT_TABS.find((tab) => tab.id === activeTab) || INSIGHT_TABS[0];
     const selectedPage = dailyPages.find((page) => page.id === activeTab) || {
@@ -560,7 +650,6 @@
       title: selectedTab.label,
       kicker: "Daily prebuilt insight",
       summary: projectionStatus,
-	      bullets: ["No AI projection computed for this page yet."],
 	      computed: false,
 	      alerts: [],
 	      visualization: null,
@@ -572,6 +661,12 @@
     React.useEffect(() => {
       if (msgsRef.current) msgsRef.current.scrollTop = msgsRef.current.scrollHeight;
     }, [messages, typing]);
+
+    React.useEffect(() => {
+      if (daily.status !== "pending" || !refreshData) return undefined;
+      const timer = setInterval(() => refreshData(), 5000);
+      return () => clearInterval(timer);
+    }, [daily.status, refreshData]);
 
 	    function aiSnapshot() {
 	      return {
@@ -692,18 +787,6 @@
               </section>
 
               <div className="insight-panel">
-                <div className="insight-meta">
-                  <span>{selectedPage.kicker || "Daily insight"}</span>
-                  <span>Attempted: {daily.attemptedOn || "not yet"}</span>
-                  <span>Source: {dataSource}</span>
-                </div>
-                {Array.isArray(selectedPage.bullets) && selectedPage.bullets.length ? (
-                  <div className="insight-list">
-                    {selectedPage.bullets.map((item, index) => <div className="insight-item" key={index}>{item}</div>)}
-                  </div>
-                ) : (
-                  <div className="insight-empty">No AI projection computed for this page yet.</div>
-                )}
                 <ChampionshipVisual D={D} pageId={activeTab} dataSource={dataSource} />
                 {showAiVisualization && <StrategyVisualization visualization={selectedPage.visualization} />}
               </div>
@@ -732,6 +815,29 @@
 	              )}
 
 	              <Card title="Daily status" subtitle="One automatic AI calculation per day" aside={<Icon name="sparkles" size={15} />} padding="default">
+                <div className="cop-status-head">
+                  <div className="cop-status-head__text">{progress.statusText || projectionStatus}</div>
+                  <Button size="sm" variant={progressOpen ? "secondary" : "ghost"} onClick={() => setProgressOpen((open) => !open)} iconLeft={<Icon name="timer" size={13} />} aria-expanded={progressOpen}>
+                    {progressOpen ? "Hide progress" : "Show progress"}
+                  </Button>
+                </div>
+                {progressOpen && (
+                  <div className="cop-progress">
+                    <div className="cop-progress__top">
+                      <span>{progress.currentPageTitle || "Daily AI projections"}</span>
+                      <span>{progressCompleted}/{progressTotal}</span>
+                    </div>
+                    <div className="cop-progress__bar" aria-hidden="true"><div className="cop-progress__fill" style={{ "--_w": progressPct + "%" }} /></div>
+                    <div className="cop-progress__rows">
+                      {progressItems.map((item) => (
+                        <div className="cop-progress__row" data-state={item.status} key={item.id || item.title}>
+                          <span className="cop-progress__dot" />
+                          <span className="cop-progress__label">{item.title || item.id}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="factors">
                   {factors.map((f, i) => {
                     const color = f.value >= 80 ? "var(--success)" : f.value > 35 ? "var(--warning)" : "var(--text-tertiary)";

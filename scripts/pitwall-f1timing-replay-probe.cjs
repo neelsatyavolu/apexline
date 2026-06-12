@@ -25,6 +25,8 @@ function extractNamedFunction(source, name) {
 
 const parser = vm.runInNewContext(`(() => {
   const f1TimingTelemetrySampleCache = new WeakMap();
+  const f1TimingPositionSampleCache = new WeakMap();
+  const f1TimingStateCursorCache = new WeakMap();
   ${[
     "finiteNumber",
     "groupRowsByDriverNumber",
@@ -61,8 +63,12 @@ const parser = vm.runInNewContext(`(() => {
     "f1TimingTelemetryFromCarData",
     "f1TimingTelemetrySamples",
     "f1TimingTelemetryRowsAt",
+    "f1TimingInterpolatedPositionRowsAt",
+    "f1TimingPositionSamples",
+    "f1TimingPositionRowsAt",
     "parseF1TimingWeatherState",
     "parseF1TimingRaceControlMessages",
+    "f1TimingLapTimeline",
     "parseF1TimingArchiveRows",
   ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
   return { parseF1TimingJsonStream, parseF1TimingArchiveRows };
@@ -122,7 +128,7 @@ async function optionalText(file) {
 
 (async () => {
   assert.ok(Number.isFinite(elapsedSeconds) && elapsedSeconds >= 0, "--elapsed must be a positive number");
-  const [driverListText, timingText, appText, clockText, sessionDataText, statusText, trackStatusText, raceControlText, lapCountText, weatherText, carText] = await Promise.all([
+  const [driverListText, timingText, appText, clockText, sessionDataText, statusText, trackStatusText, raceControlText, lapCountText, weatherText, carText, positionText] = await Promise.all([
     optionalText("DriverList.jsonStream"),
     requestText(new URL("TimingData.jsonStream", baseUrl).href),
     optionalText("TimingAppData.jsonStream"),
@@ -134,6 +140,7 @@ async function optionalText(file) {
     optionalText("LapCount.jsonStream"),
     optionalText("WeatherData.jsonStream"),
     optionalText("CarData.z.jsonStream"),
+    optionalText("Position.z.jsonStream"),
   ]);
   const sessionData = {
     driverListEntries: driverListText ? parser.parseF1TimingJsonStream(driverListText) : [],
@@ -147,6 +154,7 @@ async function optionalText(file) {
     lapCountEntries: lapCountText ? parser.parseF1TimingJsonStream(lapCountText) : [],
     weatherEntries: weatherText ? parser.parseF1TimingJsonStream(weatherText) : [],
     carDataEntries: carText ? parser.parseF1TimingJsonStream(carText, { zipped: true }) : [],
+    positionEntries: positionText ? parser.parseF1TimingJsonStream(positionText, { zipped: true }) : [],
   };
   const parsed = parser.parseF1TimingArchiveRows(sessionData, elapsedSeconds, {
     timingAnchor,
@@ -160,6 +168,7 @@ async function optionalText(file) {
     withMiniSectors: parsed.timing.filter((row) => row.sectors?.s1?.length || row.sectors?.s2?.length || row.sectors?.s3?.length).length,
     withTyres: parsed.timing.filter((row) => row.comp).length,
     withTelemetry: parsed.timing.filter((row) => row.telemetry?.speed != null).length,
+    withTrackPosition: parsed.timing.filter((row) => row.trackPosition?.x != null && row.trackPosition?.y != null).length,
   };
   console.log(JSON.stringify({
     source: "Formula 1 livetiming archive",
@@ -183,6 +192,7 @@ async function optionalText(file) {
       age: row.age,
       sectors: row.sectors,
       telemetry: row.telemetry,
+      trackPosition: row.trackPosition,
     })),
   }, null, 2));
 })().catch((error) => {

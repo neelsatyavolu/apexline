@@ -70,11 +70,16 @@ contextBridge.exposeInMainWorld("pitwall", {
     snapshot: (options = {}) => ipcRenderer.invoke("pitwall:data:snapshot", options),
     liveTiming: (options = {}) => ipcRenderer.invoke("pitwall:data:liveTiming", options),
     replayTiming: (options = {}) => ipcRenderer.invoke("pitwall:data:replayTiming", options),
+    trackMapReplayTiming: (options = {}) => ipcRenderer.invoke("pitwall:data:trackMapReplayTiming", options),
   },
   ai: {
     authStatus: () => ipcRenderer.invoke("pitwall:ai:authStatus"),
     authStart: (provider) => ipcRenderer.invoke("pitwall:ai:authStart", provider),
     authDisconnect: (provider) => ipcRenderer.invoke("pitwall:ai:authDisconnect", provider),
+    preferredModel: {
+      get: () => ipcRenderer.invoke("pitwall:ai:preferredModel:get"),
+      set: (value) => ipcRenderer.invoke("pitwall:ai:preferredModel:set", value),
+    },
     ask: (options = {}) => ipcRenderer.invoke("pitwall:ai:ask", options),
   },
   history: {

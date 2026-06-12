@@ -239,6 +239,19 @@
     const [updateStatus, setUpdateStatus] = React.useState({ status: "idle", currentVersion: "", update: null, message: "" });
     const [updateBusy, setUpdateBusy] = React.useState(false);
     const [f1LiveLatencyDraft, setF1LiveLatencyDraft] = React.useState(() => String(appPrefs.f1LiveLatency));
+    const [modelPrefReady, setModelPrefReady] = React.useState(false);
+
+    React.useEffect(() => {
+      let active = true;
+      (async () => {
+        try {
+          const saved = await window.pitwall?.ai?.preferredModel?.get?.();
+          if (active && AI_MODEL_OPTIONS.some((option) => option.value === saved)) setModel(saved);
+        } catch {}
+        if (active) setModelPrefReady(true);
+      })();
+      return () => { active = false; };
+    }, []);
 
     React.useEffect(() => {
       localStorage.setItem("pw-settings", JSON.stringify(appPrefs));
@@ -246,8 +259,10 @@
     }, [appPrefs]);
 
     React.useEffect(() => {
+      if (!modelPrefReady) return;
       localStorage.setItem(AI_MODEL_STORAGE, model);
-    }, [model]);
+      window.pitwall?.ai?.preferredModel?.set?.(model).catch(() => {});
+    }, [model, modelPrefReady]);
 
     React.useEffect(() => {
       setUserName(profile.name || "");

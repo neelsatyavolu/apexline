@@ -226,7 +226,7 @@
     news: [],
     insights: [],
     strategyContext: null,
-    presets: ["Intelligent", "Apexline Classic", "Battle Mode", "Data Overload", "Minimal Clean"],
+    presets: ["Intelligent", "Apexline Classic", "Battle Mode", "Data Overload", "Minimal Clean", "Theater"],
     copilot: null,
     driverForm: {},
     driverProfiles: __seed.driverProfiles,

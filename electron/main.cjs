@@ -1744,6 +1744,18 @@ function extractHtmlImage(block, baseUrl) {
   return candidates.map((value) => normalizeNewsImage(absoluteNewsUrl(value, baseUrl))).find(Boolean) || "";
 }
 
+function extractHtmlPreview(block, title = "") {
+  const titleText = decodeEntities(title).replace(/\s+/g, " ").trim();
+  for (const match of String(block || "").matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)) {
+    const text = decodeEntities(match[1]).replace(/\s+/g, " ").trim();
+    if (text.length < 24) continue;
+    if (text === titleText) continue;
+    if (/^(advertisement|read more|sign up|follow us|share this)/i.test(text)) continue;
+    return text;
+  }
+  return "";
+}
+
 function extractArticleMetaImage(html, baseUrl) {
   const candidates = [];
   for (const match of html.matchAll(/<meta\b[^>]*(?:property|name)=["'](?:og:image|twitter:image|twitter:image:src)["'][^>]*\bcontent=["']([^"']+)["'][^>]*>/gi)) {
@@ -1912,9 +1924,10 @@ function parseNewsHtml(html, source) {
     if (seen.has(urlKey)) continue;
     seen.add(urlKey);
     const context = html.slice(Math.max(0, match.index - 900), match.index + match[0].length + 1400);
+    const afterLink = html.slice(match.index + match[0].length, match.index + match[0].length + 1000);
     stories.push(normalizeNewsStory(source.name, stories.length, {
       title,
-      lead: "",
+      lead: extractHtmlPreview(afterLink, title),
       body: "",
       url,
       publishedAt: extractHtmlDate(context),
@@ -4135,7 +4148,7 @@ function f1TimingPositionSamplePoints(sessionData, maxPoints = 240) {
   const points = [];
   for (let index = 0; index < source.length; index += step) {
     const row = source[index].row;
-    points.push({ x: row.x, y: row.y });
+    points.push({ x: row.x, y: row.y, z: finiteNumber(row.z) });
   }
   return points;
 }
@@ -5378,13 +5391,42 @@ async function writeCopilotInsightsCache(value) {
   return value;
 }
 
+function raceWeekendIsActive(race = {}) {
+  if (race.status === "live") return true;
+  if (race.status === "done") return false;
+  const sessions = Array.isArray(race.sessions) ? race.sessions : [];
+  const hasStartedSession = sessions.some((session) => session.status && session.status !== "upcoming");
+  const hasPendingSession = sessions.some((session) => !session.status || session.status === "upcoming");
+  return hasStartedSession && hasPendingSession;
+}
+
+function raceWeekendKey(race = {}) {
+  return String(race.meetingKey || race.rnd || race.startsAt || race.name || "");
+}
+
+function raceWeekendOrderValue(race = {}) {
+  const round = finiteNumber(race.rnd);
+  if (round != null) return round;
+  const startsAt = Date.parse(race.startsAt || "");
+  return Number.isFinite(startsAt) ? startsAt : Number.MAX_SAFE_INTEGER;
+}
+
 function currentRaceWeekend(schedule = []) {
   const done = (schedule || []).filter((race) => race.status === "done");
-  return (schedule || []).find((race) => race.status === "live") || done.at(-1) || (schedule || []).find((race) => race.status === "upcoming") || {};
+  return (schedule || []).find(raceWeekendIsActive) || done.at(-1) || (schedule || []).find((race) => race.status === "upcoming") || {};
 }
 
 function nextRaceWeekend(schedule = []) {
-  return (schedule || []).find((race) => race.status === "upcoming") || {};
+  const active = (schedule || []).find(raceWeekendIsActive);
+  const activeKey = raceWeekendKey(active);
+  const activeOrder = raceWeekendOrderValue(active);
+  return (schedule || [])
+    .filter((race) => race.status === "upcoming")
+    .filter((race) => !activeKey || raceWeekendKey(race) !== activeKey)
+    .filter((race) => !activeKey || raceWeekendOrderValue(race) > activeOrder)
+    .sort((a, b) => raceWeekendOrderValue(a) - raceWeekendOrderValue(b))[0]
+    || (schedule || []).find((race) => race.status === "upcoming" && (!activeKey || raceWeekendKey(race) !== activeKey))
+    || {};
 }
 
 function nextUpcomingSession(schedule = []) {
@@ -5728,10 +5770,17 @@ function dailyCopilotProgress({ status = "pending", currentPage = null, currentI
   const totalPages = COPILOT_INSIGHT_PAGES.length;
   const pageIndex = Math.max(0, Math.min(totalPages - 1, Number(currentIndex) || 0));
   const activePage = currentPage || COPILOT_INSIGHT_PAGES[pageIndex] || null;
+  const activeIndex = Math.max(0, COPILOT_INSIGHT_PAGES.findIndex((page) => page.id === activePage?.id));
+  const boundedCompletedPages = Math.max(0, Math.min(totalPages, Number(completedPages) || 0));
+  const effectiveCompletedPages = status === "completed"
+    ? totalPages
+    : ["thinking", "failed"].includes(status)
+      ? Math.max(boundedCompletedPages, activeIndex)
+      : boundedCompletedPages;
   const items = COPILOT_INSIGHT_PAGES.map((page, index) => ({
     id: page.id,
     title: page.title,
-    status: index < completedPages ? "computed" : page.id === activePage?.id && status === "thinking" ? "thinking" : status === "failed" && page.id === activePage?.id ? "failed" : "waiting",
+    status: index < effectiveCompletedPages ? "computed" : page.id === activePage?.id && status === "thinking" ? "thinking" : status === "failed" && page.id === activePage?.id ? "failed" : "waiting",
   }));
   const statusText = status === "completed"
     ? "Daily AI projections are computed."
@@ -5744,7 +5793,7 @@ function dailyCopilotProgress({ status = "pending", currentPage = null, currentI
     status,
     currentPageId: activePage?.id || "",
     currentPageTitle: activePage?.title || "",
-    completedPages,
+    completedPages: effectiveCompletedPages,
     totalPages,
     statusText,
     error: String(error || ""),
@@ -5893,15 +5942,16 @@ async function refreshDailyCopilotInsights(data, generatedOn) {
   }
 }
 
-async function getDailyCopilotInsights(data) {
+async function getDailyCopilotInsights(data, options = {}) {
   const today = localDateKey();
+  const forceCopilotRefresh = Boolean(options.forceCopilotRefresh);
   const rawCached = await readCopilotInsightsCache();
   const cachedHadRawAiTimeout = copilotCacheHasRawAiTimeout(rawCached);
   const cached = sanitizeCopilotInsightsCache(rawCached);
   const cachedSchemaMatches = cached?.schemaVersion === COPILOT_INSIGHTS_SCHEMA_VERSION;
   const usableCached = cachedSchemaMatches ? cached : null;
-  if (usableCached?.generatedOn === today && usableCached.status === "ready") return usableCached;
-  if (usableCached?.attemptedOn === today && usableCached.status !== "ready" && !cachedHadRawAiTimeout && !shouldRetryDailyCopilotInsights(usableCached, today)) return usableCached;
+  if (!forceCopilotRefresh && usableCached?.generatedOn === today && usableCached.status === "ready") return usableCached;
+  if (!forceCopilotRefresh && usableCached?.attemptedOn === today && usableCached.status !== "ready" && !cachedHadRawAiTimeout && !shouldRetryDailyCopilotInsights(usableCached, today)) return usableCached;
   if (!(await hasConfiguredAiProvider())) {
     return {
       schemaVersion: COPILOT_INSIGHTS_SCHEMA_VERSION,
@@ -5919,7 +5969,7 @@ async function getDailyCopilotInsights(data) {
       .catch(() => null)
       .finally(() => { copilotInsightRefresh = null; });
   }
-  return usableCached || {
+  const pending = {
     schemaVersion: COPILOT_INSIGHTS_SCHEMA_VERSION,
     status: "pending",
     attemptedOn: today,
@@ -5929,6 +5979,7 @@ async function getDailyCopilotInsights(data) {
     progress: dailyCopilotProgress(),
     pages: fallbackCopilotInsightPages(data, "Daily AI insight generation is queued for today."),
   };
+  return forceCopilotRefresh ? pending : usableCached || pending;
 }
 
 function shouldRetryDailyCopilotInsights(cached, today, nowMs = Date.now(), retryMs = COPILOT_INSIGHT_RETRY_MS) {
@@ -6110,7 +6161,7 @@ function refreshLiveDataEnrichment(baseRaw, baseErrors, baseData) {
       includeWeekendWeatherFallback: true,
       enrichmentPending: false,
     });
-    data.copilot = baseData.copilot;
+    data.copilot = liveDataCache?.data?.copilot || baseData.copilot;
     if (liveDataCache?.data?.fetchedAt === baseData.fetchedAt) {
       liveDataCache = { createdAt: Date.now(), data };
       writeLiveSnapshotDiskCache(data);
@@ -6157,14 +6208,14 @@ function writeLiveSnapshotDiskCache(data) {
   } catch {}
 }
 
-async function refreshLiveDataSnapshot() {
+async function refreshLiveDataSnapshot(options = {}) {
   const { raw, errors } = await fetchLiveDataEntries(LIVE_CORE_DATA_URLS);
   await fetchOfficialF1StandingsFallback(raw, errors);
   const data = await buildPitWallSnapshot(raw, errors, {
     includeWeekendWeatherFallback: false,
     enrichmentPending: true,
   });
-  data.copilot = { daily: await getDailyCopilotInsights(data) };
+  data.copilot = { daily: await getDailyCopilotInsights(data, { forceCopilotRefresh: Boolean(options.forceCopilotRefresh) }) };
   liveDataCache = { createdAt: Date.now(), data };
   writeLiveSnapshotDiskCache(data);
   refreshLiveDataEnrichment(raw, errors, data);
@@ -6173,8 +6224,8 @@ async function refreshLiveDataSnapshot() {
 
 async function getPitWallSnapshot(options = {}) {
   if (options?.forceRefresh) {
-    if (!liveDataRefresh) {
-      liveDataRefresh = refreshLiveDataSnapshot().finally(() => { liveDataRefresh = null; });
+    if (!liveDataRefresh || options.forceCopilotRefresh) {
+      liveDataRefresh = refreshLiveDataSnapshot(options).finally(() => { liveDataRefresh = null; });
     }
     return liveDataRefresh;
   }

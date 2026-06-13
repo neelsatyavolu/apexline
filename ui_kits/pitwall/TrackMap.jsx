@@ -25,6 +25,14 @@
   const TRACK_MAP_OFFICIAL_TELEPORT_PX = 150;
   const TRACK_MAP_SNAP_MAX_DIST_PX = 60;
   const TRACK_MAP_RESNAP_WINDOW_PX = 110;
+  const TRACK_MAP_Z_WEIGHT = 2;             // snap-cost px per projected px of elevation mismatch
+  const TRACK_MAP_Z_PENALTY_MAX_PX = 18;    // cap: z arbitrates near-ties only; a stale z reading
+                                            // (seen in real lap-1 Monaco data) must never drag a
+                                            // planar-correct point onto another section
+  const TRACK_MAP_Z_MIN_SAMPLES = 24;       // sample points with usable z before a profile is trusted
+  const TRACK_MAP_Z_MIN_COVERAGE = 0.5;     // fraction of vertices that must learn a z directly
+  const TRACK_MAP_Z_CONFLICT_SPREAD = 60;   // official z units (6m): per-vertex spread marking a conflict
+  const TRACK_MAP_Z_CONFLICT_MAX_FRACTION = 0.15; // conflicted-vertex share that invalidates the map fit
 
   /* ====================================================================== */
   /* Styles (ported from the design's Track Map.html, chrome rules dropped). */
@@ -225,23 +233,35 @@
   // An optional hint { s, total, window } keeps the snap on the car's current
   // track leg when an almost-as-close segment elsewhere (e.g. the opposite leg
   // of a hairpin) would otherwise capture it.
-  function nearestTrackPoint(p, pts, hint = null) {
+  function nearestTrackPoint(p, pts, hint = null, zInfo = null) {
     let best = null, bestNear = null, len = 0;
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i], b = pts[(i + 1) % pts.length];
       const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]);
       const hit = distanceToSegment(p, a, b);
       const s = len + hit.t * segLen;
-      if (!best || hit.d < best.d) best = { x: hit.x, y: hit.y, d: hit.d, s };
+      // Planar distance plus an elevation-mismatch penalty: telemetry z is
+      // invariant to the session's unknown rotation, so where two track legs
+      // overlap in x/y but not in height (Monaco tunnel under the Casino
+      // climb) the penalty keeps the car on the leg it is physically on.
+      let cost = hit.d;
+      if (zInfo) {
+        const za = zInfo.zAt[i], zb = zInfo.zAt[(i + 1) % pts.length];
+        const zExp = Number.isFinite(za) && Number.isFinite(zb)
+          ? za + (zb - za) * hit.t
+          : (Number.isFinite(za) ? za : zb);
+        if (Number.isFinite(zExp)) cost += Math.min(Math.abs(zInfo.z - zExp) * zInfo.weight, TRACK_MAP_Z_PENALTY_MAX_PX);
+      }
+      if (!best || cost < best.cost) best = { x: hit.x, y: hit.y, d: hit.d, cost, s };
       if (hint && hint.total) {
         let ds = Math.abs(s - hint.s) % hint.total;
         ds = Math.min(ds, hint.total - ds);
-        if (ds <= hint.window && (!bestNear || hit.d < bestNear.d)) bestNear = { x: hit.x, y: hit.y, d: hit.d, s };
+        if (ds <= hint.window && (!bestNear || cost < bestNear.cost)) bestNear = { x: hit.x, y: hit.y, d: hit.d, cost, s };
       }
       len += segLen;
     }
     if (!best) return null;
-    if (bestNear && bestNear.d <= best.d + 14) return { ...bestNear, total: len };
+    if (bestNear && bestNear.cost <= best.cost + 14) return { ...bestNear, total: len };
     return { ...best, total: len };
   }
   // Official Formula 1 telemetry uses a session-local coordinate frame that is
@@ -264,6 +284,49 @@
       x: (fit.cos * mx - fit.sin * my) * fit.scale + fit.tx,
       y: (fit.sin * mx + fit.cos * my) * fit.scale + fit.ty,
     };
+  }
+  // Learn the expected elevation (official 0.1m units) at each polyline vertex
+  // from fitted sample points. Doubles as a fit validator: a mirrored or
+  // mis-rotated overlay maps unrelated track legs onto the same vertices,
+  // which shows up as a large per-vertex z spread ("conflict").
+  function buildTrackZProfile(samplePoints, fit, trackPts) {
+    const perVertex = trackPts.map(() => []);
+    let used = 0;
+    for (const p of samplePoints) {
+      const z = Number(p?.z);
+      if (!(z > 0) || !Number.isFinite(p?.x) || !Number.isFinite(p?.y)) continue;
+      const proj = applyOfficialFit(p, fit);
+      let bi = -1, bd = Infinity;
+      for (let i = 0; i < trackPts.length; i++) {
+        const d = Math.hypot(proj.x - trackPts[i][0], proj.y - trackPts[i][1]);
+        if (d < bd) { bd = d; bi = i; }
+      }
+      if (bi >= 0 && bd <= TRACK_MAP_SNAP_MAX_DIST_PX) { perVertex[bi].push(z); used += 1; }
+    }
+    if (used < TRACK_MAP_Z_MIN_SAMPLES) return null;
+    let conflicts = 0, covered = 0;
+    const zAt = perVertex.map((list) => {
+      if (!list.length) return NaN;
+      covered += 1;
+      list.sort((a, b) => a - b);
+      if (list[list.length - 1] - list[0] > TRACK_MAP_Z_CONFLICT_SPREAD) conflicts += 1;
+      return list[Math.floor(list.length / 2)];
+    });
+    if (covered / trackPts.length < TRACK_MAP_Z_MIN_COVERAGE) return null;
+    if (conflicts / covered > TRACK_MAP_Z_CONFLICT_MAX_FRACTION) return { conflict: true, zAt: null };
+    // Fill uncovered vertices from the nearest covered vertex along the loop
+    // so every segment carries an expected z.
+    const filled = zAt.slice();
+    const n = filled.length;
+    for (let i = 0; i < n; i++) {
+      if (Number.isFinite(filled[i])) continue;
+      for (let off = 1; off < n; off++) {
+        const fwd = zAt[(i + off) % n], back = zAt[(i - off + n) % n];
+        if (Number.isFinite(fwd)) { filled[i] = fwd; break; }
+        if (Number.isFinite(back)) { filled[i] = back; break; }
+      }
+    }
+    return { conflict: false, zAt: filled };
   }
   function fitOfficialSimilarity(points, trackPts) {
     let scx = 0, scy = 0;
@@ -346,22 +409,23 @@
   const TRACK_MAP_FIT_MAX_AVG_PX = 45;
   const officialFitCache = new Map();
   function officialPositionProjector(cars, geom, bounds, samplePoints) {
-    const sample = (Array.isArray(samplePoints) ? samplePoints : [])
-      .filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y));
+    const usable = (point) => Number.isFinite(point?.x) && Number.isFinite(point?.y)
+      && !(point.x === 0 && point.y === 0 && !(Number(point.z) > 0));
+    const sample = (Array.isArray(samplePoints) ? samplePoints : []).filter(usable);
     // Session-wide sample points (replay archives) give a stable orientation
     // even when the cars themselves are clustered on the grid; live falls back
     // to fitting against the current car positions.
     const points = sample.length >= 8 ? sample : cars
       .map((car) => car.trackPosition)
-      .filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y));
+      .filter(usable);
     if (points.length < 3 || !geom?.points?.length) return null;
     const cacheKey = sample.length >= 8 && bounds
       ? `${geom.vb}|${bounds.minX},${bounds.minY},${bounds.maxX},${bounds.maxY}|${sample.length}`
       : `${geom.vb}|live|${points.length}`;
     const cached = officialFitCache.get(cacheKey);
-    let best = cached && (sample.length >= 8 || Date.now() - cached.at < 10000) ? cached.best : null;
-    if (!best) {
-      best = fitOfficialSimilarity(points, geom.points) || { fit: null, score: Infinity };
+    let entry = cached && (sample.length >= 8 || Date.now() - cached.at < 10000) ? cached : null;
+    if (!entry) {
+      let best = fitOfficialSimilarity(points, geom.points) || { fit: null, score: Infinity };
       if (best.fit) {
         const distinct = new Set(points.map((point) => {
           const snapped = nearestTrackPoint(applyOfficialFit(point, best.fit), geom.points);
@@ -370,14 +434,25 @@
         if (distinct.size < Math.min(8, Math.ceil(points.length / 2))) best = { fit: null, score: Infinity };
       }
       if (best.score > TRACK_MAP_FIT_MAX_AVG_PX) best = { fit: null, score: Infinity };
-      officialFitCache.set(cacheKey, { best, at: Date.now() });
+      let zAt = null;
+      if (best.fit) {
+        const profile = buildTrackZProfile(points, best.fit, geom.points);
+        // A conflicted profile means the overlay folds different-elevation
+        // legs onto the same vertices: the fit itself is wrong. Reject it.
+        if (profile?.conflict) best = { fit: null, score: Infinity };
+        else if (profile) zAt = profile.zAt;
+      }
+      entry = { best, zAt, at: Date.now() };
+      officialFitCache.set(cacheKey, entry);
       if (officialFitCache.size > 40) officialFitCache.delete(officialFitCache.keys().next().value);
     }
-    if (!best.fit) return null;
-    const fit = best.fit;
+    if (!entry.best.fit) return null;
+    const fit = entry.best.fit;
     // Returns the raw projected point; the motion layer snaps it to the track
     // with continuity so hairpin legs are not crossed.
-    return (point) => applyOfficialFit(point, fit);
+    const project = (point) => applyOfficialFit(point, fit);
+    project.zInfo = entry.zAt ? { zAt: entry.zAt, weight: TRACK_MAP_Z_WEIGHT * fit.scale } : null;
+    return project;
   }
 
   /* ====================================================================== */
@@ -661,10 +736,17 @@
         cars.forEach((c) => {
           const el = carRefs.current[c.code];
           if (!el) return;
-          const raw = projectOfficialPosition && c.trackPosition ? projectOfficialPosition(c.trackPosition) : null;
+          const tp = c.trackPosition;
+          const zRaw = Number(tp?.z);
+          // (0,0) with no elevation is the feed's dropout sentinel, not a place.
+          const garbage = tp && tp.x === 0 && tp.y === 0 && !(zRaw > 0);
+          const raw = projectOfficialPosition && tp && !garbage ? projectOfficialPosition(tp) : null;
           let motion = motionRef.current[c.code] || null;
           const hint = motion ? { s: wrapMod(motion.s), total: trackTotal, window: TRACK_MAP_RESNAP_WINDOW_PX } : null;
-          const snap = raw ? nearestTrackPoint(raw, pts, hint) : null;
+          const zInfo = projectOfficialPosition?.zInfo && zRaw > 0
+            ? { zAt: projectOfficialPosition.zInfo.zAt, weight: projectOfficialPosition.zInfo.weight, z: zRaw }
+            : null;
+          const snap = raw ? nearestTrackPoint(raw, pts, hint, zInfo) : null;
           const official = snap && snap.d <= TRACK_MAP_SNAP_MAX_DIST_PX ? snap : null;
           const fallbackS = ((u - c.frac + 1) % 1) * trackTotal;
           const dataAtMs = Date.parse(c.trackPosition?.date || "");

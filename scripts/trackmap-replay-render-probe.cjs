@@ -287,11 +287,15 @@ function projectCars(rows, bounds, vb, trackPoints, playOffset = 0) {
 
 async function loadSessionData(targetElapsedSeconds) {
   const startedAt = Date.now();
-  const [driverListText, timingEntries, appEntries, clockEntries, statusEntries, trackStatusEntries, raceControlEntries, lapCountText, weatherText, positionText] = await Promise.all([
+  const [driverListText, timingEntries, appEntries, clockEntries, sessionDataEntries, statusEntries, trackStatusEntries, raceControlEntries, lapCountText, weatherText, positionText] = await Promise.all([
     requestText(new URL("DriverList.jsonStream", baseUrl).href).catch(() => ""),
     requestJsonStreamEntries(new URL("TimingData.jsonStream", baseUrl).href, { targetSeconds: targetElapsedSeconds }),
     requestJsonStreamEntries(new URL("TimingAppData.jsonStream", baseUrl).href, { targetSeconds: targetElapsedSeconds }).catch(() => []),
     requestJsonStreamEntries(new URL("ExtrapolatedClock.jsonStream", baseUrl).href, { targetSeconds: targetElapsedSeconds }).catch(() => []),
+    // SessionData anchors UTC<->archive-seconds; without it the freshness gate
+    // in renderSnapshot rejects every position row (~3.5min skew) and the
+    // probe silently exercises only the fallback path.
+    requestJsonStreamEntries(new URL("SessionData.jsonStream", baseUrl).href, { targetSeconds: targetElapsedSeconds }).catch(() => []),
     requestJsonStreamEntries(new URL("SessionStatus.jsonStream", baseUrl).href, { targetSeconds: targetElapsedSeconds }).catch(() => []),
     requestJsonStreamEntries(new URL("TrackStatus.jsonStream", baseUrl).href, { targetSeconds: targetElapsedSeconds }).catch(() => []),
     requestJsonStreamEntries(new URL("RaceControlMessages.jsonStream", baseUrl).href, { targetSeconds: targetElapsedSeconds }).catch(() => []),
@@ -307,7 +311,7 @@ async function loadSessionData(targetElapsedSeconds) {
     timingEntries,
     timingAppEntries: appEntries,
     clockEntries,
-    sessionDataEntries: [],
+    sessionDataEntries,
     sessionStatusEntries: statusEntries,
     trackStatusEntries,
     raceControlEntries,

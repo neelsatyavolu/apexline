@@ -156,19 +156,63 @@ async function roomCreate(body) {
     contentFingerprint: clean(body.contentFingerprint || "", 220),
     createdAt: Date.now(),
   };
+  const db = await sql();
+  await ensureSchema(db);
+  if (db) {
+    // Retry on the rare room-code collision (code is UNIQUE).
+    for (let i = 0; i < 4; i += 1) {
+      try {
+        await db`INSERT INTO apexline_rooms (id, code, host_id, label, content_fingerprint, created_at) VALUES (${room.id}, ${room.code}, ${room.hostId}, ${room.label}, ${room.contentFingerprint}, ${room.createdAt})`;
+        break;
+      } catch {
+        room.code = friendCode();
+      }
+    }
+  }
   memory.rooms.set(room.id, room);
   memory.roomCodes.set(room.code, room.id);
   return room;
 }
 
+function roomRow(row) {
+  return {
+    id: row.id,
+    code: row.code,
+    hostId: row.host_id,
+    label: row.label,
+    contentFingerprint: row.content_fingerprint,
+    createdAt: Number(row.created_at) || Date.now(),
+  };
+}
+
 async function roomJoin(body) {
-  const roomId = memory.roomCodes.get(clean(body.code, 16).toUpperCase());
+  const code = clean(body.code, 16).toUpperCase();
+  const db = await sql();
+  await ensureSchema(db);
+  if (db) {
+    const result = await db`SELECT id, code, host_id, label, content_fingerprint, created_at FROM apexline_rooms WHERE code = ${code}`;
+    if (result.rows[0]) return roomRow(result.rows[0]);
+  }
+  const roomId = memory.roomCodes.get(code);
   if (!roomId) return { ok: false, message: "Room code not found." };
   return memory.rooms.get(roomId);
 }
 
 async function chatHistory(body) {
   const roomId = clean(body.roomId, 80);
+  const db = await sql();
+  await ensureSchema(db);
+  if (db && roomId) {
+    const result = await db`SELECT id, user_id, name, text, sent_at FROM apexline_chat_messages WHERE room_id = ${roomId} ORDER BY sent_at DESC LIMIT 80`;
+    const messages = result.rows.map((row) => ({
+      id: row.id,
+      userId: row.user_id,
+      name: row.name || "Apexline fan",
+      text: row.text,
+      sentAt: Number(row.sent_at) || Date.now(),
+    })).reverse();
+    return { messages };
+  }
   return { messages: (memory.messages.get(roomId) || []).slice(-80) };
 }
 
@@ -182,6 +226,11 @@ async function saveChat(body) {
     sentAt: Number(body.sentAt) || Date.now(),
   };
   if (!roomId || !message.text) return { ok: false };
+  const db = await sql();
+  await ensureSchema(db);
+  if (db) {
+    await db`INSERT INTO apexline_chat_messages (room_id, id, user_id, name, text, sent_at) VALUES (${roomId}, ${message.id}, ${message.userId}, ${message.name}, ${message.text}, ${message.sentAt}) ON CONFLICT (room_id, id) DO NOTHING`;
+  }
   const rows = memory.messages.get(roomId) || [];
   rows.push(message);
   memory.messages.set(roomId, rows.slice(-120));

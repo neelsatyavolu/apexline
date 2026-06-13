@@ -14,6 +14,8 @@
   const AI_INSIGHT_RECENT_LIMIT = 6;
   const AI_INSIGHT_EVENT_POLL_MS = 5 * 1000;
   const AI_INSIGHT_EVENT_SPACING_MS = 30 * 1000;
+  const CUSTOM_TILE_CHROME_HIDE_MS = 5000;
+  const CUSTOM_TILE_CHROME_HOTZONE_PX = 42;
   const PLAYBACK_PROFILES = {
     main: { bufferGoal: 18, replayBufferGoal: 30, backBufferLength: 18 },
     onboard: { maxHeight: 540, maxBandwidth: 2500000, bufferGoal: 10, replayBufferGoal: 18, backBufferLength: 8 },
@@ -207,7 +209,7 @@
     .custom-tile { position: absolute; min-width: 0; min-height: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-base); overflow: hidden; }
     .custom-tile[data-dragging="true"] { border-color: var(--accent-border); z-index: 4; }
     .custom-tile__head { position: absolute; top: 0; left: 0; right: 0; z-index: 6; display: flex; align-items: center; justify-content: space-between; gap: 6px; height: 26px; padding: 0 8px; font-size: var(--text-2xs); font-weight: 700; letter-spacing: 0.02em; color: var(--text-primary); background: #05080d; border-bottom: 1px solid var(--border-subtle); cursor: grab; user-select: none; opacity: 0; transition: opacity var(--dur-fast) var(--ease-standard); }
-    .custom-tile:hover .custom-tile__head, .custom-tile:focus-within .custom-tile__head, .custom-tile[data-dragging="true"] .custom-tile__head { opacity: 1; }
+    .custom-tile[data-chrome="true"] .custom-tile__head, .custom-tile:focus-within .custom-tile__head, .custom-tile[data-dragging="true"] .custom-tile__head { opacity: 1; }
     .custom-tile__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .custom-tile__body { position: absolute; inset: 0; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
     .custom-tile__body .pane { position: absolute; inset: 0; }
@@ -544,7 +546,7 @@
     .resize-handle--data-corner-b { left: calc(var(--data-col-a, 33%) + var(--data-col-b, 33%) - 12px); top: calc(var(--data-row, 50%) - 12px); }
     .resize-handle--quad-corner::after, .resize-handle--data-corner-a::after, .resize-handle--data-corner-b::after { left: 7px; top: 7px; width: 10px; height: 10px; opacity: 0.55; background: rgba(255,255,255,0.3); box-shadow: 0 0 0 1px rgba(7,10,15,0.65); }
     .live__body .pane--bc[data-lockar="true"] .pane__video { object-fit: contain; object-position: center center; background: #000; }
-    .live__body .pane:not(.pane--bc)[data-lockar="true"] .pane__video { object-fit: contain; object-position: center center; background: #000; }
+    .live__body .pane:not(.pane--bc)[data-lockar="true"] .pane__video { object-fit: contain; object-position: center bottom; background: #000; }
     .pane__ctl--ar { width: auto; padding: 0 6px; font-family: var(--font-mono); font-size: 10px; font-weight: 800; letter-spacing: 0.02em; }
     .pane__ctl--ar[data-active="true"] { background: var(--surface-hover); color: var(--accent); border-color: var(--accent-border); }
 
@@ -746,6 +748,23 @@
     "Intelligent": "focus", "Apexline Classic": "quad", "Pit Wall Classic": "quad", "Battle Mode": "battle",
     "Data Overload": "data", "Minimal Clean": "focus", "Theater": "theater",
   };
+  function readInitialLivePreset(livePrefs = {}, savedLayout) {
+    const defaultPreset = normalizePresetName(livePrefs.defaultPreset);
+    let saved = savedLayout;
+    if (saved == null) {
+      try { saved = JSON.parse(localStorage.getItem("pw-live-layout") || "{}"); }
+      catch { saved = {}; }
+    }
+    const savedPreset = normalizePresetName(saved?.preset);
+    const savedCustomId = customLayoutIdFromPreset(saved?.preset || "");
+    if (savedCustomId) {
+      try {
+        if (readCustomLayouts().layouts.some((entry) => entry.id === savedCustomId)) return saved.preset;
+      } catch {}
+    }
+    if (savedPreset && LAYOUTS[savedPreset]) return savedPreset;
+    return LAYOUTS[defaultPreset] ? defaultPreset : "Intelligent";
+  }
   const SYNC_STORAGE_KEY = "pw-sync-settings";
   const TIMING_OFFSET_STORAGE_KEY = "pw-replay-timing-offset-v2";
   const PARTY_TRAY_STORAGE_KEY = "pw-party-tray-position";
@@ -1632,10 +1651,18 @@
     const fallbackCodes = unique([context.selectedCode, ...(context.fallbackCodes || []), ...timingCodes, ...standingCodes, ...driverCodes]);
     const leader = validCode(context.timingRows?.[0]?.code) || validCode(context.standings?.[0]?.code) || validCode(context.drivers?.[0]?.code) || fallbackCodes[0] || "";
     const favorites = unique(context.profile?.favoriteDrivers || []);
+    const sessionKind = String(context.sessionKind || "").toLowerCase();
+    const nonRaceSession = sessionKind && !/race|sprint|grand prix/.test(sessionKind);
+    const topTimingCodes = unique((context.timingRows || [])
+      .slice()
+      .sort((a, b) => Number(a?.pos || 99) - Number(b?.pos || 99))
+      .map((row) => row?.code));
     if (source.mode === "leader") return leader;
     if (source.mode === "favorite1") return favorites[0] || "";
     if (source.mode === "favorite2") return favorites[1] || "";
+    if (source.mode === "battle-primary") return nonRaceSession ? (topTimingCodes[0] || leader) : leader;
     if (source.mode === "battle-secondary") {
+      if (nonRaceSession) return topTimingCodes.find((code) => code !== (topTimingCodes[0] || leader)) || "";
       return favorites.find((code) => code !== leader) || fallbackCodes.find((code) => code !== leader) || "";
     }
     return "";
@@ -1644,7 +1671,7 @@
     if (!raw || typeof raw !== "object") return null;
     if (raw.type === "timing") return { type: "timing" };
     if (raw.type === "onboard" && typeof raw.code === "string" && raw.code) return { type: "onboard", code: raw.code };
-    if (raw.type === "smart-onboard" && ["leader", "favorite1", "favorite2", "battle-secondary"].includes(raw.mode)) return { type: "smart-onboard", mode: raw.mode };
+    if (raw.type === "smart-onboard" && ["leader", "favorite1", "favorite2", "battle-primary", "battle-secondary"].includes(raw.mode)) return { type: "smart-onboard", mode: raw.mode };
     if (raw.type === "channel" && typeof raw.feedId === "string" && raw.feedId) return { type: "channel", feedId: raw.feedId };
     return null;
   }
@@ -1680,13 +1707,18 @@
             if (seenSources.has(sourceKey)) return null;
             seenSources.add(sourceKey);
             const id = typeof tile.id === "string" && tile.id ? tile.id : "t-" + sourceKey;
-            return { id, source, ...clampCustomTileGeometry(tile), tickerRows: clampCustomTickerRows(tile.tickerRows), tickerHeight: clampCustomTickerHeight(tile.tickerHeight) };
+            return { id, source, ...clampCustomTileGeometry(tile), tickerRows: clampCustomTickerRows(tile.tickerRows), tickerHeight: clampCustomTickerHeight(tile.tickerHeight), ...(tile.lockAspect === true ? { lockAspect: true } : {}) };
           })
           .filter(Boolean);
         const name = typeof layout.name === "string" && layout.name.trim() ? layout.name.trim() : "Custom layout";
         return { id: layout.id, name, tiles };
       });
     return { layouts };
+  }
+  function shouldApplyProfileCustomLayouts(current, incoming) {
+    const currentLayouts = normalizeCustomLayouts(current).layouts;
+    const incomingLayouts = normalizeCustomLayouts(incoming).layouts;
+    return currentLayouts.length === 0 && incomingLayouts.length > 0;
   }
   function nextCustomLayoutName(layouts = []) {
     const names = new Set(layouts.map((layout) => layout.name));
@@ -2822,6 +2854,8 @@
     const clockLabel = smoothSessionClockLabel(clock, context);
     if (!clockLabel) return "";
     const sessionKind = String(context.sessionKind || "").toLowerCase();
+    const practiceMatch = sessionKind.match(/\b(?:free\s+)?practice[\s_-]*([1-3])\b/) || sessionKind.match(/\bfp\s*([1-3])\b/);
+    if (practiceMatch) return `FP${practiceMatch[1]} ${clockLabel}`;
     if (!/qualifying|shootout/.test(sessionKind)) return clockLabel;
     const part = qualifyingPhaseFromSession({
       sessionKind: context.sessionKind,
@@ -3077,12 +3111,13 @@
   function OnboardPane({ feed, code, focus, telemetry, channel, streamUrl, audioActive, audioVolume, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand,
     visible = true, style, zone, driverOptions = [], onDriverChange,
     replaySync, onReplayToggle, onReplaySeek, onSurfaceToggle, onPlayerReady, syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset,
-    timingRows = [], sessionKind = "", videoQuality, feedTickerOn = false, onToggleFeedTicker }) {
+    timingRows = [], sessionKind = "", videoQuality, lockAspect = false, onLockAspectToggle, feedTickerOn = false, onToggleFeedTicker }) {
     const [telemetryOn, setTelemetryOn] = React.useState(Boolean(telemetry));
-    const [lockAspect, setLockAspect] = React.useState(false);
+    const [localLockAspect, setLocalLockAspect] = React.useState(false);
     const [streamReady, setStreamReady] = React.useState(false);
     const descriptor = streamDescriptor(streamUrl);
     const manifestUrl = descriptor?.manifestUrl || "";
+    const effectiveLockAspect = onLockAspectToggle ? Boolean(lockAspect) : localLockAspect;
     React.useEffect(() => setTelemetryOn(Boolean(telemetry)), [telemetry, code]);
     React.useEffect(() => setStreamReady(false), [code, manifestUrl]);
     const d = D.byCode[code] || {};
@@ -3092,7 +3127,7 @@
     const streaming = Boolean(descriptor);
     return (
       <div className="pane" data-focus={focus} data-expanded={expanded} data-visible={String(visible)} data-zone={zone}
-        data-telemetry={String(telemetryOn)} data-replay={String(replaySync?.mode === "replay")} data-lockar={String(lockAspect)}
+        data-telemetry={String(telemetryOn)} data-replay={String(replaySync?.mode === "replay")} data-lockar={String(effectiveLockAspect)}
         data-streaming={String(streaming)} data-stream-ready={String(!streaming || streamReady)} style={style}
         onClick={(event) => {
           if (!descriptor || !isPaneSurfaceClickTarget(event.target)) return;
@@ -3112,7 +3147,7 @@
           )}
           {!channel && <span className="pane__ctl" data-active={telemetryOn} onClick={() => setTelemetryOn(!telemetryOn)}><Icon name="gauge" size={14} /></span>}
           <AudioToggle active={audioActive} onFocus={onAudioFocus} />
-          <span className="pane__ctl pane__ctl--ar" data-active={String(lockAspect)} title={lockAspect ? "Unlock aspect ratio" : "Lock 16:9 aspect ratio"} onClick={() => setLockAspect((value) => !value)}>16:9</span>
+          <span className="pane__ctl pane__ctl--ar" data-active={String(effectiveLockAspect)} title={effectiveLockAspect ? "Unlock aspect ratio" : "Lock 16:9 aspect ratio"} onClick={() => onLockAspectToggle ? onLockAspectToggle() : setLocalLockAspect((value) => !value)}>16:9</span>
           {onToggleFeedTicker && <span className="pane__ctl" data-active={String(Boolean(feedTickerOn))} title={feedTickerOn ? "Hide driver tiles" : "Show driver tiles"} onClick={onToggleFeedTicker}><Icon name="grid" size={14} /></span>}
           <span className="pane__ctl" onClick={onConfigureStream}><Icon name="settings" size={14} /></span>
           <span className="pane__ctl" data-active={expanded} onClick={onExpand}><Icon name="maximize" size={14} /></span>
@@ -3227,10 +3262,7 @@
     const { data: D, profile, connection, dataSource } = window.PW.usePitWall();
     const [isFullScreen, setIsFullScreen] = React.useState(false);
     const [livePrefs] = React.useState(readLivePrefs);
-    const [preset, setPreset] = React.useState(() => {
-      const defaultPreset = normalizePresetName(livePrefs.defaultPreset);
-      return LAYOUTS[defaultPreset] ? defaultPreset : "Intelligent";
-    });
+    const [preset, setPreset] = React.useState(() => readInitialLivePreset(livePrefs));
     const [selected, setSelected] = React.useState("");
     const [autopairs, setAutopairs] = React.useState(true);
     const [showToast, setShowToast] = React.useState(true);
@@ -3259,6 +3291,7 @@
     const [customPickerOpen, setCustomPickerOpen] = React.useState(false);
     const [customConfigOpen, setCustomConfigOpen] = React.useState(false);
     const [customDraftRects, setCustomDraftRects] = React.useState({});
+    const [customChromeTileId, setCustomChromeTileId] = React.useState(null);
     const [timingColumns, setTimingColumns] = React.useState(readTimingColumns);
     const [timingConfigOpen, setTimingConfigOpen] = React.useState(false);
     const [onboardOverrides, setOnboardOverrides] = React.useState({});
@@ -3292,6 +3325,7 @@
     React.useEffect(() => { partyTrayOpenRef.current = partyTrayOpen; }, [partyTrayOpen]);
     React.useEffect(() => { partyTrayMinimizedRef.current = partyTrayMinimized; }, [partyTrayMinimized]);
     React.useEffect(() => { partyIdentityRef.current = partyIdentity; }, [partyIdentity]);
+    React.useEffect(() => () => clearTimeout(customChromeTimerRef.current), []);
     // Clear the unread badge + queued toasts whenever the tray is fully visible.
     React.useEffect(() => {
       if (partyTrayOpen && !partyTrayMinimized) {
@@ -3324,6 +3358,7 @@
     const customLayoutsTouchedRef = React.useRef(false);
     const profileCustomLayoutsKeyRef = React.useRef("");
     const customCanvasRef = React.useRef(null);
+    const customChromeTimerRef = React.useRef(null);
     const replayClockRef = React.useRef(0);
     const replayTimingRequestRef = React.useRef(0);
     const replayTimingInFlightRef = React.useRef(false);
@@ -3436,9 +3471,20 @@
       if (!profile.liveCustomLayouts) return;
       const normalized = normalizeCustomLayouts(profile.liveCustomLayouts);
       const serialized = JSON.stringify(normalized);
-      if (serialized === profileCustomLayoutsKeyRef.current) return;
-      profileCustomLayoutsKeyRef.current = serialized;
-      setCustomLayouts((current) => JSON.stringify(normalizeCustomLayouts(current)) === serialized ? current : normalized);
+      setCustomLayouts((current) => {
+        const currentNormalized = normalizeCustomLayouts(current);
+        const currentSerialized = JSON.stringify(currentNormalized);
+        if (serialized === currentSerialized) {
+          profileCustomLayoutsKeyRef.current = serialized;
+          return current;
+        }
+        if (!shouldApplyProfileCustomLayouts(currentNormalized, normalized)) {
+          profileCustomLayoutsKeyRef.current = currentSerialized;
+          return current;
+        }
+        profileCustomLayoutsKeyRef.current = serialized;
+        return normalized;
+      });
     }, [profile.liveCustomLayouts]);
     React.useEffect(() => {
       try {
@@ -3830,6 +3876,9 @@
         return next;
       }) }));
     }
+    function setCustomTileLockAspect(layoutId, tileId, lockAspect) {
+      updateCustomLayout(layoutId, (entry) => ({ ...entry, tiles: entry.tiles.map((tile) => tile.id === tileId ? { ...tile, lockAspect: Boolean(lockAspect) } : tile) }));
+    }
     function addCustomTile(layoutId, source) {
       addCustomTiles(layoutId, [source]);
     }
@@ -3842,7 +3891,7 @@
           if (tiles.some((tile) => customTileSourceKey(tile.source) === customTileSourceKey(normalized))) return;
           const rect = defaultCustomTileRect(tiles);
           if (!rect) return;
-          tiles = [...tiles, { id: "t-" + Math.random().toString(36).slice(2, 10), source: normalized, ...rect }];
+          tiles = [...tiles, { id: "t-" + Math.random().toString(36).slice(2, 10), source: normalized, lockAspect: true, ...rect }];
         });
         return tiles === entry.tiles ? entry : { ...entry, tiles };
       });
@@ -4821,11 +4870,13 @@
       profile,
       selectedCode,
       fallbackCodes,
+      sessionKind: activeSessionKind,
     };
     function customSmartOnboardLabel(source, code = "") {
       const base = source.mode === "leader" ? "Leader"
         : source.mode === "favorite1" ? "Favorite driver"
         : source.mode === "favorite2" ? "Second favorite driver"
+        : source.mode === "battle-primary" ? "Battle"
         : source.mode === "battle-secondary" ? "Battle"
         : "Intelligent onboard";
       return code ? `${base} · ${code}` : base;
@@ -5047,11 +5098,27 @@
           videoQuality={videoQuality}
           broadcastTickerRows={panelSizes.broadcastTickerRows}
           onTickerRowsChange={setBroadcastTickerRows}
-          lockAspect={panelSizes.worldLockAspect}
-          onLockAspectToggle={toggleWorldLockAspect}
+          lockAspect={p.onLockAspectToggle ? p.lockAspect : panelSizes.worldLockAspect}
+          onLockAspectToggle={p.onLockAspectToggle || (p.broadcast ? toggleWorldLockAspect : undefined)}
           expanded={expandedPane === paneKey}
           onExpand={() => setExpandedPane(expandedPane === paneKey ? null : paneKey)} />
       );
+    }
+
+    function hideCustomTileChrome(tileId) {
+      clearTimeout(customChromeTimerRef.current);
+      setCustomChromeTileId((current) => current === tileId ? null : current);
+    }
+
+    function handleCustomTilePointerMove(event, tileId) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (event.clientY - rect.top > CUSTOM_TILE_CHROME_HOTZONE_PX) {
+        hideCustomTileChrome(tileId);
+        return;
+      }
+      clearTimeout(customChromeTimerRef.current);
+      setCustomChromeTileId(tileId);
+      customChromeTimerRef.current = setTimeout(() => setCustomChromeTileId((current) => current === tileId ? null : current), CUSTOM_TILE_CHROME_HIDE_MS);
     }
 
     function beginCustomTileDrag(event, tile, mode) {
@@ -5105,12 +5172,17 @@
       const feedPane = pane && renderLivePane({
         ...pane,
         style: { position: "absolute", inset: 0 },
+        lockAspect: Boolean(tile.lockAspect),
+        onLockAspectToggle: () => setCustomTileLockAspect(activeCustomLayout.id, tile.id, !tile.lockAspect),
         hideBuiltinTicker: isChannel,
         feedTickerOn: tickerOn,
         onToggleFeedTicker: isChannel ? () => setCustomTileTicker(activeCustomLayout.id, tile.id, { tickerRows: tickerRows > 0 ? 0 : 2 }) : undefined,
       });
       return (
         <div key={tile.id} className="custom-tile" data-dragging={draft ? "true" : undefined}
+          data-chrome={customChromeTileId === tile.id ? "true" : undefined}
+          onPointerMove={(event) => handleCustomTilePointerMove(event, tile.id)}
+          onPointerLeave={() => hideCustomTileChrome(tile.id)}
           style={{ left: rect.x + "%", top: rect.y + "%", width: rect.w + "%", height: rect.h + "%" }}>
           <div className="custom-tile__head" onPointerDown={(event) => beginCustomTileDrag(event, tile, "move")}>
             <span className="custom-tile__label">{customTileLabel(tile)}</span>
@@ -5174,12 +5246,13 @@
       const leaderCode = smartCode("leader");
       const favorite1Code = smartCode("favorite1");
       const favorite2Code = smartCode("favorite2");
+      const battlePrimaryCode = smartCode("battle-primary");
       const battleSecondaryCode = smartCode("battle-secondary");
       const smartOnboardItems = [
         leaderCode && { key: customTileSourceKey(smartSource("leader")), label: "Leader", sub: leaderCode, icon: "trophy", source: smartSource("leader") },
         favorite1Code && { key: customTileSourceKey(smartSource("favorite1")), label: "Favorite driver", sub: favorite1Code, icon: "star", source: smartSource("favorite1") },
         favorite2Code && { key: customTileSourceKey(smartSource("favorite2")), label: "Second favorite driver", sub: favorite2Code, icon: "star", source: smartSource("favorite2") },
-        leaderCode && battleSecondaryCode && { key: "smart-onboard:battle", label: "Battle", sub: `${leaderCode} + ${battleSecondaryCode}`, icon: "zap", sources: [smartSource("leader"), smartSource("battle-secondary")] },
+        battlePrimaryCode && battleSecondaryCode && { key: "smart-onboard:battle", label: "Battle", sub: `${battlePrimaryCode} + ${battleSecondaryCode}`, icon: "zap", sources: [smartSource("battle-primary"), smartSource("battle-secondary")] },
       ].filter(Boolean);
       const pickerGroups = [
         { group: "Channels", items: channelItems, empty: "No channels resolved for this session yet." },

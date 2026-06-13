@@ -525,6 +525,7 @@ function normalizeProfileCustomLayouts(raw) {
             ...clampProfileCustomTileGeometry(tile),
             tickerRows: clampProfilePanelSize(tile.tickerRows || 0, 0, 4),
             tickerHeight: clampProfilePanelSize(tile.tickerHeight || 140, 64, 320),
+            ...(tile.lockAspect === true ? { lockAspect: true } : {}),
           };
         })
         .filter(Boolean);

@@ -64,10 +64,38 @@
 	    .race-pick__score { justify-self: end; color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-sm); font-weight: 800; }
 	    .race-board { display: flex; flex-direction: column; gap: 1px; overflow: hidden; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); background: var(--border-subtle); }
 	    .race-board__row { display: grid; grid-template-columns: 42px minmax(0, 1fr) 58px; gap: var(--space-4); align-items: center; min-width: 0; padding: var(--space-4) var(--space-5); background: var(--bg-sunken); }
+	    button.race-board__row { width: 100%; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+	    button.race-board__row:hover { background: color-mix(in srgb, var(--accent) 12%, var(--bg-sunken)); }
 	    .race-board__pos { color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; }
 	    .race-board__driver { min-width: 0; color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-sm); font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	    .race-board__prob { justify-self: end; color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; }
 	    .race-board__reason { grid-column: 2 / -1; color: var(--text-tertiary); font-size: var(--text-2xs); line-height: 1.35; }
+	    .projected-champ { margin-top: var(--space-6); display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-5); border-radius: var(--radius-sm); border: 1px solid color-mix(in srgb, var(--accent-border) 55%, var(--border-subtle)); background: linear-gradient(120% 140% at 100% 0, rgba(45,123,255,0.10), transparent 42%), var(--bg-sunken); }
+	    .projected-champ__head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-5); padding-bottom: var(--space-3); border-bottom: 1px solid var(--border-subtle); }
+	    .projected-champ__title { color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-md); font-weight: 900; }
+	    .projected-champ__sub { color: var(--text-tertiary); font-size: var(--text-2xs); font-weight: 800; letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+	    .projected-champ__row { display: grid; grid-template-columns: 38px minmax(0, 1fr) 72px 62px 58px; gap: var(--space-4); align-items: center; padding: var(--space-3) 0; border-bottom: 1px solid rgba(255,255,255,0.045); }
+	    .projected-champ__row:last-child { border-bottom: 0; }
+	    .projected-champ__pos, .projected-champ__race, .projected-champ__pts, .projected-champ__delta { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 900; font-variant-numeric: tabular-nums; }
+	    .projected-champ__pos { color: var(--text-tertiary); }
+	    .projected-champ__driver { min-width: 0; display: flex; align-items: center; gap: var(--space-4); color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-sm); font-weight: 900; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	    .projected-champ__stripe { width: 5px; height: 24px; border-radius: var(--radius-pill); background: var(--_c); flex: none; }
+	    .projected-champ__pts { justify-self: end; color: var(--text-primary); }
+	    .projected-champ__race { justify-self: end; color: var(--success); }
+	    .projected-champ__delta { justify-self: end; color: var(--text-tertiary); }
+	    .driver-proj-modal__overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: var(--space-9); background: rgba(3,6,12,0.72); backdrop-filter: blur(14px); }
+	    .driver-proj-modal { width: min(620px, 100%); border-radius: var(--radius-md); border: 1px solid var(--accent-border); background: linear-gradient(135deg, rgba(45,123,255,0.13), transparent 42%), var(--surface-card); box-shadow: 0 28px 90px rgba(0,0,0,.48); padding: var(--space-8); }
+	    .driver-proj-modal__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-6); margin-bottom: var(--space-7); }
+	    .driver-proj-modal__identity { display: flex; align-items: center; gap: var(--space-5); min-width: 0; }
+	    .driver-proj-modal__eyebrow { color: var(--text-accent); font-size: var(--text-2xs); font-weight: 900; letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+	    .driver-proj-modal__title { margin-top: 3px; color: var(--text-strong); font-family: var(--font-display); font-size: var(--text-2xl); font-weight: 900; }
+	    .driver-proj-modal__grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); margin-bottom: var(--space-7); }
+	    .driver-proj-modal__metric { padding: var(--space-5); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); background: var(--bg-sunken); }
+	    .driver-proj-modal__metric span { display: block; color: var(--text-tertiary); font-size: var(--text-2xs); font-weight: 800; letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+	    .driver-proj-modal__metric b { display: block; margin-top: 5px; color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-lg); font-weight: 900; }
+	    .driver-proj-modal__rationale { padding: var(--space-6); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.035); }
+	    .driver-proj-modal__label { color: var(--text-tertiary); font-size: var(--text-2xs); font-weight: 900; letter-spacing: var(--tracking-caps); text-transform: uppercase; margin-bottom: var(--space-3); }
+	    .driver-proj-modal__body { color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.55; }
 	    .race-watch { display: flex; flex-direction: column; gap: 3px; padding: var(--space-5); border-radius: var(--radius-sm); background: var(--bg-sunken); border: 1px solid var(--border-subtle); }
 	    .race-watch__top { display: flex; justify-content: space-between; gap: var(--space-5); color: var(--text-primary); font-weight: 800; font-size: var(--text-sm); }
 	    .race-watch__body { color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.4; }
@@ -266,7 +294,8 @@
 	    SAU: "#52e252",
 	    ALP: "#ff87bc",
 	  };
-	  const fallbackPalette = ["var(--accent)", "var(--t-personal)", "var(--t-fastest)", "var(--warning)", "var(--t-pit)", "var(--tyre-soft)", "var(--tyre-inter)", "var(--ink-300)"];
+		  const fallbackPalette = ["var(--accent)", "var(--t-personal)", "var(--t-fastest)", "var(--warning)", "var(--t-pit)", "var(--tyre-soft)", "var(--tyre-inter)", "var(--ink-300)"];
+		  const RACE_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 
 	  function finiteValue(value, fallback = 0) {
 	    const n = Number(value);
@@ -442,10 +471,96 @@
 	    );
 	  }
 
-	  function predictionPercent(value) {
-	    const n = finiteValue(value, 0);
-	    return n > 0 ? `${Math.round(Math.max(0, Math.min(1, n)) * 100)}%` : "n/a";
-	  }
+		  function predictionPercent(value) {
+		    const n = finiteValue(value, 0);
+		    return n > 0 ? `${Math.round(Math.max(0, Math.min(1, n)) * 100)}%` : "n/a";
+		  }
+
+		  function racePointsForPosition(index) {
+		    return RACE_POINTS[index] || 0;
+		  }
+
+		  function projectedChampionshipRows(D, leaderboard) {
+		    const racePointsByCode = new Map((leaderboard || []).map((item, index) => [String(item.code || "").toUpperCase(), racePointsForPosition(index)]));
+		    return (D.standings || []).map((row, index) => {
+		      const code = String(row.code || "").toUpperCase();
+		      const driver = D.byCode?.[code] || {};
+		      const racePoints = racePointsByCode.get(code) || 0;
+		      return {
+		        code,
+		        name: driver.name || row.name || code || "Driver",
+		        color: driver.color || standingsColor(index),
+		        currentPos: finiteValue(row.pos, index + 1),
+		        currentPoints: finiteValue(row.pts),
+		        racePoints,
+		        projectedPoints: finiteValue(row.pts) + racePoints,
+		      };
+		    }).sort((a, b) => b.projectedPoints - a.projectedPoints || a.currentPos - b.currentPos).map((row, index) => ({
+		      ...row,
+		      projectedPos: index + 1,
+		      delta: row.currentPos - (index + 1),
+		    })).slice(0, 10);
+		  }
+
+		  function ProjectedChampionshipLeaderboard({ D, leaderboard, pageId }) {
+		    if (pageId !== "current-weekend" || !leaderboard?.length) return null;
+		    const rows = projectedChampionshipRows(D, leaderboard);
+		    if (!rows.length) return null;
+		    return (
+		      <div className="projected-champ">
+		        <div className="projected-champ__head">
+		          <span className="projected-champ__title">Championship Leaderboard After Race (projected)</span>
+		          <span className="projected-champ__sub">Race points applied</span>
+		        </div>
+		        {rows.map((row) => (
+		          <div className="projected-champ__row" key={row.code} style={{ "--_c": row.color }}>
+		            <span className="projected-champ__pos">P{row.projectedPos}</span>
+		            <span className="projected-champ__driver"><i className="projected-champ__stripe" />{row.code} · {row.name}</span>
+		            <span className="projected-champ__pts">{row.projectedPoints} pts</span>
+		            <span className="projected-champ__race">+{row.racePoints}</span>
+		            <span className="projected-champ__delta">{row.delta > 0 ? `+${row.delta}` : row.delta < 0 ? String(row.delta) : "—"}</span>
+		          </div>
+		        ))}
+		      </div>
+		    );
+		  }
+
+		  function ProjectionDriverModal({ D, selection, onClose }) {
+		    if (!selection) return null;
+		    const { item, index } = selection;
+		    const code = item.code || "";
+		    const driver = D.byCode?.[code] || {};
+		    const standingsRow = (D.standings || []).find((row) => row.code === code) || {};
+		    const name = item.label || driver.name || code || "Driver";
+		    const color = driver.color || standingsColor(index);
+		    const racePoints = racePointsForPosition(index);
+		    return (
+		      <div className="driver-proj-modal__overlay" onClick={onClose} role="presentation">
+		        <div className="driver-proj-modal" role="dialog" aria-modal="true" aria-label={`${name} projection detail`} onClick={(event) => event.stopPropagation()}>
+		          <div className="driver-proj-modal__head">
+		            <div className="driver-proj-modal__identity">
+		              <Avatar initials={code || name.slice(0, 3).toUpperCase()} number={driver.num} ring={color} src={driver.remoteImage || driver.image} size="lg" />
+		              <div>
+		                <div className="driver-proj-modal__eyebrow">P{index + 1} race projection</div>
+		                <div className="driver-proj-modal__title">{name}</div>
+		              </div>
+		            </div>
+		            <IconButton variant="ghost" size="sm" label="Close projection detail" onClick={onClose}><Icon name="close" size={16} /></IconButton>
+		          </div>
+		          <div className="driver-proj-modal__grid">
+		            <div className="driver-proj-modal__metric"><span>Probability</span><b>{predictionPercent(item.probability)}</b></div>
+		            <div className="driver-proj-modal__metric"><span>Confidence</span><b>{predictionPercent(item.confidence)}</b></div>
+		            <div className="driver-proj-modal__metric"><span>Race points</span><b>+{racePoints}</b></div>
+		            <div className="driver-proj-modal__metric"><span>Current</span><b>{standingsRow.pos ? `P${standingsRow.pos}` : "n/a"}</b></div>
+		          </div>
+		          <div className="driver-proj-modal__rationale">
+		            <div className="driver-proj-modal__label">Model rationale</div>
+		            <div className="driver-proj-modal__body">{item.reason || "The model did not return a detailed rationale for this driver."}</div>
+		          </div>
+		        </div>
+		      </div>
+		    );
+		  }
 
 	  function PredictionCandidate({ D, item, index, kind, pageId }) {
 	    const code = item.code || "";
@@ -457,7 +572,7 @@
 	    const color = constructor.color || driver.color || standingsColor(index);
 	    return (
 	      <div className="race-pick" style={{ "--_c": color, "--_w": Math.max(5, confidence * 100) + "%" }}>
-	        <Avatar initials={code || name.slice(0, 3).toUpperCase()} number={isConstructor ? "" : driver.num} ring={color} src={isConstructor ? "" : (driver.remoteImage || driver.image)} size="sm" />
+	        <Avatar initials={code || name.slice(0, 3).toUpperCase()} number={isConstructor ? "" : driver.num} ring={color} src={isConstructor ? constructor.logo : (driver.remoteImage || driver.image)} square={isConstructor} size="sm" />
 	        <div>
 	          <div className="race-pick__name">{name}</div>
 	          <div className="race-pick__meta"><span>{kind}</span><span>confidence {predictionPercent(confidence)}</span></div>
@@ -488,9 +603,10 @@
 	    };
 	  }
 
-	  function PredictionBoard({ D, predictions, pageId }) {
-	    if (!predictions?.available) return null;
-	    const labels = predictionBoardLabels(pageId);
+		  function PredictionBoard({ D, predictions, pageId }) {
+		    const [selectedProjectionDriver, setSelectedProjectionDriver] = React.useState(null);
+		    if (!predictions?.available) return null;
+		    const labels = predictionBoardLabels(pageId);
 	    const winner = Array.isArray(predictions.winner) ? predictions.winner.slice(0, 3) : [];
 	    const podium = Array.isArray(predictions.podium) ? predictions.podium.slice(0, 3) : [];
 	    const leaderboard = Array.isArray(predictions.leaderboard) ? predictions.leaderboard.slice(0, 22) : [];
@@ -529,17 +645,18 @@
 	                  const driver = D.byCode?.[code] || {};
 	                  const name = item.label || driver.name || code || "Driver";
 	                  return (
-	                    <div className="race-board__row" key={`${code || name}-${index}`}>
-	                      <span className="race-board__pos">P{index + 1}</span>
-	                      <span className="race-board__driver">{name}</span>
-	                      <span className="race-board__prob">{predictionPercent(item.probability)}</span>
-	                      {item.reason && <span className="race-board__reason">{item.reason}</span>}
-	                    </div>
-	                  );
-	                })}
-	              </div>
-	            </div>
-	          )}
+		                    <button className="race-board__row" type="button" onClick={() => setSelectedProjectionDriver({ item, index })} key={`${code || name}-${index}`}>
+		                      <span className="race-board__pos">P{index + 1}</span>
+		                      <span className="race-board__driver">{name}</span>
+		                      <span className="race-board__prob">{predictionPercent(item.probability)}</span>
+		                      {item.reason && <span className="race-board__reason">{item.reason}</span>}
+		                    </button>
+		                  );
+		                })}
+		              </div>
+		              <ProjectedChampionshipLeaderboard D={D} leaderboard={leaderboard} pageId={pageId} />
+		            </div>
+		          )}
 	          {watchlist.length > 0 && (
 	            <div className="race-pred__section race-pred__section--wide">
 	              <div className="race-pred__label">{labels.watchlist}</div>
@@ -551,8 +668,9 @@
 	              ))}
 	            </div>
 	          )}
-	        </div>
-	        {predictions.caveat && <div className="race-pred__caveat">{predictions.caveat}</div>}
+		        </div>
+		        <ProjectionDriverModal D={D} selection={selectedProjectionDriver} onClose={() => setSelectedProjectionDriver(null)} />
+		        {predictions.caveat && <div className="race-pred__caveat">{predictions.caveat}</div>}
 	      </section>
 	    );
 	  }
@@ -726,6 +844,7 @@
     const [typing, setTyping] = React.useState(false);
     const [progressOpen, setProgressOpen] = React.useState(false);
     const [progressModalOpen, setProgressModalOpen] = React.useState(false);
+    const [rerunning, setRerunning] = React.useState(false);
     const dailyPending = daily.status === "pending";
     const msgsRef = React.useRef(null);
     const selectedTab = INSIGHT_TABS.find((tab) => tab.id === activeTab) || INSIGHT_TABS[0];
@@ -803,6 +922,17 @@
       setMessages(initialChat.slice(0, 1));
       setDraft("");
       setTyping(false);
+    }
+
+    async function rerunAnalysis() {
+      if (!refreshData || rerunning || dailyPending) return;
+      setRerunning(true);
+      setProgressOpen(true);
+      try {
+        await refreshData({ forceRefresh: true, forceCopilotRefresh: true });
+      } finally {
+        setRerunning(false);
+      }
     }
 
     const chatPanel = (
@@ -910,6 +1040,9 @@
 	              <Card title="Daily status" subtitle="One automatic AI calculation per day" aside={<Icon name="sparkles" size={15} />} padding="default">
                 <div className="cop-status-head">
                   <div className="cop-status-head__text">{progress.statusText || (dailyPending ? "Daily AI calculation in progress." : projectionStatus)}</div>
+                  <Button size="sm" variant="ghost" onClick={rerunAnalysis} disabled={rerunning || dailyPending} iconLeft={<Icon name="timer" size={13} />}>
+                    {rerunning ? "Rerunning" : "Rerun analysis"}
+                  </Button>
                   <Button size="sm" variant={progressOpen ? "secondary" : "ghost"} onClick={() => setProgressOpen((open) => !open)} iconLeft={<Icon name="timer" size={13} />} aria-expanded={progressOpen}>
                     {progressOpen ? "Hide progress" : "Show progress"}
                   </Button>

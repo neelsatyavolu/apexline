@@ -977,6 +977,7 @@ const newsParserSandbox = vm.runInNewContext(`(() => {
     "normalizeNewsUrl",
     "extractHtmlDate",
     "extractHtmlImage",
+    "extractHtmlPreview",
     "extractArticleMetaImage",
     "extractArticleImages",
     "normalizeArticleDate",
@@ -1001,11 +1002,17 @@ const planetF1CardHtml = `
       </picture>
     </a>
     <a href="/news/f1-starting-grid-2026-monaco-gp">F1 starting grid: What is the grid order for the 2026 Monaco Grand Prix?</a>
+    <p>Complete grid order for the Monaco Grand Prix after penalties changed the final starting positions.</p>
   </article>`;
 assert.equal(
   newsParserSandbox.parseNewsHtml(planetF1CardHtml, { name: "PlanetF1", url: "https://www.planetf1.com/news", articlePath: /\/news\/[^/?#]+\/?$/i })[0].image,
   "https://www.planetf1.com/content/uploads/2026/06/monaco-grid.webp",
   "PlanetF1 news cards should use nearby srcset images when img src is absent",
+);
+assert.equal(
+  newsParserSandbox.parseNewsHtml(planetF1CardHtml, { name: "PlanetF1", url: "https://www.planetf1.com/news", articlePath: /\/news\/[^/?#]+\/?$/i })[0].lead,
+  "Complete grid order for the Monaco Grand Prix after penalties changed the final starting positions.",
+  "PlanetF1 news cards should show the listing excerpt as the article preview",
 );
 assert.equal(
   newsParserSandbox.extractArticleMetaImage(`<meta property="og:image" content="https://www.planetf1.com/content/uploads/2026/06/article-image.webp">`, "https://www.planetf1.com/news/story"),
@@ -1903,6 +1910,75 @@ assert.match(mainProcess, /drivers-championship/, "Daily Copilot insights should
 assert.match(mainProcess, /constructors-championship/, "Daily Copilot insights should include a constructors championship page");
 assert.match(mainProcess, /current-weekend/, "Daily Copilot insights should include a current race weekend page");
 assert.match(mainProcess, /next-weekend/, "Daily Copilot insights should include a next race weekend page");
+const dailyCopilotProgressForSmoke = vm.runInNewContext(`(() => {
+  const COPILOT_INSIGHT_PAGES = [
+    { id: "drivers-championship", title: "Drivers championship" },
+    { id: "constructors-championship", title: "Constructors championship" },
+    { id: "current-weekend", title: "Current race weekend" },
+    { id: "next-weekend", title: "Next race weekend" },
+  ];
+  ${extractNamedFunction(mainProcess, "dailyCopilotProgress")}
+  return dailyCopilotProgress;
+})()`);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(dailyCopilotProgressForSmoke({
+    status: "thinking",
+    currentPage: { id: "current-weekend", title: "Current race weekend" },
+    currentIndex: 2,
+    completedPages: 1,
+  }).items.map((item) => [item.id, item.status]))),
+  [
+    ["drivers-championship", "computed"],
+    ["constructors-championship", "computed"],
+    ["current-weekend", "thinking"],
+    ["next-weekend", "waiting"],
+  ],
+  "Daily Copilot progress should not show earlier pages as undone when a partial refresh reports a stale completed count"
+);
+const mergeCopilotDataForSmoke = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(dataProviderSource, "copilotDailyUpdatedAtMs")}
+  ${extractNamedFunction(dataProviderSource, "copilotDailyProgressRank")}
+  ${extractNamedFunction(dataProviderSource, "shouldKeepCurrentCopilotDaily")}
+  ${extractNamedFunction(dataProviderSource, "mergeCopilotData")}
+  return mergeCopilotData;
+})()`);
+assert.equal(
+  mergeCopilotDataForSmoke({
+    daily: {
+      status: "pending",
+      updatedAt: "2026-06-12T22:10:10.000Z",
+      progress: { completedPages: 2, items: [{ status: "computed" }, { status: "computed" }, { status: "thinking" }] },
+    },
+  }, {
+    daily: {
+      status: "pending",
+      updatedAt: "2026-06-12T22:10:05.000Z",
+      progress: { completedPages: 1, items: [{ status: "computed" }, { status: "thinking" }, { status: "waiting" }] },
+    },
+  }).daily.progress.completedPages,
+  2,
+  "Copilot daily progress should ignore older overlapping snapshot responses"
+);
+const copilotWeekendSelection = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(mainProcess, "finiteNumber")}
+  ${extractNamedFunction(mainProcess, "raceWeekendIsActive")}
+  ${extractNamedFunction(mainProcess, "raceWeekendKey")}
+  ${extractNamedFunction(mainProcess, "raceWeekendOrderValue")}
+  ${extractNamedFunction(mainProcess, "currentRaceWeekend")}
+  ${extractNamedFunction(mainProcess, "nextRaceWeekend")}
+  return { currentRaceWeekend, nextRaceWeekend };
+})()`);
+const activeWeekendSchedule = [
+  { rnd: 7, name: "Monaco Grand Prix", status: "done", startsAt: "2026-06-07T13:00:00.000Z", sessions: [{ kind: "Race", status: "done" }] },
+  { rnd: 8, name: "Spanish Grand Prix", status: "upcoming", startsAt: "2026-06-14T13:00:00.000Z", sessions: [
+    { kind: "Practice 1", status: "done", startsAt: "2026-06-12T11:30:00.000Z" },
+    { kind: "Practice 2", status: "upcoming", startsAt: "2026-06-12T15:00:00.000Z" },
+    { kind: "Race", status: "upcoming", startsAt: "2026-06-14T13:00:00.000Z" },
+  ] },
+  { rnd: 9, name: "Canadian Grand Prix", status: "upcoming", startsAt: "2026-06-21T18:00:00.000Z", sessions: [{ kind: "Practice 1", status: "upcoming" }] },
+];
+assert.equal(copilotWeekendSelection.currentRaceWeekend(activeWeekendSchedule).name, "Spanish Grand Prix", "Current weekend Copilot projections should use a race weekend once sessions have started");
+assert.equal(copilotWeekendSelection.nextRaceWeekend(activeWeekendSchedule).name, "Canadian Grand Prix", "Next weekend Copilot projections should skip the active current race weekend");
 assert.match(mainProcess, /requestCodexResponsesStream/, "Codex AI layer should use the required streaming responses contract");
 assert.match(mainProcess, /instructions:\s*task\.systemPrompt/, "Codex AI layer should send task-selected system guidance as top-level instructions");
 assert.match(mainProcess, /AI_INSIGHT_RESPONSE_SCHEMA/, "AI layer should define a slim response schema for auto insights");
@@ -2020,7 +2096,7 @@ const source = Object.fromEntries(fs.readdirSync(kitDir)
   .filter((name) => name.endsWith(".jsx"))
   .map((name) => [name, fs.readFileSync(path.join(kitDir, name), "utf8")]));
 assert.match(source["Dashboard.jsx"], /D\.race\.weatherLoc \|\| D\.race\.loc/, "Dashboard weather card should label latest-session fallback weather honestly");
-assert.match(source["DataProvider.jsx"], /snapshot\(\{\s*forceRefresh:\s*true\s*\}\)/, "Initial app load should bypass cached dashboard data before revealing the app");
+assert.match(source["DataProvider.jsx"], /snapshot\(\{[\s\S]*forceRefresh:\s*true[\s\S]*\}\)/, "Initial app load should bypass cached dashboard data before revealing the app");
 assert.match(source["DataProvider.jsx"], /initialDataReady[\s\S]*PitWallLoadingScreen[\s\S]*children/, "DataProvider should keep the app behind a loading screen until the initial live fetch resolves");
 assert.match(source["DataProvider.jsx"], /Loading championship standings[\s\S]*Loading race schedule[\s\S]*Loading track weather[\s\S]*Loading F1 news/, "Startup loading screen should show which live data groups are loading");
 assert.match(source["Weekend.jsx"], /D\.race\?\.weatherLoc \|\| selectedRace\.loc/, "Weekend weather cards should label latest-session fallback weather honestly");
@@ -2510,6 +2586,17 @@ const recapRows = weekendRecapSandbox.sessionResultRows({ byCode: {} }, {
 }, []);
 assert.deepEqual(Array.from(recapRows, (row) => row.code), ["HAM", "NOR"], "Weekend recap should prefer official session-result order over fastest-lap order");
 assert.equal(recapRows[0].time, "1:19.100", "Weekend recap should show selected session result times");
+const practiceRecapRows = weekendRecapSandbox.sessionResultRows({ byCode: {} }, {
+  session: { name: "Practice 1", type: "Practice" },
+  drivers: [
+    { code: "ALB", name: "Alexander Albon", position: 1, resultDuration: 0, fastestLap: 0, laps: 0 },
+    { code: "RUS", name: "George Russell", position: 2, fastestLap: 76.363, laps: 27 },
+    { code: "PIA", name: "Oscar Piastri", position: 3, fastestLap: 76.566, laps: 29 },
+  ],
+}, []);
+assert.deepEqual(Array.from(practiceRecapRows, (row) => row.code), ["RUS", "PIA", "ALB"], "Weekend practice recap should put drivers without a valid lap time below participants");
+assert.deepEqual(Array.from(practiceRecapRows, (row) => row.pos), [1, 2, 3], "Weekend practice recap positions should follow the displayed lap-time order");
+assert.equal(practiceRecapRows.at(-1).time, "—", "Weekend practice recap should leave non-participant lap times empty");
 assert.equal(
   weekendRecapSandbox.sessionResultRows({ byCode: {} }, null, [{ code: "HAM" }], { startsAt: "2026-01-01T00:00:00Z", status: "upcoming" })[0].code,
   "HAM",
@@ -2534,6 +2621,22 @@ const pendingRecapRows = weekendRecapSandbox.sessionResultRows({
 assert.notDeepEqual(Array.from(pendingRecapRows, (row) => row.code), ["VER", "NOR", "HAM"], "Weekend recap should randomize driver order for sessions that have not happened yet");
 assert.deepEqual(Array.from(pendingRecapRows, (row) => row.time), ["—", "—", "—"], "Weekend recap should keep future-session leaderboard times empty");
 assert.deepEqual(Array.from(pendingRecapRows, (row) => row.detail), ["session pending", "session pending", "session pending"], "Weekend recap should not label future-session placeholders as standings data");
+const weekendStorylinesSandbox = vm.runInNewContext(`(() => {
+  ${["raceMatchText", "weatherValue", "storylines"].map((name) => extractNamedFunction(source["Weekend.jsx"], name)).join("\n")}
+  return { storylines };
+})()`);
+const recapStories = weekendStorylinesSandbox.storylines({
+  byCode: { NOR: { name: "Lando Norris" } },
+  news: [
+    { source: "Motorsport.com", title: "Motorsport lead" },
+    { source: "Formula 1", title: "Formula 1 lead" },
+    { source: "Motorsport.com", title: "Second Motorsport item" },
+  ],
+  race: { weather: { cond: "Dry", air: 29, track: 44.9 } },
+  timing: [{ code: "NOR" }],
+}, {}, [{ code: "NOR" }]);
+assert.deepEqual(Array.from(recapStories, (story) => story.tag), ["Motorsport.com", "Formula 1", "Weather"], "Weekend recap live sources should show two distinct ranked news sources plus weather");
+assert.notEqual(recapStories.at(-1).tag, "Form", "Weekend recap live sources should not show stale timing form when no session is live");
 assert.doesNotMatch(source["LiveRacing.jsx"], /window\.prompt/, "Stream setup should use an in-app control, not a browser prompt");
 assert.match(source["LiveRacing.jsx"], /stream-modal/, "Live stream setup should expose an in-window modal");
 const streamPersistenceSandbox = vm.runInNewContext(`(() => {
@@ -3389,13 +3492,23 @@ assert.match(mainProcess, /page\.id === "drivers-championship"[\s\S]*drivers.? c
 assert.match(mainProcess, /page\.id === "constructors-championship"[\s\S]*constructors.? championship/, "Constructors championship AI prompt should explicitly request championship predictions");
 assert.match(mainProcess, /function dailyCopilotProgress[\s\S]*currentPageId[\s\S]*completedPages[\s\S]*totalPages/, "Daily Copilot insight cache should expose page-by-page AI generation progress");
 assert.match(mainProcess, /progress = dailyCopilotProgress\(\{ status: "thinking", currentPage: page[\s\S]*writeCopilotInsightsCache\(progressUpdate\)/, "Daily Copilot generation should persist progress before each provider call");
+assert.match(mainProcess, /data\.copilot = liveDataCache\?\.data\?\.copilot \|\| baseData\.copilot/, "Live-data enrichment should preserve the newest Copilot progress instead of restoring stale page counts");
+assert.doesNotMatch(mainProcess, /data\.copilot = baseData\.copilot;/, "Live-data enrichment should not overwrite newer Copilot progress with the original pending snapshot");
 assert.match(mainProcess, /COPILOT_INSIGHTS_SCHEMA_VERSION[\s\S]*cached\?\.schemaVersion/, "Daily Copilot cache should be versioned when its response shape changes");
+assert.match(mainProcess, /forceCopilotRefresh[\s\S]*getDailyCopilotInsights/, "Daily Copilot projections should support an explicit rerun path that bypasses today's cached insight");
 assert.match(source["Copilot.jsx"], /PredictionBoard[\s\S]*selectedPage\.predictions/, "Copilot should render AI-computed Current weekend predictions");
 assert.match(source["Copilot.jsx"], /const showPredictionBoard = Boolean\(selectedPage\.predictions\?\.available\)/, "Copilot should render AI-computed predictions on every prebuilt insight tab");
 assert.match(source["Copilot.jsx"], /progressOpen[\s\S]*Show progress[\s\S]*cop-progress/, "Copilot should expose a Show progress control for daily AI generation");
+assert.match(source["Copilot.jsx"], /function rerunAnalysis[\s\S]*forceCopilotRefresh[\s\S]*Rerun analysis/, "Copilot should expose a Rerun analysis button that explicitly refreshes daily projections");
 assert.match(source["Copilot.jsx"], /function ChampionshipPredictionVisual[\s\S]*champ-projection/, "Copilot should render championship-specific AI projection visuals");
 assert.match(source["Copilot.jsx"], /<ChampionshipPredictionVisual D=\{D\} predictions=\{predictions\} pageId=\{pageId\}/, "Prediction boards should include championship projection visuals when applicable");
+assert.match(source["Copilot.jsx"], /src=\{isConstructor \? constructor\.logo : \(driver\.remoteImage \|\| driver\.image\)\}/, "Constructor Copilot prediction picks should render team logos instead of initials-only avatars");
+assert.match(source["Copilot.jsx"], /square=\{isConstructor\}/, "Constructor Copilot prediction avatars should use square team-logo framing");
 assert.match(source["Copilot.jsx"], /predictions\.leaderboard[\s\S]*Full leaderboard/, "Copilot should render full predicted leaderboards when AI returns them");
+assert.match(source["Copilot.jsx"], /function ProjectionDriverModal[\s\S]*Model rationale/, "Current weekend leaderboard rows should have a detailed model-rationale popup");
+assert.match(source["Copilot.jsx"], /setSelectedProjectionDriver\(\{ item, index \}\)[\s\S]*selectedProjectionDriver/, "Current weekend leaderboard rows should open the selected projection-driver popup");
+assert.match(source["Copilot.jsx"], /function ProjectedChampionshipLeaderboard[\s\S]*Championship Leaderboard After Race \(projected\)/, "Current weekend projections should show a projected championship leaderboard below the race order");
+assert.match(source["Copilot.jsx"], /RACE_POINTS[\s\S]*25[\s\S]*18[\s\S]*15[\s\S]*10[\s\S]*1/, "Projected championship leaderboard should apply standard Grand Prix points to the AI race order");
 assert.match(source["Copilot.jsx"], /INSIGHT_TABS/, "Copilot should expose tabs for prebuilt insights and chat");
 assert.match(source["Copilot.jsx"], /ask-copilot/, "Copilot should keep freeform chat in a separate Ask Copilot tab");
 assert.match(source["Copilot.jsx"], /daily\.pages/, "Copilot should render prebuilt daily insight pages from the snapshot");

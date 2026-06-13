@@ -250,6 +250,41 @@
     return (incomingRows || []).map((row) => ({ ...(base.get(row[key]) || {}), ...row }));
   }
 
+  function copilotDailyUpdatedAtMs(daily) {
+    const value = Date.parse(daily?.updatedAt || daily?.generatedAt || daily?.progress?.updatedAt || "");
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function copilotDailyProgressRank(daily) {
+    if (daily?.status === "ready") return Number.MAX_SAFE_INTEGER;
+    const progress = daily?.progress || {};
+    const items = Array.isArray(progress.items) ? progress.items : [];
+    const itemRank = items.reduce((rank, item) => {
+      if (item?.status === "computed") return Math.max(rank, (rank || 0) + 2);
+      if (item?.status === "thinking" || item?.status === "failed") return Math.max(rank, (rank || 0) + 1);
+      return rank;
+    }, 0);
+    const completedRank = Math.max(0, Number(progress.completedPages || 0) || 0) * 2;
+    return Math.max(itemRank, completedRank);
+  }
+
+  function shouldKeepCurrentCopilotDaily(current, incoming) {
+    if (!current || !incoming) return false;
+    const currentTime = copilotDailyUpdatedAtMs(current);
+    const incomingTime = copilotDailyUpdatedAtMs(incoming);
+    if (currentTime && incomingTime && incomingTime < currentTime) return true;
+    if (currentTime && incomingTime && incomingTime > currentTime) return false;
+    return copilotDailyProgressRank(incoming) < copilotDailyProgressRank(current);
+  }
+
+  function mergeCopilotData(base, incoming) {
+    if (!incoming) return base || null;
+    if (!base) return incoming;
+    if (!incoming.daily) return { ...base, ...incoming, daily: base.daily };
+    const daily = shouldKeepCurrentCopilotDaily(base.daily, incoming.daily) ? base.daily : incoming.daily;
+    return { ...base, ...incoming, daily };
+  }
+
   function isCancelledF12026RaceName(value) {
     const text = String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     return /\bbahrain grand prix\b/.test(text) || /\bsaudi arabian grand prix\b/.test(text);
@@ -308,7 +343,7 @@
       battlePairs: incoming?.battlePairs || base?.battlePairs || [],
       strategyContext: incoming?.strategyContext || base?.strategyContext || null,
       presets: incoming?.presets?.length ? incoming.presets : (base?.presets || []),
-      copilot: incoming?.copilot || base?.copilot || null,
+      copilot: mergeCopilotData(base?.copilot, incoming?.copilot),
       race: { ...EMPTY_DATA.race, ...(base?.race || {}), ...(incoming?.race || {}) },
       seasonSummary: { ...EMPTY_DATA.seasonSummary, ...(base?.seasonSummary || {}), ...(incoming?.seasonSummary || {}) },
     });
@@ -350,7 +385,7 @@
       try {
         if (options.initial) setInitialLoadError("");
         const snapshot = options.forceRefresh
-          ? await window.pitwall.data.snapshot({ forceRefresh: true })
+          ? await window.pitwall.data.snapshot({ forceRefresh: true, forceCopilotRefresh: Boolean(options.forceCopilotRefresh) })
           : await window.pitwall.data.snapshot();
         setData((current) => mergeData(current, snapshot));
         if (options.initial) setInitialDataReady(true);

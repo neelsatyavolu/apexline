@@ -207,6 +207,7 @@
   }
 
   function formatSeconds(value) {
+    if (value == null || value === "") return "—";
     const seconds = Number(value);
     if (!Number.isFinite(seconds)) return "—";
     const whole = Math.floor(seconds);
@@ -260,10 +261,16 @@
     const drivers = analytics?.drivers || [];
     if (drivers.length) {
       const sessionLabel = String([analytics?.session?.name, analytics?.session?.type].filter(Boolean).join(" ")).toLowerCase();
+      const usePracticeLapOrder = /practice/.test(sessionLabel);
       const useLapOrder = /practice|qualifying/.test(sessionLabel);
       const ordered = drivers.slice().sort((a, b) => {
         const aMetric = resultMetric(a.resultDuration, a.fastestLap);
         const bMetric = resultMetric(b.resultDuration, b.fastestLap);
+        if (usePracticeLapOrder && (aMetric != null || bMetric != null)) {
+          if (aMetric == null) return 1;
+          if (bMetric == null) return -1;
+          return aMetric - bMetric;
+        }
         if (a.position && b.position) return a.position - b.position;
         if (useLapOrder && aMetric != null && bMetric != null) return aMetric - bMetric;
         if (aMetric != null && bMetric != null) return aMetric - bMetric;
@@ -281,7 +288,7 @@
         const timeMetric = resultMetric(driver.resultDuration, driver.fastestLap);
         const fastestLapMetric = resultMetric(driver.fastestLap);
         return {
-          pos: driver.position || index + 1,
+          pos: usePracticeLapOrder ? index + 1 : driver.position || index + 1,
           code: driver.code,
           name: driver.name || driver.code,
           number: driver.number,
@@ -435,18 +442,17 @@
 
   function storylines(D, selectedRace, rows) {
     const stories = [];
-    if (D.news?.[0]) {
-      stories.push({ icon: "news", tag: D.news[0].source || "News", text: D.news[0].title });
-    }
-    if (D.battlePairs?.[0]) {
-      stories.push({ icon: "zap", tag: "Battle", text: D.battlePairs[0].body });
+    const seenNewsSources = new Set();
+    for (const story of D.news || []) {
+      const source = story.source || "News";
+      const key = raceMatchText(source);
+      if (!story.title || seenNewsSources.has(key)) continue;
+      seenNewsSources.add(key);
+      stories.push({ icon: "news", tag: source, text: story.title });
+      if (stories.length >= 2) break;
     }
     if (D.race?.weather?.cond) {
       stories.push({ icon: "droplet", tag: "Weather", text: `Latest OpenF1 conditions: ${D.race.weather.cond}. Air ${weatherValue(D.race.weather.air, "n/a")}, track ${weatherValue(D.race.weather.track, "n/a")}.` });
-    }
-    if (rows[0]) {
-      const driver = D.byCode[rows[0].code] || {};
-      stories.push({ icon: "trophy", tag: "Form", text: `${driver.name || rows[0].code} leads the currently loaded ${D.timing?.length ? "timing" : "standings"} feed.` });
     }
     if (!stories.length) {
       stories.push({ icon: "timer", tag: "Data", text: "Live weekend data is loading from OpenF1." });

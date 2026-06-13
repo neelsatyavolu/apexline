@@ -115,10 +115,6 @@
     f1LiveLatency: DEFAULT_WORLD_SYNC_TARGET,
     notifications: {
       lightsOut: true,
-      battles: true,
-      pitWindows: true,
-      news: false,
-      quali: true,
     },
   };
 
@@ -821,11 +817,7 @@
           {sec === "notifications" && (
             <Card title="Notifications" subtitle="What Apexline pings you about">
               {[
-                ["lightsOut", "Lights out", "5 minutes before every race start"],
-                ["battles", "Battle alerts", "When the AI detects a close fight"],
-                ["pitWindows", "Pit windows", "Strategy & undercut opportunities"],
-                ["news", "Breaking news", "Major paddock stories"],
-                ["quali", "Qualifying results", "When a session ends"],
+                ["lightsOut", "Race reminders", "5 minutes before selected race starts"],
               ].map((r) => (
                 <div className="row" key={r[0]}><div className="row__txt"><div className="row__t">{r[1]}</div><div className="row__s">{r[2]}</div></div><Switch checked={appPrefs.notifications[r[0]]} onChange={(value) => setNotification(r[0], value)} /></div>
               ))}

@@ -3618,6 +3618,11 @@
       });
     }, [replaySync.mode, replaySync.masterKey, resolvedF1TvContent?.contentId, selectedF1TvRace?.meetingKey, f1TvSessionKind, syncSettings]);
 
+    React.useEffect(() => {
+      if (!partyRoom || partySyncRole !== "host" || replaySync.mode !== "live") return;
+      publishHostSync();
+    }, [partyRoom?.id, partySyncRole, replaySync.mode, syncSettings.worldTarget]);
+
     function configureStream(key, label) {
       setStreamTarget({ key, label });
       setStreamDraft(streamUrl(streamSources[key]));
@@ -4227,7 +4232,13 @@
       if (!window.pitwall?.f1tv?.library) {
         const fallback = localF1TvLibrary();
         setF1TvLibrary(fallback);
-        if (!f1TvRaceId && fallback.races[0]) setF1TvRaceId(raceLibraryId(fallback.races[0]));
+        if (fallback.races[0]) {
+          const fallbackRaceId = raceLibraryId(fallback.races[0]);
+          setF1TvRaceId((currentId) => {
+            if (currentId && fallback.races.some((race) => raceLibraryId(race) === currentId)) return currentId;
+            return fallbackRaceId;
+          });
+        }
         return;
       }
       setStreamStatus(forceRefresh ? "Refreshing F1 TV session library..." : "Loading F1 TV session library...");
@@ -4244,13 +4255,25 @@
             || (debugF1TvRace && rnd === String(debugF1TvRace).replace(/^r/i, ""));
         });
         const currentRace = requestedRace || nextLibrary.races.find((race) => race.status === "live") || nextLibrary.races.find((race) => race.status === "upcoming") || nextLibrary.races.at(-1) || nextLibrary.races[0];
-        if (currentRace) setF1TvRaceId(raceLibraryId(currentRace));
+        if (currentRace) {
+          const nextRaceId = raceLibraryId(currentRace);
+          setF1TvRaceId((currentId) => {
+            if (currentId && nextLibrary.races.some((race) => raceLibraryId(race) === currentId)) return currentId;
+            return nextRaceId;
+          });
+        }
         const cacheLabel = library?.cached ? (library.stale ? " from stale cache" : " from cache") : "";
         setStreamStatus(`${nextLibrary.races.length} F1 TV weekend${nextLibrary.races.length === 1 ? "" : "s"} loaded${cacheLabel} for ${nextLibrary.season}`);
       } catch (error) {
         const fallback = localF1TvLibrary();
         setF1TvLibrary(fallback);
-        if (!f1TvRaceId && fallback.races[0]) setF1TvRaceId(raceLibraryId(fallback.races[0]));
+        if (fallback.races[0]) {
+          const fallbackRaceId = raceLibraryId(fallback.races[0]);
+          setF1TvRaceId((currentId) => {
+            if (currentId && fallback.races.some((race) => raceLibraryId(race) === currentId)) return currentId;
+            return fallbackRaceId;
+          });
+        }
         setStreamStatus(error.message || "Using loaded calendar for F1 TV sessions");
       }
     }

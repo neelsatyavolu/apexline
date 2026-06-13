@@ -5,6 +5,8 @@
   const D = window.PW_DATA;
 
   const STYLE_ID = "pw-sched-styles";
+  const SETTINGS_STORAGE_KEY = "pw-settings";
+  const REMINDER_LEAD_MS = 5 * 60 * 1000;
   if (!document.getElementById(STYLE_ID)) {
     const el = document.createElement("style");
     el.id = STYLE_ID;
@@ -35,11 +37,36 @@
     document.head.appendChild(el);
   }
 
+  function readNotificationPrefs() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || "{}");
+      return { lightsOut: true, ...(saved.notifications || {}) };
+    } catch {
+      return { lightsOut: true };
+    }
+  }
+
+  function reminderId(round) {
+    return `race-${round}`;
+  }
+
+  function reminderAt(startsAt) {
+    const startMs = Date.parse(startsAt || "");
+    return Number.isFinite(startMs) ? new Date(startMs - REMINDER_LEAD_MS).toISOString() : "";
+  }
+
+  function reminderSessionForRace(race = {}) {
+    const sessions = race.sessions || [];
+    return sessions.find((session) => /race/i.test(session.kind || "") && session.status !== "done" && session.startsAt)
+      || sessions.find((session) => session.status !== "done" && session.startsAt)
+      || null;
+  }
+
   function Schedule({ onNavigate } = {}) {
     const { data: D, dataSource } = window.PW.usePitWall();
     const liveRound = D.schedule.find((r) => r.status === "live") || D.schedule.find((r) => r.status === "upcoming") || D.schedule[0] || {};
     const [selectedRound, setSelectedRound] = React.useState(liveRound.rnd);
-    const [reminders, setReminders] = React.useState([liveRound.rnd]);
+    const [reminders, setReminders] = React.useState([]);
     const selectedRace = D.schedule.find((r) => r.rnd === selectedRound) || liveRound;
     const selectedSessions = selectedRace.sessions || [];
     const nextSession = selectedSessions.find((s) => s.status === "live") || selectedSessions.find((s) => s.status === "upcoming") || selectedSessions[0];
@@ -48,22 +75,26 @@
 
     function toggleReminder(round) {
       const race = D.schedule.find((item) => item.rnd === round) || selectedRace;
-      setReminders((current) => {
-        const exists = current.includes(round);
-        if (!exists && window.pitwall?.notifications?.schedule) {
-          const firstUpcoming = (race.sessions || []).find((session) => session.status !== "done" && session.startsAt);
-          const startsAt = firstUpcoming?.startsAt || race.startsAt;
-          if (startsAt) {
-            window.pitwall.notifications.schedule({
-              id: `race-${round}`,
-              title: "Apexline race reminder",
-              body: `${race.name || "Formula 1"}${firstUpcoming?.kind ? " - " + firstUpcoming.kind : ""} starts soon.`,
-              at: startsAt,
-            }).catch(() => {});
-          }
-        }
-        return exists ? current.filter((r) => r !== round) : [...current, round];
-      });
+      if (reminders.includes(round)) {
+        window.pitwall?.notifications?.cancel?.(reminderId(round)).catch(() => {});
+        setReminders((current) => current.filter((r) => r !== round));
+        return;
+      }
+      if (!readNotificationPrefs().lightsOut) return;
+      const notifications = window.pitwall?.notifications;
+      if (!notifications?.schedule) return;
+      const targetSession = reminderSessionForRace(race);
+      const startsAt = targetSession?.startsAt || race.startsAt;
+      const at = reminderAt(startsAt);
+      if (!at) return;
+      notifications.schedule({
+        id: reminderId(round),
+        title: "Apexline race reminder",
+        body: `${race.name || "Formula 1"}${targetSession?.kind ? " - " + targetSession.kind : ""} starts soon.`,
+        at,
+      }).then((result) => {
+        if (result?.scheduled) setReminders((current) => current.includes(round) ? current : [...current, round]);
+      }).catch(() => {});
     }
 
     function openWeekendRecap(race) {

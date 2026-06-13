@@ -4783,8 +4783,16 @@ function boundedF1TimingLiveEntries(topic) {
 function f1TimingLivePayload(topic, payload) {
   if (payload == null || payload === "") return null;
   if (typeof payload === "string") {
-    const parsed = JSON.parse(payload);
-    return topic.endsWith(".z") ? decodeF1TimingZPayload(parsed) : parsed;
+    const text = payload.trim();
+    if (!text) return null;
+    if (topic.endsWith(".z")) {
+      try {
+        return decodeF1TimingZPayload(JSON.parse(text));
+      } catch {
+        return decodeF1TimingZPayload(text);
+      }
+    }
+    return JSON.parse(text);
   }
   return topic.endsWith(".z") ? decodeF1TimingZPayload(payload) : payload;
 }
@@ -9450,6 +9458,15 @@ function scheduleReminder(options = {}) {
   };
 }
 
+function cancelReminder(id) {
+  const key = String(id || "");
+  const timer = key ? reminderTimers.get(key) : null;
+  if (!timer) return { cancelled: false, id: key };
+  clearTimeout(timer);
+  reminderTimers.delete(key);
+  return { cancelled: true, id: key };
+}
+
 ipcMain.handle("pitwall:f1tv:status", () => getF1TvStatus());
 ipcMain.handle("pitwall:f1tv:probeStatus", (_event, options = {}) => probeF1TvStoredAuth(options));
 ipcMain.handle("pitwall:f1tv:login", openF1TvLogin);
@@ -9488,6 +9505,7 @@ ipcMain.handle("pitwall:analytics:library", (_event, options = {}) => getF1TvLib
 ipcMain.handle("pitwall:analytics:session", (_event, options = {}) => getAnalyticsSession(options));
 ipcMain.handle("pitwall:history:query", (_event, options = {}) => queryHistory(options));
 ipcMain.handle("pitwall:notify:schedule", (_event, options = {}) => scheduleReminder(options));
+ipcMain.handle("pitwall:notify:cancel", (_event, id) => cancelReminder(id));
 ipcMain.handle("pitwall:window:state", (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   return { isFullScreen: Boolean(win?.isFullScreen()) };

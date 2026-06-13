@@ -446,6 +446,7 @@ assert.match(liveRacingSource, /applyRemotePartySync/, "Live Racing should apply
 assert.match(liveRacingSource, /partySyncRoleRef[\s\S]*applyRemotePartySync[\s\S]*partySyncRoleRef\.current === "host"/, "Watch Party guests should not ignore sync events through a stale host-role closure");
 assert.match(liveRacingSource, /hostPartyPlaybackSnapshot[\s\S]*video\.paused[\s\S]*playing/, "Watch Party host sync should publish the actual player paused or playing state");
 assert.match(liveRacingSource, /event\.type === "presence"[\s\S]*partyMemberCountRef[\s\S]*publishHostSync\(\)/, "Watch Party host should auto-sync guests when the presence count increases");
+assert.match(liveRacingSource, /React\.useEffect\(\(\) => \{\s*if \(!partyRoom \|\| partySyncRole !== "host" \|\| replaySync\.mode !== "live"\) return;\s*publishHostSync\(\);\s*\}, \[partyRoom\?\.id, partySyncRole, replaySync\.mode, syncSettings\.worldTarget\]\)/, "Watch Party hosts should broadcast live latency changes to guests");
 assert.match(socialClientSource, /channel\.subscribe\("sync-request"[\s\S]*type: "sync-request"/, "Watch Party realtime client should listen for explicit host sync requests");
 assert.match(socialClientSource, /channel\.subscribe\("typing"[\s\S]*type: "typing"/, "Watch Party realtime client should listen for typing indicators");
 assert.match(socialClientSource, /function requestHostSync[\s\S]*channel\?\.publish\?\.\("sync-request"/, "Watch Party guests should be able to request the host's current sync state after joining");
@@ -1404,6 +1405,11 @@ const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
     "f1TimingStints",
     "f1TimingLatestStint",
     "f1TimingKnownCompoundsByNumber",
+    "decodeF1TimingZPayload",
+    "f1TimingLivePayload",
+    "boundedF1TimingLiveEntries",
+    "applyF1TimingLiveFeed",
+    "applyF1TimingSignalRMessage",
     "f1TimingTelemetryFromCarData",
     "f1TimingTelemetrySamples",
     "f1TimingTelemetryRowsAt",
@@ -1421,8 +1427,8 @@ const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
   function normalizeCompound(value) { return String(value || "").toLowerCase(); }
   function formatLapDuration(seconds) { return String(seconds); }
   function f1TimingLapSeconds() { return null; }
-  return { f1TimingSegments, f1TimingPositionRowsAt, getF1LiveTimingSnapshot, parseF1TimingArchiveRows, setF1LiveTimingState };
-})()`);
+  return { f1TimingSegments, f1TimingPositionRowsAt, getF1LiveTimingSnapshot, parseF1TimingArchiveRows, setF1LiveTimingState, applyF1TimingSignalRMessage };
+})()`, { Buffer, zlib });
 assert.deepEqual(
   f1TimingRaceControlSandbox.f1TimingSegments({ Segments: [{ Status: 0 }, { Status: 2048 }, { Status: 0 }] }),
   ["off", "yellow"],
@@ -1513,6 +1519,30 @@ assert.deepEqual(JSON.parse(JSON.stringify(liveSignalRSnapshot.sessionClock.lapC
 assert.deepEqual(JSON.parse(JSON.stringify(liveSignalRSnapshot.sessionClock.trackStatus)), { status: "1", message: "AllClear" }, "Formula 1 SignalR live timing should expose mocked track status data");
 assert.equal(liveSignalRSnapshot.weather.air, 24.1, "Formula 1 SignalR live timing should expose mocked weather data");
 assert.equal(liveSignalRSnapshot.raceControlMessages[0].text, "GREEN FLAG", "Formula 1 SignalR live timing should expose mocked race-control messages");
+const compressedLiveUtc = "2026-06-09T20:00:05.000Z";
+const compressedLiveSeconds = Date.parse(compressedLiveUtc) / 1000;
+const compressedCarData = zlib.deflateRawSync(Buffer.from(JSON.stringify({
+  Entries: [{ Utc: compressedLiveUtc, Cars: { "16": { Channels: { "2": 288, "3": 7, "4": 72, "5": 1 } } } }],
+}))).toString("base64");
+const compressedPositionData = zlib.deflateRawSync(Buffer.from(JSON.stringify({
+  Position: [{ Timestamp: compressedLiveUtc, Entries: { "16": { X: 321, Y: 654, Z: 9, Status: "OnTrack" } } }],
+}))).toString("base64");
+f1TimingRaceControlSandbox.setF1LiveTimingState({
+  lastMessageAt: Date.now(),
+  lastTopic: "TimingData",
+  lastError: "",
+  entriesByTopic: {
+    DriverList: [{ seconds: compressedLiveSeconds, data: { "16": { Tla: "LEC", RacingNumber: "16" } } }],
+    TimingData: [{ seconds: compressedLiveSeconds, data: { Lines: { "16": { RacingNumber: "16", Position: 3 } } } }],
+    ExtrapolatedClock: [{ seconds: compressedLiveSeconds, data: { Utc: compressedLiveUtc, Remaining: "01:00:00", Extrapolating: true } }],
+    SessionStatus: [{ seconds: compressedLiveSeconds, data: { Status: "Started" } }],
+  },
+});
+f1TimingRaceControlSandbox.applyF1TimingSignalRMessage({ type: 1, target: "feed", arguments: ["CarData.z", compressedCarData, compressedLiveUtc] });
+f1TimingRaceControlSandbox.applyF1TimingSignalRMessage({ type: 1, target: "feed", arguments: ["Position.z", compressedPositionData, compressedLiveUtc] });
+const compressedLiveSnapshot = f1TimingRaceControlSandbox.getF1LiveTimingSnapshot();
+assert.equal(compressedLiveSnapshot.timing[0].telemetry.speed, 288, "Formula 1 SignalR live timing should decode bare compressed CarData.z feed strings");
+assert.deepEqual(JSON.parse(JSON.stringify(compressedLiveSnapshot.timing[0].trackPosition)), { x: 321, y: 654, z: 9, status: "OnTrack" }, "Formula 1 SignalR live timing should decode bare compressed Position.z feed strings");
 assert.deepEqual(JSON.parse(JSON.stringify(liveSignalRSnapshot.timing[0].sectors.s1)), ["green"], "Formula 1 SignalR live timing should expose mocked mini-sector data");
 const stintCompoundDeltaSession = {
   driverListEntries: [{ seconds: 0, data: { "12": { Tla: "ANT" } } }],
@@ -2035,6 +2065,7 @@ assert.match(mainProcess, /COPILOT_WEEKEND_SESSION_KINDS[\s\S]*Practice 1[\s\S]*
 assert.match(mainProcess, /function buildWeekendSessionSummaries[\s\S]*getAnalyticsSession\(\{[\s\S]*sessionKind/, "Current weekend Copilot should reuse structured OpenF1 session analytics");
 assert.match(mainProcess, /weekendSessionSummaries:\s*await buildWeekendSessionSummaries\(data, pageId\)/, "Daily AI snapshots should include structured weekend session summaries when predicting the current race");
 assert.match(mainProcess, /pitwall:notify:schedule/, "Electron main should expose local reminder IPC");
+assert.match(mainProcess, /pitwall:notify:cancel/, "Electron main should expose local reminder cancellation IPC");
 assert.match(mainProcess, /pitwall:profile:get/, "Electron main should persist the user profile outside random localhost localStorage origins");
 assert.match(mainProcess, /pitwall:profile:set/, "Electron main should save dashboard setup choices to the app profile");
 assert.match(mainProcess, /livePanelSizes/, "Electron profile should persist Live Racing panel sizes outside random localhost localStorage origins");
@@ -2054,6 +2085,7 @@ assert.match(dataProviderSource, /incoming\?\.schedule\?\.length \? incoming\.sc
 assert.match(liveRacingSource, /profile\.livePanelSizes/, "Live Racing should restore panel sizes from the persisted Electron profile");
 assert.match(liveRacingSource, /window\.pitwall\?\.profile\?\.set/, "Live Racing should save resized panels to the persisted Electron profile");
 assert.match(mainProcess, /new Notification/, "Reminder IPC should use native notifications");
+assert.match(mainProcess, /function cancelReminder[\s\S]*clearTimeout/, "Reminder cancellation should clear native notification timers");
 assert.match(mainProcess, /detectBattlePairs/, "App should compute deterministic battle pairs before asking AI");
 assert.match(mainProcess, /https:\/\/api\.openf1\.org\/v1\/championship_drivers\?session_key=latest/, "Live data should fetch current driver standings from the fast OpenF1 championship endpoint");
 assert.match(mainProcess, /https:\/\/api\.openf1\.org\/v1\/championship_teams\?session_key=latest/, "Live data should fetch current constructor standings from the fast OpenF1 championship endpoint");
@@ -2093,6 +2125,7 @@ assert.match(preload, /history/, "Preload should expose historical query helpers
 assert.match(preload, /analytics:\s*\{[\s\S]*session:/, "Preload should expose analytics session helpers");
 assert.match(preload, /analytics:\s*\{[\s\S]*library:/, "Preload should expose analytics library helpers");
 assert.match(preload, /notifications/, "Preload should expose reminder notification helpers");
+assert.match(preload, /cancel: \(id\)/, "Preload should expose reminder cancellation helpers");
 assert.match(preload, /profile/, "Preload should expose persisted profile helpers");
 assert.match(preload, /snapshot: \(options = \{\}\)/, "Renderer should be able to request live F1 data snapshots with startup refresh options");
 
@@ -2888,7 +2921,13 @@ assert.doesNotMatch(source["News.jsx"], /lead__body\s*\{[^}]*margin-top\s*:/, "L
 assert.match(source["Schedule.jsx"], /selectedRace\.sessions/, "Schedule should render sessions from live calendar data");
 assert.match(source["Schedule.jsx"], /openWeekendRecap[\s\S]*weekendRound[\s\S]*weekendMode", "recap"[\s\S]*onNavigate\("weekend"\)/, "Schedule should open clicked weekends in the Weekend recap screen");
 assert.match(source["Weekend.jsx"], /requestedMode[\s\S]*weekendMode[\s\S]*setMode\(requestedMode === "recap" \? "recap" : hasLiveTiming \? "live" : "recap"\)/, "Weekend should honor direct recap launches from Schedule");
-assert.match(source["Schedule.jsx"], /pitwall\.notifications\.schedule/, "Schedule should schedule local reminder notifications");
+assert.match(source["Schedule.jsx"], /notifications\.schedule/, "Schedule should schedule local reminder notifications");
+assert.match(source["Schedule.jsx"], /notifications\?\.cancel/, "Schedule should cancel local reminder notifications when reminders are turned off");
+assert.match(source["Schedule.jsx"], /React\.useState\(\[\]\)/, "Schedule should not show a reminder as enabled before it has scheduled one");
+assert.match(source["Schedule.jsx"], /REMINDER_LEAD_MS\s*=\s*5\s*\*\s*60\s*\*\s*1000/, "Schedule race reminders should fire five minutes before session start");
+assert.match(source["Schedule.jsx"], /readNotificationPrefs[\s\S]*lightsOut/, "Schedule should respect the saved Lights out notification setting");
+assert.match(source["Schedule.jsx"], /then\(\(result\)[\s\S]*result\?\.scheduled[\s\S]*setReminders/, "Schedule should only mark reminders enabled after native scheduling succeeds");
+assert.doesNotMatch(source["Settings.jsx"], /\b(battles|pitWindows|quali)\b|\["news", "Breaking news"/, "Settings should not expose notification toggles without event producers");
 assert.match(source["Analytics.jsx"], /selectedRound/, "Analytics should let users select a race weekend");
 assert.match(source["Analytics.jsx"], /analyticsLibrary/, "Analytics should load a race/session library instead of relying only on the live snapshot");
 assert.match(source["Analytics.jsx"], /selectedSessionKind/, "Analytics should let users select a race-weekend session");
@@ -3086,6 +3125,7 @@ assert.match(source["LiveRacing.jsx"], /Race/, "Live mode should expose race rep
 assert.match(source["LiveRacing.jsx"], /pitwall\.f1tv\.browseSession/, "Live mode should open the selected F1 TV session");
 assert.match(source["LiveRacing.jsx"], /pitwall\.f1tv\.library/, "Live mode should load F1 TV library data");
 assert.match(source["LiveRacing.jsx"], /pitwall\.f1tv\.library\(\{ season, forceRefresh/, "Live Racing should pass forceRefresh through to the F1 TV library loader");
+assert.match(source["LiveRacing.jsx"], /setF1TvRaceId\(\(currentId\) => \{[\s\S]*nextLibrary\.races\.some\(\(race\) => raceLibraryId\(race\) === currentId\)/, "Async F1 TV library refreshes should preserve an explicitly selected past weekend");
 assert.match(source["LiveRacing.jsx"], /loadF1TvLibrary\(f1TvSeason, \{ forceRefresh: true \}\)/, "Reload library should bypass cached F1 TV weekends");
 assert.match(source["LiveRacing.jsx"], /pitwall\.f1tv\.resolveContent/, "Live mode should resolve F1 TV content into clean stream descriptors");
 assert.match(source["LiveRacing.jsx"], /resolveContent\(\{[\s\S]*sessionStatus: session\.status/, "Live mode should pass selected F1 TV session status into clean stream resolution");

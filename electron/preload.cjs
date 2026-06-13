@@ -102,6 +102,7 @@ contextBridge.exposeInMainWorld("pitwall", {
   },
   notifications: {
     schedule: (options = {}) => ipcRenderer.invoke("pitwall:notify:schedule", options),
+    cancel: (id) => ipcRenderer.invoke("pitwall:notify:cancel", id),
   },
   windowState: {
     get: () => ipcRenderer.invoke("pitwall:window:state"),

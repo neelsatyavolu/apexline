@@ -59,6 +59,7 @@
       return {
         mode: "live",
         targetLatency,
+        playing: message.playing !== false,
         sequence: finite(message.sequence, 0),
         sentAt: finite(message.sentAt, Date.now()),
         ...liveSync(finite(state.liveLatency, targetLatency), targetLatency),

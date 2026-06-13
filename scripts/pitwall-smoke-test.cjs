@@ -437,10 +437,15 @@ assert.match(liveRacingSource, /party-tray/, "Live Racing should render a dragga
 assert.match(liveRacingSource, /partyTrayPosition/, "Live Racing should persist the draggable party tray position");
 assert.match(liveRacingSource, /wpc__head[\s\S]*wpc__avstack[\s\S]*wpc__sync/, "Watch Party tray (Glass Minimal) should lead with an avatar stack and a sync pill header");
 assert.match(liveRacingSource, /wpc__chat[\s\S]*wpc-msg[\s\S]*wpc__compose/, "Watch Party tray should render chat messages above a compose row");
+assert.match(liveRacingSource, /partyChatRef[\s\S]*scrollTop[\s\S]*scrollHeight[\s\S]*partyMessages/, "Watch Party chat should auto-scroll after local or remote messages render");
+assert.match(liveRacingSource, /<div className="wpc__chat" ref=\{partyChatRef\}>/, "Watch Party chat should attach its auto-scroll ref to the scroll container");
 assert.match(liveRacingSource, /renderPartyToasts[\s\S]*wpt-card[\s\S]*Watch Party/, "Live Racing should render stacking Card mini toasts for party messages");
 assert.match(liveRacingSource, /wp-unread/, "Watch Party launcher should carry an unread message badge");
 assert.match(liveRacingSource, /publishHostSync/, "Live Racing should publish host-authoritative watch party sync");
 assert.match(liveRacingSource, /applyRemotePartySync/, "Live Racing should apply matching remote watch party sync");
+assert.match(liveRacingSource, /partySyncRoleRef[\s\S]*applyRemotePartySync[\s\S]*partySyncRoleRef\.current === "host"/, "Watch Party guests should not ignore sync events through a stale host-role closure");
+assert.match(liveRacingSource, /hostPartyPlaybackSnapshot[\s\S]*video\.paused[\s\S]*playing/, "Watch Party host sync should publish the actual player paused or playing state");
+assert.match(liveRacingSource, /event\.type === "presence"[\s\S]*partyMemberCountRef[\s\S]*publishHostSync\(\)/, "Watch Party host should auto-sync guests when the presence count increases");
 const partyDragSandbox = {
   partyTrayPosition: { x: 320, y: 80 },
   partyDragRef: { current: null },
@@ -479,6 +484,7 @@ assert.equal(partySync.shouldApply({ sequence: 3, contentFingerprint: "race:1" }
 assert.equal(partySync.shouldApply({ sequence: 2, contentFingerprint: "race:1" }, { lastSequence: 3, contentFingerprint: "race:1" }), false, "Watch party sync should ignore stale host state");
 assert.equal(partySync.shouldApply({ sequence: 4, contentFingerprint: "race:2" }, { lastSequence: 3, contentFingerprint: "race:1" }), false, "Watch party sync should reject mismatched content");
 assert.equal(partySync.replayDecision({ masterTime: 42, playing: false }, { contentFingerprint: "race:1" }).playing, false, "Watch party replay sync should preserve host pause state");
+assert.equal(partySync.liveDecision({ targetLatency: 8, playing: false }, { liveLatency: 9 }).playing, false, "Watch party live sync should preserve host pause state");
 assert.equal(partySync.liveDecision({ targetLatency: 8 }, { liveLatency: 9 }).playbackRate, 1.2, "Watch party live sync should reuse latency catch-up behavior");
 
 function extractNamedFunction(source, name) {

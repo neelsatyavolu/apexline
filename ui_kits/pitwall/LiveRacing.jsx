@@ -3317,14 +3317,25 @@
     const partyTrayOpenRef = React.useRef(partyTrayOpen);
     const partyTrayMinimizedRef = React.useRef(partyTrayMinimized);
     const partyIdentityRef = React.useRef(partyIdentity);
+    const partySyncRoleRef = React.useRef(partySyncRole);
+    const partyLastSequenceRef = React.useRef(partyLastSequence);
+    const partyMemberCountRef = React.useRef(0);
+    const partyChatRef = React.useRef(null);
     // Tracks message ids already in the log so a message echoed back over the
     // realtime channel (Ably echoes the sender's own publishes) isn't appended
     // or toasted twice.
     const partyMsgIdsRef = React.useRef(new Set());
     React.useEffect(() => { partyMsgIdsRef.current = new Set(partyMessages.map((message) => message.id).filter(Boolean)); }, [partyMessages]);
+    React.useEffect(() => {
+      const chat = partyChatRef.current;
+      if (!chat || !partyTrayOpen || partyTrayMinimized) return;
+      chat.scrollTop = chat.scrollHeight;
+    }, [partyMessages, partyTrayOpen, partyTrayMinimized]);
     React.useEffect(() => { partyTrayOpenRef.current = partyTrayOpen; }, [partyTrayOpen]);
     React.useEffect(() => { partyTrayMinimizedRef.current = partyTrayMinimized; }, [partyTrayMinimized]);
     React.useEffect(() => { partyIdentityRef.current = partyIdentity; }, [partyIdentity]);
+    React.useEffect(() => { partySyncRoleRef.current = partySyncRole; }, [partySyncRole]);
+    React.useEffect(() => { partyLastSequenceRef.current = partyLastSequence; }, [partyLastSequence]);
     React.useEffect(() => () => clearTimeout(customChromeTimerRef.current), []);
     // Clear the unread badge + queued toasts whenever the tray is fully visible.
     React.useEffect(() => {
@@ -3533,9 +3544,19 @@
         if (event.type === "identity") setPartyIdentity(event.identity);
         if (event.type === "room") {
           setPartyRoom(event.room);
+          partyMemberCountRef.current = 0;
           if (event.room) setPartyStatus(`Room ${event.room.code || event.room.id} ready`);
         }
-        if (event.type === "presence") setPartyMembers(event.members || []);
+        if (event.type === "presence") {
+          const members = event.members || [];
+          const previousCount = partyMemberCountRef.current;
+          const nextCount = members.length;
+          partyMemberCountRef.current = nextCount;
+          setPartyMembers(members);
+          if (partySyncRoleRef.current === "host" && nextCount > Math.max(previousCount, 1)) {
+            publishHostSync();
+          }
+        }
         if (event.type === "chat") {
           const message = event.message || {};
           const duplicate = message.id && partyMsgIdsRef.current.has(message.id);
@@ -3602,6 +3623,24 @@
       const feed = resolvedFeedForKey(feedKey, feedKey) || streamSources[feedKey] || {};
       return { video, worldElapsed: Math.max(0, replayTargetMediaTime(raw, feed, worldFeed)) };
     }
+    function hostPartyPlaybackSnapshot(mode = replaySync.mode, fallbackTime = replaySync.masterTime) {
+      const replayReading = mode === "replay" ? replayMasterReading() : null;
+      const video = replayReading?.video || playerRefs.current[replaySync.masterKey || "WORLD"] || playerRefs.current.WORLD || Object.values(playerRefs.current).find(Boolean) || null;
+      const masterTime = mode === "replay" ? Math.max(0, replayReading?.worldElapsed ?? fallbackTime ?? 0) : 0;
+      const playing = video ? !video.paused : replaySync.playing !== false;
+      return { masterTime, playing };
+    }
+    function applyPartyPlaybackState(playing) {
+      const shouldPlay = playing !== false;
+      Object.values(playerRefs.current).forEach((video) => {
+        if (shouldPlay) video.play().catch(() => {});
+        else {
+          video.playbackRate = 1;
+          video.pause();
+        }
+      });
+      return shouldPlay;
+    }
     function syncReplayPlayers(masterTime = replaySync.masterTime) {
       const masterKey = replaySync.masterKey || "WORLD";
       const masterFeed = resolvedFeedForKey(masterKey, masterKey) || streamSources[masterKey] || resolvedFeedForKey("WORLD") || streamSources.WORLD || {};
@@ -3630,6 +3669,7 @@
 
     async function createWatchParty() {
       openPartyTray();
+      partySyncRoleRef.current = "host";
       setPartySyncRole("host");
       try {
         const room = await window.PW_SOCIAL?.createRoom?.(currentPartyContext());
@@ -3645,6 +3685,7 @@
       const code = partyJoinCode.trim();
       if (!code) return;
       openPartyTray();
+      partySyncRoleRef.current = "guest";
       setPartySyncRole("guest");
       try {
         const room = await window.PW_SOCIAL?.joinRoom?.(code);
@@ -3664,16 +3705,17 @@
     }
 
     function publishHostSync() {
-      if (partySyncRole !== "host") return null;
-      const masterTime = replaySync.mode === "replay" ? Math.max(0, replayMasterReading().worldElapsed) : 0;
+      if (partySyncRoleRef.current !== "host") return null;
+      const snapshot = hostPartyPlaybackSnapshot();
       const message = window.PW_SOCIAL?.publishHostSync?.({
         mode: replaySync.mode,
         contentFingerprint: partyContentFingerprint(),
-        masterTime,
-        playing: replaySync.playing !== false,
+        masterTime: snapshot.masterTime,
+        playing: snapshot.playing,
         targetLatency: syncTargetFor("WORLD"),
       });
       if (message?.sequence) {
+        partyLastSequenceRef.current = message.sequence;
         setPartyLastSequence(message.sequence);
         setPartyStatus("Host sync sent");
       }
@@ -3681,28 +3723,28 @@
     }
 
     function applyRemotePartySync(message = {}) {
-      if (partySyncRole === "host") return;
+      if (partySyncRoleRef.current === "host") return;
       const expected = partyContentFingerprint();
-      const state = { lastSequence: partyLastSequence, contentFingerprint: expected, targetLatency: syncTargetFor("WORLD") };
+      const state = { lastSequence: partyLastSequenceRef.current, contentFingerprint: expected, targetLatency: syncTargetFor("WORLD") };
       if (!window.PW_SYNC?.partySync?.shouldApply?.(message, state)) {
         if (message.contentFingerprint && expected && message.contentFingerprint !== expected) {
           setPartyStatus("Load the same session to sync with this Watch Party.");
         }
         return;
       }
-      setPartyLastSequence(Number(message.sequence || partyLastSequence));
+      const nextSequence = Number(message.sequence || partyLastSequenceRef.current);
+      partyLastSequenceRef.current = nextSequence;
+      setPartyLastSequence(nextSequence);
       if (message.mode === "replay") {
         const decision = window.PW_SYNC.partySync.replayDecision(message, { masterTime: replaySync.masterTime });
         seekReplayPlayers(decision.masterTime);
-        setReplaySync((sync) => ({ ...sync, mode: "replay", playing: decision.playing, masterTime: decision.masterTime }));
-        Object.values(playerRefs.current).forEach((video) => {
-          if (decision.playing) video.play().catch(() => {});
-          else video.pause();
-        });
+        const playing = applyPartyPlaybackState(decision.playing);
+        setReplaySync((sync) => ({ ...sync, mode: "replay", playing, masterTime: decision.masterTime }));
         setPartyStatus("Synced to host replay");
         return;
       }
       const decision = window.PW_SYNC.partySync.liveDecision(message, { liveLatency: syncMetrics.WORLD?.liveLatency, targetLatency: syncTargetFor("WORLD") });
+      applyPartyPlaybackState(decision.playing);
       setSyncSettings((settings) => ({ ...settings, worldTarget: clampSyncLatency(decision.targetLatency) }));
       setPartyStatus("Synced to host live latency");
     }
@@ -3743,12 +3785,13 @@
       });
       setReplaySync((state) => ({ ...state, masterTime: nextTime }));
       syncReplayPlayers(nextTime);
-      if (partyRoom && partySyncRole === "host") {
+      if (partyRoom && partySyncRoleRef.current === "host") {
+        const snapshot = hostPartyPlaybackSnapshot("replay", nextTime);
         window.PW_SOCIAL?.publishHostSync?.({
           mode: "replay",
           contentFingerprint: partyContentFingerprint(),
           masterTime: nextTime,
-          playing: replaySync.playing !== false,
+          playing: snapshot.playing,
           targetLatency: syncTargetFor("WORLD"),
         });
       }
@@ -3761,7 +3804,7 @@
           if (playing) video.play().catch(() => {});
           else video.pause();
         });
-        if (partyRoom && partySyncRole === "host") {
+        if (partyRoom && partySyncRoleRef.current === "host") {
           window.PW_SOCIAL?.publishHostSync?.({
             mode: "replay",
             contentFingerprint: partyContentFingerprint(),
@@ -5380,7 +5423,7 @@
               </div>
               {connected ? (
                 <>
-                  <div className="wpc__chat">
+                  <div className="wpc__chat" ref={partyChatRef}>
                     <div className="wpc-sys"><span className="ic"><Icon name="radio" size={12} /></span> <b>Room {inviteCode || "ready"}</b> · {memberCount} watching</div>
                     {partyMessages.length ? partyMessages.map((message, i) => {
                       const mine = Boolean(message.userId && message.userId === myId);

@@ -362,12 +362,19 @@
     return merged;
   }
 
+  function shouldBypassInitialLiveDataGate(search) {
+    const params = new URLSearchParams(search || "");
+    if (params.get("screen") !== "weekend") return false;
+    return Boolean(params.get("weekendRound") || params.get("weekendSession") || params.get("weekendMode") === "recap");
+  }
+
   function DataProvider({ children }) {
     const [data, setData] = React.useState(() => mergeData(EMPTY_DATA, window.PW_DATA || {}));
     const [profile, setProfile] = React.useState(loadProfile);
     const [connection, setConnection] = React.useState({ aiConfigured: false, f1tvConnected: false });
     const hasRuntimeDataBridge = Boolean(window.pitwall?.data?.snapshot);
-    const [initialDataReady, setInitialDataReady] = React.useState(!hasRuntimeDataBridge);
+    const bypassInitialLiveDataGate = hasRuntimeDataBridge && shouldBypassInitialLiveDataGate(window.location.search);
+    const [initialDataReady, setInitialDataReady] = React.useState(!hasRuntimeDataBridge || bypassInitialLiveDataGate);
     const [initialLoadError, setInitialLoadError] = React.useState("");
     const enrichmentTimerRef = React.useRef(null);
 
@@ -386,7 +393,7 @@
       try {
         if (options.initial) setInitialLoadError("");
         const snapshot = options.forceRefresh
-          ? await window.pitwall.data.snapshot({ forceRefresh: true, forceCopilotRefresh: Boolean(options.forceCopilotRefresh) })
+          ? await window.pitwall.data.snapshot({ forceRefresh: true, forceCopilotRefresh: Boolean(options.forceCopilotRefresh), forceCopilotPageId: options.forceCopilotPageId || "" })
           : await window.pitwall.data.snapshot();
         setData((current) => mergeData(current, snapshot));
         if (options.initial) setInitialDataReady(true);
@@ -439,12 +446,16 @@
           if (profileHasContent(next)) persistProfile(next);
         } catch {}
       })();
-      refreshData({ forceRefresh: true, initial: true });
+      const initialRefreshTimer = bypassInitialLiveDataGate
+        ? setTimeout(() => refreshData({ forceRefresh: true, initial: true }), 2500)
+        : null;
+      if (!bypassInitialLiveDataGate) refreshData({ forceRefresh: true, initial: true });
       refreshConnections();
       const timer = setInterval(refreshData, 1000 * 60 * 3);
       return () => {
         mounted = false;
         clearInterval(timer);
+        clearTimeout(initialRefreshTimer);
         clearTimeout(enrichmentTimerRef.current);
       };
     }, []);

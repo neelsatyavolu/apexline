@@ -439,6 +439,13 @@ assert.match(liveRacingSource, /wpc__head[\s\S]*wpc__avstack[\s\S]*wpc__sync/, "
 assert.match(liveRacingSource, /wpc__chat[\s\S]*wpc-msg[\s\S]*wpc__compose/, "Watch Party tray should render chat messages above a compose row");
 assert.match(liveRacingSource, /partyChatRef[\s\S]*scrollTop[\s\S]*scrollHeight[\s\S]*partyMessages/, "Watch Party chat should auto-scroll after local or remote messages render");
 assert.match(liveRacingSource, /<div className="wpc__chat" ref=\{partyChatRef\}>/, "Watch Party chat should attach its auto-scroll ref to the scroll container");
+const shouldShowPartySender = vm.runInNewContext(`(${extractNamedFunction(liveRacingSource, "shouldShowPartySender")})`);
+assert.equal(shouldShowPartySender({ userId: "emily", name: "Emily Lin" }, null, "me"), true, "Watch Party should show the sender for the first remote message");
+assert.equal(shouldShowPartySender({ userId: "emily", name: "Emily Lin" }, { userId: "emily", name: "Emily Lin" }, "me"), false, "Watch Party should hide repeated sender labels for consecutive messages from the same remote user");
+assert.equal(shouldShowPartySender({ userId: "sam", name: "Sam" }, { userId: "emily", name: "Emily Lin" }, "me"), true, "Watch Party should show the sender again when another user interrupts the run");
+assert.equal(shouldShowPartySender({ userId: "emily", name: "Emily Lin" }, { system: true, text: "Room ready" }, "me"), true, "Watch Party system messages should break remote sender grouping");
+assert.equal(shouldShowPartySender({ userId: "me", name: "Me" }, { userId: "emily", name: "Emily Lin" }, "me"), false, "Watch Party should not show sender labels for local messages");
+assert.match(liveRacingSource, /const showSender = shouldShowPartySender\(message, previousPartyMessage, myId\)[\s\S]*\{!mine && <span className="wpc-av"[\s\S]*\{showSender && <span className="wpc-msg__name"/, "Watch Party tray should render repeated remote message bubbles without repeating the sender name");
 assert.match(liveRacingSource, /renderPartyToasts[\s\S]*wpt-card[\s\S]*Watch Party/, "Live Racing should render stacking Card mini toasts for party messages");
 assert.match(liveRacingSource, /wp-unread/, "Watch Party launcher should carry an unread message badge");
 assert.match(liveRacingSource, /publishHostSync/, "Live Racing should publish host-authoritative watch party sync");
@@ -2058,6 +2065,10 @@ assert.match(mainProcess, /analyticsRefreshInFlight/, "Session analytics should 
 assert.match(mainProcess, /refreshAnalyticsSessionCache/, "Session analytics should refresh cached session data without blocking the caller");
 assert.match(mainProcess, /analyticsCacheFingerprint/, "Session analytics should compare cached and fresh session data before rewriting the cache");
 assert.match(mainProcess, /analyticsSessionDiskEntry\(\[cacheKey, aliasKey\], \{ allowStale: true \}\)/, "Session analytics should return cached OpenF1 session data immediately while checking for updates later");
+assert.match(mainProcess, /function buildAnalyticsSessionLeaderboardData/, "Session analytics should expose a fast leaderboard-only loader for completed weekend sessions");
+assert.match(mainProcess, /scope === "leaderboard"[\s\S]*buildAnalyticsSessionLeaderboardData/, "Leaderboard scoped analytics requests should avoid the slower full-session analytics path");
+assert.match(mainProcess, /buildAnalyticsSessionLeaderboardData[\s\S]*sessionResult[\s\S]*if \(!raw\.sessionResult\?\.length\)/, "Leaderboard scoped analytics should use official session results before fetching heavier lap detail");
+assert.match(mainProcess, /resolveAnalyticsSession[\s\S]*options\.round[\s\S]*meetings[\s\S]*meeting_key/, "Leaderboard analytics should resolve direct weekend round requests without waiting for the renderer library");
 assert.match(mainProcess, /OpenF1 rate limit reached/, "Session analytics should report OpenF1 rate limits without exposing raw URLs");
 assert.match(mainProcess, /hasPublishedRows/, "Session analytics should explain when OpenF1 has not published rows yet");
 assert.match(mainProcess, /value === null \|\| value === undefined \|\| value === ""[\s\S]*return null/, "Session analytics should not coerce missing numeric values to zero");
@@ -2156,6 +2167,13 @@ const source = Object.fromEntries(fs.readdirSync(kitDir)
 assert.match(source["Dashboard.jsx"], /D\.race\.weatherLoc \|\| D\.race\.loc/, "Dashboard weather card should label latest-session fallback weather honestly");
 assert.match(source["DataProvider.jsx"], /snapshot\(\{[\s\S]*forceRefresh:\s*true[\s\S]*\}\)/, "Initial app load should bypass cached dashboard data before revealing the app");
 assert.match(source["DataProvider.jsx"], /initialDataReady[\s\S]*PitWallLoadingScreen[\s\S]*children/, "DataProvider should keep the app behind a loading screen until the initial live fetch resolves");
+const dataProviderRouteSandbox = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(source["DataProvider.jsx"], "shouldBypassInitialLiveDataGate")}
+  return { shouldBypassInitialLiveDataGate };
+})()`, { URLSearchParams });
+assert.equal(dataProviderRouteSandbox.shouldBypassInitialLiveDataGate("?screen=weekend&weekendRound=7&weekendSession=Practice%202"), true, "Direct Weekend recap launches should not wait for the full live-data startup gate");
+assert.equal(dataProviderRouteSandbox.shouldBypassInitialLiveDataGate("?screen=dashboard"), false, "Dashboard launches should still wait for the full live-data startup gate");
+assert.match(source["DataProvider.jsx"], /bypassInitialLiveDataGate[\s\S]*setTimeout\(\(\) => refreshData\(\{ forceRefresh: true, initial: true \}\)/, "Direct Weekend recap launches should defer the full live-data refresh so leaderboard analytics get the first OpenF1 slot");
 assert.match(source["DataProvider.jsx"], /Loading championship standings[\s\S]*Loading race schedule[\s\S]*Loading track weather[\s\S]*Loading F1 news/, "Startup loading screen should show which live data groups are loading");
 assert.match(source["Weekend.jsx"], /D\.race\?\.weatherLoc \|\| selectedRace\.loc/, "Weekend weather cards should label latest-session fallback weather honestly");
 assert.doesNotMatch(source["Weekend.jsx"], /OpenF1 and Jolpica/, "Weekend loading copy should not mention Jolpica after moving live schedule to OpenF1");
@@ -2654,11 +2672,19 @@ assert.match(source["Weekend.jsx"], /resultMetric/, "Weekend recap should choose
 assert.match(source["Weekend.jsx"], /computedGapValue/, "Weekend recap should compute gap and interval values when OpenF1 omits them");
 assert.match(source["Weekend.jsx"], /Time[\s\S]*Gap[\s\S]*Interval[\s\S]*Laps/, "Weekend recap leaderboard should show time, gap, interval, and laps columns");
 assert.match(source["Weekend.jsx"], /wk-recap-table/, "Weekend recap should render a dedicated session leaderboard table");
+assert.match(source["Weekend.jsx"], /wk-recap-loading/, "Weekend recap should replace stale leaderboard rows with a full loading progress surface");
+assert.match(source["Weekend.jsx"], /leaderboardCacheRef[\s\S]*cachedAnalytics[\s\S]*leaderboardLoading[\s\S]*!selectedAnalytics/, "Weekend recap should render cached leaderboard data immediately instead of flickering the loading surface");
 assert.match(source["Weekend.jsx"], /pitwall\.analytics\.library/, "Weekend recap should resolve missing OpenF1 meeting keys before loading selected session results");
 assert.match(source["Weekend.jsx"], /meetingKey: recapMeetingKey[\s\S]*season: analyticsSeason/, "Weekend recap should request analytics for the selected session with the resolved meeting key and season");
-assert.match(source["Weekend.jsx"], /analytics\.session\(\{[\s\S]*raceName: selectedRace\.name[\s\S]*raceStartsAt: selectedRace\.startsAt[\s\S]*sessionStartsAt: selectedRecapSession\?\.startsAt/, "Weekend recap should pass schedule race identity into session analytics");
+assert.match(source["Weekend.jsx"], /round: recapRace\.rnd \|\| selectedRace\.rnd/, "Weekend recap should let leaderboard analytics resolve direct round launches before the schedule library finishes");
+assert.match(source["Weekend.jsx"], /sessionKey: selectedRecapSession\?\.sessionKey/, "Weekend recap should pass known OpenF1 session keys to skip redundant session lookup");
+assert.match(source["Weekend.jsx"], /shouldDeferLibrary[\s\S]*selectedAnalytics\?\.drivers\?\.length[\s\S]*shouldDeferLibrary/, "Weekend recap should not let the metadata library jump ahead of direct leaderboard analytics");
+assert.match(source["Weekend.jsx"], /analytics\.session\(\{[\s\S]*raceName: recapRace\.name[\s\S]*raceStartsAt: recapRace\.startsAt[\s\S]*sessionStartsAt: selectedRecapSession\?\.startsAt/, "Weekend recap should pass resolved race identity into session analytics");
+assert.match(source["Weekend.jsx"], /leaderboardCacheRef\.current\.set\(analyticsKey, data\)/, "Weekend recap should remember loaded leaderboard data for flicker-free cached session switches");
+assert.match(source["Weekend.jsx"], /scope: "leaderboard"/, "Weekend recap should request the faster leaderboard-scoped analytics payload");
 assert.match(source["Weekend.jsx"], /hasLiveTiming = Boolean\(selectedRaceSession\?\.status === "live"\)/, "Weekend should auto-open Session live only while a current session is live");
 assert.match(source["Weekend.jsx"], /setMode\(requestedMode === "recap" \? "recap" : hasLiveTiming \? "live" : "recap"\)/, "Weekend should return to recap when the current session ends");
+assert.match(source["Weekend.jsx"], /Not live/, "Weekend live mode should explicitly say when the selected session is not live");
 assert.match(source["Weekend.jsx"], /pitwall\.analytics\.session/, "Weekend recap should load rich OpenF1 analytics for selected sessions");
 assert.doesNotMatch(source["Weekend.jsx"], /weather\.track\}deg|: "deg"/, "Weekend weather temperatures should render the degree symbol, not the text deg");
 assert.match(mainProcess, /pitwall:analytics:session/, "Electron main should expose Weekend recap analytics snapshots");
@@ -2669,8 +2695,10 @@ const weekendSelectionSandbox = vm.runInNewContext(`(() => {
     "raceMatchText",
     "pickRace",
     "pickSession",
+    "timingRows",
+    "liveSessionTimingRows",
   ].map((name) => extractNamedFunction(source["Weekend.jsx"], name)).join("\n")}
-  return { pickRace, pickSession };
+  return { pickRace, pickSession, liveSessionTimingRows };
 })()`);
 const directRace = weekendSelectionSandbox.pickRace({
   schedule: [
@@ -2690,6 +2718,25 @@ const directSession = weekendSelectionSandbox.pickSession({
   ],
 }, { sessions: [] }, "Qualifying");
 assert.equal(directSession.kind, "Qualifying", "Weekend direct launch should select the requested recap session");
+assert.equal(
+  weekendSelectionSandbox.pickRace({ schedule: [], race: {}, sessions: [] }, "7").rnd,
+  7,
+  "Weekend direct recap should carry the requested round while the full live schedule is still loading"
+);
+assert.equal(
+  weekendSelectionSandbox.liveSessionTimingRows({
+    timing: [{ code: "VER", pos: 1 }],
+    standings: [{ code: "NOR", pos: 1, pts: 120 }],
+  }, false, { timing: [{ code: "HAM", pos: 1 }] }).length,
+  0,
+  "Weekend live mode should not show stale timing or standings rows when no session is actually live"
+);
+assert.deepEqual(
+  weekendSelectionSandbox.liveSessionTimingRows({ timing: [{ code: "VER", pos: 1 }] }, true, { timing: [{ code: "HAM", pos: 1 }] }),
+  [{ code: "HAM", pos: 1 }],
+  "Weekend live mode should prefer fresh live timing rows while a session is live"
+);
+assert.match(source["Weekend.jsx"], /const recapRace = libraryRace \|\| selectedRace[\s\S]*const sessions = recapRace\.sessions/, "Weekend recap should resolve direct launches from the analytics library before the full live schedule arrives");
 const weekendRecapSandbox = vm.runInNewContext(`(() => {
   ${[
     "formatSeconds",
@@ -2730,6 +2777,11 @@ assert.equal(
   weekendRecapSandbox.sessionResultRows({ byCode: {} }, null, [{ code: "HAM" }], { startsAt: "2026-01-01T00:00:00Z", status: "upcoming" })[0].code,
   "HAM",
   "Weekend recap should treat a past startsAt as started even if a stale status says upcoming"
+);
+assert.equal(
+  weekendRecapSandbox.sessionResultRows({ byCode: {} }, null, [{ code: "HAM" }], { startsAt: "2026-01-01T00:00:00Z", status: "done" }, { loading: true }).length,
+  0,
+  "Weekend recap should hide fallback standings rows while selected session analytics are loading"
 );
 const pendingRecapRows = weekendRecapSandbox.sessionResultRows({
   byCode: {
@@ -3615,6 +3667,10 @@ assert.equal(copilotCacheHasRawAiTimeoutForProjection({
   error: "Timeout for https://chatgpt.com/backend-api/codex/responses",
 }), true, "Legacy cached Codex timeouts should be recognized so the daily projection can retry immediately");
 assert.match(mainProcess, /page\.id === "current-weekend"[\s\S]*race winner[\s\S]*podium/, "Current weekend AI prompt should explicitly request race predictions");
+assert.match(mainProcess, /stintMode[\s\S]*projected/, "AI visualization schema should allow projected strategy stint traces");
+assert.match(mainProcess, /stintMode:[\s\S]*"none"[\s\S]*required: \["kind", "stintMode", "title"/, "Strict AI visualization schema should require a neutral stintMode for non-strategy visuals");
+assert.match(mainProcess, /projected tyre_strategy stints[\s\S]*not present projected stints as actual telemetry/, "AI prompt should permit labelled projected race-strategy stints without calling them actual telemetry");
+assert.match(mainProcess, /COPILOT_INSIGHTS_SCHEMA_VERSION = 8/, "Daily Copilot cache schema should invalidate stale no-stint strategy pages after projected strategy support changes");
 assert.match(mainProcess, /page\.id === "next-weekend"[\s\S]*race winner[\s\S]*podium/, "Next weekend AI prompt should explicitly request race predictions");
 assert.match(mainProcess, /page\.id === "next-weekend"[\s\S]*Grand Prix race[\s\S]*full predicted race finishing order/, "Next weekend AI prompt should request a race finishing-order leaderboard");
 assert.doesNotMatch(mainProcess, /Treat snapshot\.nextUpcomingSession as the target|full predicted next upcoming session order/, "Next weekend AI prompt should not target FP1 or another next scheduled session for the leaderboard");
@@ -3632,10 +3688,15 @@ assert.match(mainProcess, /data\.copilot = liveDataCache\?\.data\?\.copilot \|\|
 assert.doesNotMatch(mainProcess, /data\.copilot = baseData\.copilot;/, "Live-data enrichment should not overwrite newer Copilot progress with the original pending snapshot");
 assert.match(mainProcess, /COPILOT_INSIGHTS_SCHEMA_VERSION[\s\S]*cached\?\.schemaVersion/, "Daily Copilot cache should be versioned when its response shape changes");
 assert.match(mainProcess, /forceCopilotRefresh[\s\S]*getDailyCopilotInsights/, "Daily Copilot projections should support an explicit rerun path that bypasses today's cached insight");
+assert.match(mainProcess, /forceCopilotPageId[\s\S]*refreshDailyCopilotInsights/, "Daily Copilot projections should support rerunning one selected prebuilt page");
+assert.match(mainProcess, /mergeCopilotInsightPages[\s\S]*updatedPages/, "Scoped Daily Copilot reruns should preserve the other cached prebuilt pages");
+assert.match(source["Copilot.jsx"], /ai-vis__mode[\s\S]*Projected strategy/, "Copilot strategy visuals should visibly label projected stint traces");
 assert.match(source["Copilot.jsx"], /PredictionBoard[\s\S]*selectedPage\.predictions/, "Copilot should render AI-computed Current weekend predictions");
 assert.match(source["Copilot.jsx"], /const showPredictionBoard = Boolean\(selectedPage\.predictions\?\.available\)/, "Copilot should render AI-computed predictions on every prebuilt insight tab");
 assert.match(source["Copilot.jsx"], /progressOpen[\s\S]*Show progress[\s\S]*cop-progress/, "Copilot should expose a Show progress control for daily AI generation");
-assert.match(source["Copilot.jsx"], /function rerunAnalysis[\s\S]*forceCopilotRefresh[\s\S]*Rerun analysis/, "Copilot should expose a Rerun analysis button that explicitly refreshes daily projections");
+assert.match(source["DataProvider.jsx"], /forceCopilotPageId:\s*options\.forceCopilotPageId/, "DataProvider should pass the selected Copilot page rerun scope into the snapshot IPC");
+assert.match(source["Copilot.jsx"], /function rerunAnalysis[\s\S]*forceCopilotPageId:\s*scoped \? activeTab : ""/, "Copilot should request a selected-tab daily projection rerun without refreshing every page");
+assert.match(source["Copilot.jsx"], /cop-hero__actions[\s\S]*Rerun this tab[\s\S]*Rerun all/, "Copilot should expose a top active-tab rerun action and keep an all-pages rerun action");
 assert.match(source["Copilot.jsx"], /function ChampionshipPredictionVisual[\s\S]*champ-projection/, "Copilot should render championship-specific AI projection visuals");
 assert.match(source["Copilot.jsx"], /<ChampionshipPredictionVisual D=\{D\} predictions=\{predictions\} pageId=\{pageId\}/, "Prediction boards should include championship projection visuals when applicable");
 assert.match(source["Copilot.jsx"], /src=\{isConstructor \? constructor\.logo : \(driver\.remoteImage \|\| driver\.image\)\}/, "Constructor Copilot prediction picks should render team logos instead of initials-only avatars");

@@ -74,6 +74,12 @@
     .wk-recap-pos { color: var(--text-tertiary); font-size: var(--text-sm); font-weight: 700; }
     .wk-recap-mono { color: var(--text-primary); font-size: var(--text-sm); font-weight: 650; white-space: nowrap; }
     .wk-recap-meta { color: var(--text-tertiary); font-size: var(--text-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .wk-recap-loading { min-height: 360px; display: grid; place-items: center; padding: var(--space-9); background: radial-gradient(110% 90% at 50% 0%, var(--accent-soft), transparent 54%), var(--bg-sunken); border-bottom: 1px solid var(--border-default); }
+    .wk-recap-loading__box { width: min(440px, 100%); display: flex; flex-direction: column; gap: var(--space-5); }
+    .wk-recap-loading__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); }
+    .wk-recap-loading__track { position: relative; height: 8px; border-radius: var(--radius-pill); overflow: hidden; background: rgba(255,255,255,0.08); box-shadow: var(--inset-top-light); }
+    .wk-recap-loading__fill { position: absolute; inset: 0 auto 0 0; width: 42%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--success) 70%, #fff)); box-shadow: 0 0 14px var(--blue-glow); animation: wk-recap-load 1.15s var(--ease-in-out) infinite; }
+    @keyframes wk-recap-load { 0% { transform: translateX(-105%); } 50% { transform: translateX(72%); } 100% { transform: translateX(240%); } }
     .wk-recap-detail { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-6); padding: var(--space-6) var(--space-7); border-top: 1px solid var(--border-default); background: var(--bg-sunken); }
     .wk-recap-stat { min-width: 0; }
     .wk-recap-stat__k { font-size: var(--text-2xs); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 4px; }
@@ -101,7 +107,7 @@
       schedule.find((race) => race.status === "live") ||
       schedule.find((race) => race.status === "upcoming") ||
       schedule.at(-1) ||
-      { name: D.race?.name || "Formula 1", circuit: D.race?.circuit || "", loc: D.race?.loc || "", rnd: D.race?.round || 0, sessions: D.sessions || [], startsAt: D.race?.startsAt || "" };
+      { name: D.race?.name || "Formula 1", circuit: D.race?.circuit || "", loc: D.race?.loc || "", rnd: Number(requestedRound) || D.race?.round || 0, sessions: D.sessions || [], startsAt: D.race?.startsAt || "" };
   }
 
   function pickSession(selectedRace, D, requestedSessionKind) {
@@ -124,6 +130,12 @@
       age: "",
       pits: "",
     }));
+  }
+
+  function liveSessionTimingRows(D, hasLiveTiming, liveTimingData) {
+    if (!hasLiveTiming) return [];
+    if (liveTimingData?.timing?.length) return liveTimingData.timing;
+    return timingRows(D);
   }
 
   function recapDefaultSessionKind(sessions, selectedRaceSession) {
@@ -256,7 +268,8 @@
     return currentGap != null ? `+${Math.max(0, currentGap - previousGap).toFixed(3)}s` : "—";
   }
 
-  function sessionResultRows(D, analytics, fallbackRows, selectedSession) {
+  function sessionResultRows(D, analytics, fallbackRows, selectedSession, options) {
+    if (options?.loading) return [];
     if (!sessionHasStarted(selectedSession)) return pendingSessionRows(D, selectedSession, fallbackRows);
     const drivers = analytics?.drivers || [];
     if (drivers.length) {
@@ -352,6 +365,7 @@
   }
 
   function LiveTiming({ D, selectedRace, selectedRaceSession, rows, onGoLive, dataSource, raceWeather, raceStatus }) {
+    const sessionIsLive = selectedRaceSession?.status === "live";
     const [selected, setSelected] = React.useState(rows[0]?.code || "");
     const leaderRow = rows[0] || {};
     const leader = D.byCode[leaderRow.code] || {};
@@ -400,7 +414,7 @@
                   compound={t.comp} tyreAge={t.age} pits={t.pits}
                   selected={selected === t.code} onClick={() => setSelected(t.code)} />
               );
-            }) : <div className="wk-story" style={{ margin: "var(--space-6)" }}><span className="wk-story__ic"><Icon name="timer" size={16} /></span><div><div className="wk-story__tag">Timing</div><div className="wk-story__txt">Live timing will appear when OpenF1 has a current session.</div></div></div>}
+            }) : <div className="wk-story" style={{ margin: "var(--space-6)" }}><span className="wk-story__ic"><Icon name="timer" size={16} /></span><div><div className="wk-story__tag">{sessionIsLive ? "Timing" : "Not live"}</div><div className="wk-story__txt">{sessionIsLive ? "Live timing will appear when Formula 1 has a current session." : "This session is not live. Live timing will appear when a weekend session is running."}</div></div></div>}
           </Card>
 
           <div className="wk__rail">
@@ -461,30 +475,48 @@
   }
 
   function Recap({ D, selectedRace, selectedRaceSession, rows, onGoLive, dataSource, requestedSessionKind }) {
-    const sessions = selectedRace.sessions?.length ? selectedRace.sessions : (D.sessions || []);
-    const requestedRecapSession = requestedSessionKind ? sessions.find((s) => raceMatchText(s.kind) === raceMatchText(requestedSessionKind)) : null;
-    const defaultSessionKind = requestedRecapSession?.kind || recapDefaultSessionKind(sessions, selectedRaceSession);
-    const [selectedSessionKind, setSelectedSessionKind] = React.useState(defaultSessionKind);
-    const selectedRecapSession = sessions.find((s) => s.kind === selectedSessionKind) || selectedRaceSession || sessions[0] || null;
     const analyticsSeason = D.seasonSummary?.season || new Date().getFullYear();
     const [analyticsLibrary, setAnalyticsLibrary] = React.useState(null);
     const [libraryLoading, setLibraryLoading] = React.useState(false);
     const libraryRace = matchAnalyticsLibraryRace(selectedRace, analyticsLibrary);
-    const recapMeetingKey = selectedRace.meetingKey || libraryRace?.meetingKey || "";
-    const analyticsKey = [recapMeetingKey || "", selectedRace.name || "", selectedRace.startsAt || "", selectedSessionKind].join(":");
+    const recapRace = libraryRace || selectedRace;
+    const sessions = recapRace.sessions?.length ? recapRace.sessions : (D.sessions || []);
+    const requestedRecapSession = requestedSessionKind ? sessions.find((s) => raceMatchText(s.kind) === raceMatchText(requestedSessionKind)) : null;
+    const defaultSessionKind = requestedRecapSession?.kind || requestedSessionKind || recapDefaultSessionKind(sessions, selectedRaceSession);
+    const [selectedSessionKind, setSelectedSessionKind] = React.useState(defaultSessionKind);
+    const selectedRecapSession = sessions.find((s) => s.kind === selectedSessionKind) || selectedRaceSession || sessions[0] || null;
+    const recapMeetingKey = recapRace.meetingKey || "";
+    const directRound = recapRace.rnd || selectedRace.rnd || "";
+    const analyticsSessionKey = directRound ? `round:${directRound}` : recapMeetingKey;
+    const analyticsKey = [analyticsSeason, analyticsSessionKey || "", selectedSessionKind].join(":");
+    const leaderboardCacheRef = React.useRef(null);
+    if (!leaderboardCacheRef.current) {
+      window.PW = window.PW || {};
+      leaderboardCacheRef.current = window.PW.weekendLeaderboardCache || (window.PW.weekendLeaderboardCache = new Map());
+    }
     const [analyticsState, setAnalyticsState] = React.useState({ key: "", loading: false, data: null, error: "" });
     const countdownTarget = selectedRaceSession?.startsAt || selectedRace.startsAt || D.race?.startsAt || "";
-    const selectedAnalytics = analyticsState.key === analyticsKey ? analyticsState.data : null;
+    const cachedAnalytics = leaderboardCacheRef.current.get(analyticsKey) || null;
+    const selectedAnalytics = (analyticsState.key === analyticsKey ? analyticsState.data : null) || cachedAnalytics;
     const selectedSessionStarted = sessionHasStarted(selectedRecapSession);
-    const resultRows = sessionResultRows(D, selectedAnalytics, rows, selectedRecapSession);
+    const resolveLoading = !analyticsSessionKey && libraryLoading;
+    const analyticsRequestReady = Boolean(selectedSessionStarted && analyticsSessionKey && selectedSessionKind && window.pitwall?.analytics?.session);
+    const leaderboardLoading = !selectedAnalytics && (
+      resolveLoading ||
+      (analyticsState.key === analyticsKey && analyticsState.loading) ||
+      (analyticsRequestReady && analyticsState.key !== analyticsKey && !cachedAnalytics)
+    );
+    const resultRows = sessionResultRows(D, selectedAnalytics, rows, selectedRecapSession, { loading: leaderboardLoading });
     const metrics = recapMetrics(selectedAnalytics, resultRows, selectedRecapSession, dataSource);
+    const loadingLabel = resolveLoading ? "Resolving weekend sessions" : "Loading session result";
+    const shouldDeferLibrary = !selectedRace.meetingKey && directRound && !selectedAnalytics?.drivers?.length && !analyticsState.error;
 
     React.useEffect(() => {
-      if (!sessions.some((s) => s.kind === selectedSessionKind)) setSelectedSessionKind(defaultSessionKind);
+      if (defaultSessionKind && !sessions.some((s) => s.kind === selectedSessionKind)) setSelectedSessionKind(defaultSessionKind);
     }, [defaultSessionKind, selectedSessionKind, sessions.map((s) => s.kind).join("|")]);
 
     React.useEffect(() => {
-      if (selectedRace.meetingKey || !window.pitwall?.analytics?.library) {
+      if (selectedRace.meetingKey || shouldDeferLibrary || !window.pitwall?.analytics?.library) {
         setAnalyticsLibrary(null);
         setLibraryLoading(false);
         return;
@@ -499,39 +531,44 @@
         if (active) setLibraryLoading(false);
       });
       return () => { active = false; };
-    }, [selectedRace.meetingKey, analyticsSeason]);
+    }, [selectedRace.meetingKey, analyticsSeason, shouldDeferLibrary]);
 
     React.useEffect(() => {
-      if (!selectedSessionStarted || !recapMeetingKey || !selectedSessionKind || !window.pitwall?.analytics?.session) {
+      if (!selectedSessionStarted || !analyticsSessionKey || !selectedSessionKind || !window.pitwall?.analytics?.session) {
         setAnalyticsState({
           key: analyticsKey,
-          loading: libraryLoading,
+          loading: resolveLoading,
           data: null,
-          error: selectedSessionStarted && libraryLoading ? "Loading race weekend sessions..." : "",
+          error: selectedSessionStarted && resolveLoading ? "Loading race weekend sessions..." : "",
         });
         return;
       }
       let active = true;
+      const cached = leaderboardCacheRef.current.get(analyticsKey);
       setAnalyticsState((current) => ({
         key: analyticsKey,
-        loading: true,
-        data: current.key === analyticsKey ? current.data : null,
+        loading: !cached,
+        data: cached || (current.key === analyticsKey ? current.data : null),
         error: "",
       }));
       window.pitwall.analytics.session({
         meetingKey: recapMeetingKey,
+        sessionKey: selectedRecapSession?.sessionKey || "",
         sessionKind: selectedSessionKind,
         season: analyticsSeason,
-        raceName: selectedRace.name || "",
-        raceStartsAt: selectedRace.startsAt || "",
+        round: recapRace.rnd || selectedRace.rnd || "",
+        raceName: recapRace.name || "",
+        raceStartsAt: recapRace.startsAt || "",
         sessionStartsAt: selectedRecapSession?.startsAt || "",
+        scope: "leaderboard",
       }).then((data) => {
+        leaderboardCacheRef.current.set(analyticsKey, data);
         if (active) setAnalyticsState({ key: analyticsKey, loading: false, data, error: "" });
       }).catch(() => {
         if (active) setAnalyticsState({ key: analyticsKey, loading: false, data: null, error: "Session result feed unavailable" });
       });
       return () => { active = false; };
-    }, [selectedSessionStarted, recapMeetingKey, selectedSessionKind, analyticsSeason, libraryLoading, selectedRace.name, selectedRace.startsAt, selectedRecapSession?.startsAt]);
+    }, [selectedSessionStarted, analyticsSessionKey, selectedSessionKind, analyticsSeason, resolveLoading, directRound, recapRace.name, recapRace.startsAt, selectedRace.rnd, selectedRecapSession?.startsAt, analyticsKey]);
 
     return (
       <>
@@ -541,8 +578,8 @@
             <span className="wk-hero__round">Round {selectedRace.rnd || D.race?.round || D.seasonSummary?.round || "n/a"} / {D.seasonSummary?.totalRounds || D.schedule?.length || "n/a"}</span>
             <Badge tone="outline">{selectedRaceSession?.status === "live" ? "Session live" : "Between sessions"}</Badge>
           </div>
-          <h1 className="wk-hero__name">{selectedRace.name || D.race?.name || "Formula 1 weekend"}</h1>
-          <div className="wk-hero__circuit"><Icon name="pin" size={15} /> {[selectedRace.circuit || D.race?.circuit, selectedRace.loc || D.race?.loc].filter(Boolean).join(" · ") || dataSource}</div>
+          <h1 className="wk-hero__name">{recapRace.name || D.race?.name || "Formula 1 weekend"}</h1>
+          <div className="wk-hero__circuit"><Icon name="pin" size={15} /> {[recapRace.circuit || D.race?.circuit, recapRace.loc || D.race?.loc].filter(Boolean).join(" · ") || dataSource}</div>
           <div className="wk-hero__cd">
             <div>
               <div className="wk-hero__cdl">{selectedRaceSession?.kind ? selectedRaceSession.kind + " starts in" : "Next session"}</div>
@@ -577,24 +614,33 @@
         <div className="wk__cols">
           <Card padding="tight" title="Session leaderboard" subtitle={[selectedSessionKind || selectedRecapSession?.kind || "Session", selectedAnalytics?.source || (D.timing?.length ? "Live timing fallback" : "Standings fallback")].filter(Boolean).join(" · ")}
             aside={<Badge tone={analyticsState.loading ? "outline" : selectedAnalytics?.drivers?.length ? "accent" : "outline"}>{analyticsState.loading ? "LOADING" : selectedRecapSession?.status || "recap"}</Badge>}>
-            <div className="wk-recap-scroll">
-              <div className="wk-recap-table">
-                <div className="wk-recap-head">
-                  <span>Pos</span><span>Driver</span><span>Time</span><span>Gap</span><span>Interval</span><span>Laps</span><span>Data</span>
+            {leaderboardLoading ? (
+              <div className="wk-recap-loading" role="progressbar" aria-label={loadingLabel}>
+                <div className="wk-recap-loading__box">
+                  <div className="wk-recap-loading__top"><span>{loadingLabel}</span><span>{selectedSessionKind || selectedRecapSession?.kind || "Session"}</span></div>
+                  <div className="wk-recap-loading__track" aria-hidden="true"><span className="wk-recap-loading__fill" /></div>
                 </div>
-                {resultRows.length ? resultRows.map((g, index) => (
-                  <div className="wk-recap-row" key={`${g.code}-${index}`} data-leader={index === 0 && !g.placeholder}>
-                    <span className="wk-recap-pos">{g.pos || index + 1}</span>
-                    <DriverTag code={g.code} name={g.name || g.code} number={g.number} team={g.color || "var(--accent)"} compact />
-                    <span className="wk-recap-mono">{g.time}</span>
-                    <span className="wk-recap-mono">{g.gap}</span>
-                    <span className="wk-recap-mono">{g.interval}</span>
-                    <span className="wk-recap-mono">{g.laps}</span>
-                    <span className="wk-recap-meta">{g.detail}</span>
-                  </div>
-                )) : <div className="wk-story" style={{ margin: "var(--space-6)" }}><span className="wk-story__ic"><Icon name="trophy" size={16} /></span><div><div className="wk-story__tag">Results</div><div className="wk-story__txt">{analyticsState.error || "Waiting for selected session results."}</div></div></div>}
               </div>
-            </div>
+            ) : (
+              <div className="wk-recap-scroll">
+                <div className="wk-recap-table">
+                  <div className="wk-recap-head">
+                    <span>Pos</span><span>Driver</span><span>Time</span><span>Gap</span><span>Interval</span><span>Laps</span><span>Data</span>
+                  </div>
+                  {resultRows.length ? resultRows.map((g, index) => (
+                    <div className="wk-recap-row" key={`${g.code}-${index}`} data-leader={index === 0 && !g.placeholder}>
+                      <span className="wk-recap-pos">{g.pos || index + 1}</span>
+                      <DriverTag code={g.code} name={g.name || g.code} number={g.number} team={g.color || "var(--accent)"} compact />
+                      <span className="wk-recap-mono">{g.time}</span>
+                      <span className="wk-recap-mono">{g.gap}</span>
+                      <span className="wk-recap-mono">{g.interval}</span>
+                      <span className="wk-recap-mono">{g.laps}</span>
+                      <span className="wk-recap-meta">{g.detail}</span>
+                    </div>
+                  )) : <div className="wk-story" style={{ margin: "var(--space-6)" }}><span className="wk-story__ic"><Icon name="trophy" size={16} /></span><div><div className="wk-story__tag">Results</div><div className="wk-story__txt">{analyticsState.error || "Waiting for selected session results."}</div></div></div>}
+                </div>
+              </div>
+            )}
             <div className="wk-recap-detail">
               {metrics.map((metric) => (
                 <div className="wk-recap-stat" key={metric.k}>
@@ -655,7 +701,8 @@
     const [liveTimingData, setLiveTimingData] = React.useState(null);
     const liveTimingInFlightRef = React.useRef(false);
     const liveTimingRequestIdRef = React.useRef(0);
-    const rows = hasLiveTiming && liveTimingData?.timing?.length ? liveTimingData.timing : timingRows(D);
+    const liveRows = liveSessionTimingRows(D, hasLiveTiming, liveTimingData);
+    const recapRows = timingRows(D);
     const liveDataSource = liveTimingData?.sourceLabel || liveTimingData?.message || dataSource;
     const liveWeather = liveTimingData?.weather && Object.values(liveTimingData.weather).some((value) => value !== "" && value !== null && value !== undefined)
       ? liveTimingData.weather
@@ -711,7 +758,7 @@
             <div className="wk__sub">
               <Icon name="pin" size={13} /> {selectedRace.loc || D.race?.loc || dataSource} · Round {selectedRace.rnd || D.race?.round || D.seasonSummary?.round || "n/a"}
               {mode === "live"
-                ? <><span>·</span><Badge tone="live">SESSION LIVE</Badge></>
+                ? <><span>·</span><Badge tone={hasLiveTiming ? "live" : "outline"}>{hasLiveTiming ? "SESSION LIVE" : "Not live"}</Badge></>
                 : <><span>·</span><Badge tone="outline">Between sessions</Badge></>}
             </div>
           </div>
@@ -722,8 +769,8 @@
         </div>
 
         {mode === "live"
-          ? <LiveTiming D={D} selectedRace={selectedRace} selectedRaceSession={selectedRaceSession} rows={rows} onGoLive={onGoLive} dataSource={liveDataSource} raceWeather={liveWeather} raceStatus={liveRaceStatus} />
-          : <Recap D={D} selectedRace={selectedRace} selectedRaceSession={selectedRaceSession} rows={rows} onGoLive={onGoLive} dataSource={dataSource} requestedSessionKind={requestedSessionKind} />}
+          ? <LiveTiming D={D} selectedRace={selectedRace} selectedRaceSession={selectedRaceSession} rows={liveRows} onGoLive={onGoLive} dataSource={liveDataSource} raceWeather={liveWeather} raceStatus={liveRaceStatus} />
+          : <Recap D={D} selectedRace={selectedRace} selectedRaceSession={selectedRaceSession} rows={recapRows} onGoLive={onGoLive} dataSource={dataSource} requestedSessionKind={requestedSessionKind} />}
       </div>
     );
   }

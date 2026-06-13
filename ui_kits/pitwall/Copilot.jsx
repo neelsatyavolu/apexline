@@ -21,10 +21,11 @@
     /* Hero analysis */
     .cop-hero { position: relative; overflow: hidden; border-radius: var(--radius-lg); border: 1px solid var(--accent-border);
       background: linear-gradient(120% 130% at 90% -20%, var(--accent-quiet), transparent 55%), var(--surface-card); padding: var(--space-9); }
-    .cop-hero__top { display: flex; align-items: center; gap: var(--space-6); margin-bottom: var(--space-7); }
+    .cop-hero__top { display: flex; align-items: center; gap: var(--space-6); flex-wrap: wrap; margin-bottom: var(--space-7); }
     .cop-hero__badge { display: inline-flex; align-items: center; gap: var(--space-4); padding: 4px 10px 4px 8px; border-radius: var(--radius-pill);
       background: var(--accent-quiet); color: var(--text-accent); font-size: var(--text-2xs); font-weight: 600; letter-spacing: var(--tracking-caps); text-transform: uppercase; }
-    .cop-hero__model { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--text-tertiary); display: flex; align-items: center; gap: 5px; }
+    .cop-hero__actions { margin-left: auto; display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--space-5); min-width: 0; }
+    .cop-hero__model { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--text-tertiary); display: flex; align-items: center; gap: 5px; white-space: nowrap; }
     .cop-hero__h { font-family: var(--font-display); font-weight: 700; font-size: var(--text-2xl); color: var(--text-strong); letter-spacing: -0.01em; margin: 0 0 var(--space-6); }
     .cop-hero__sum { font-size: var(--text-md); line-height: 1.6; color: var(--text-secondary); max-width: 68ch; text-wrap: pretty; }
     .cop-hero__conf { display: flex; align-items: center; gap: var(--space-6); margin-top: var(--space-8); padding-top: var(--space-7); border-top: 1px solid var(--border-subtle); }
@@ -227,9 +228,10 @@
 	    .cop-chat__typing i:nth-child(3) { animation-delay: 0.3s; }
 	    .cmsg--visual { max-width: 100%; width: min(100%, 720px); }
 	    .ai-vis { margin-top: var(--space-6); display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-card); padding: var(--space-6); }
-	    .ai-vis__head { display: flex; align-items: baseline; gap: var(--space-5); padding-bottom: var(--space-4); border-bottom: 1px solid var(--border-subtle); }
+	    .ai-vis__head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-5); padding-bottom: var(--space-4); border-bottom: 1px solid var(--border-subtle); }
 	    .ai-vis__title { color: var(--text-primary); font-weight: 800; font-size: var(--text-sm); }
 	    .ai-vis__sub { color: var(--text-tertiary); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	    .ai-vis__mode { display: inline-flex; align-items: center; height: 19px; padding: 0 7px; border-radius: var(--radius-pill); border: 1px solid var(--accent-border); background: var(--accent-quiet); color: var(--text-accent); font-family: var(--font-mono); font-size: 9px; font-weight: 800; text-transform: uppercase; white-space: nowrap; }
 	    .ai-vis__row { display: grid; grid-template-columns: 86px minmax(120px, 0.8fr) minmax(180px, 1.4fr) 46px; gap: var(--space-5); align-items: center; padding: var(--space-5); border-radius: var(--radius-sm); background: var(--bg-sunken); border: 1px solid var(--border-subtle); }
 	    .ai-vis__code { font-family: var(--font-display); font-weight: 900; color: var(--text-primary); font-size: var(--text-lg); line-height: 1; }
 	    .ai-vis__label { margin-top: 3px; color: var(--text-tertiary); font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: var(--tracking-caps); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -244,7 +246,7 @@
 	    .ai-vis__notes { margin: 0; padding-left: 17px; color: var(--text-tertiary); font-size: var(--text-xs); line-height: 1.4; }
 	    @media (max-width: 1180px) { .cop-preds { grid-template-columns: 1fr; } .metric-strip { grid-template-columns: 1fr; } .champ-row { grid-template-columns: 38px minmax(96px, 0.8fr) minmax(120px, 1.2fr) 58px; } .champ-row__gap { display: none; } .cop-progress__rows { grid-template-columns: 1fr; } }
 	    @media (max-width: 980px) { .cop-page { grid-template-columns: 1fr; } .cop-chat { height: min(680px, calc(100vh - 140px)); } .ai-vis__row { grid-template-columns: 60px 1fr; } .ai-vis__bars, .ai-vis__rec { grid-column: 1 / -1; } .ai-vis__quality { grid-column: 2; justify-self: start; } .factors { grid-template-columns: 1fr; } }
-	    @media (max-width: 760px) { .race-pred__sections { grid-template-columns: 1fr; } }
+	    @media (max-width: 760px) { .race-pred__sections { grid-template-columns: 1fr; } .cop-hero__actions { width: 100%; justify-content: space-between; } .cop-status-head { flex-wrap: wrap; } .cop-status-head__text { flex-basis: 100%; } }
 	    @keyframes pw-typing { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
 	    @media (prefers-reduced-motion: reduce) { .cop-chat__typing i, .cop-inprogress-dot, .cop-modal__step-dot { animation: none; } }
 	    `;
@@ -679,11 +681,13 @@
 	    if (!visualization || visualization.kind === "none") return null;
 	    const rows = Array.isArray(visualization.rows) ? visualization.rows : [];
 	    if (!rows.length && !visualization.title) return null;
+	    const projectedStints = String(visualization.stintMode || "").toLowerCase() === "projected";
 	    return (
 	      <div className="ai-vis" data-kind={visualization.kind}>
 	        <div className="ai-vis__head">
 	          <span className="ai-vis__title">{visualization.title || "Strategy view"}</span>
 	          {visualization.subtitle && <span className="ai-vis__sub">{visualization.subtitle}</span>}
+	          {projectedStints && <span className="ai-vis__mode">Projected strategy</span>}
 	        </div>
 	        {rows.map((row, index) => {
 	          const stints = Array.isArray(row.stints) ? row.stints : [];
@@ -844,8 +848,9 @@
     const [typing, setTyping] = React.useState(false);
     const [progressOpen, setProgressOpen] = React.useState(false);
     const [progressModalOpen, setProgressModalOpen] = React.useState(false);
-    const [rerunning, setRerunning] = React.useState(false);
+    const [rerunningScope, setRerunningScope] = React.useState("");
     const dailyPending = daily.status === "pending";
+    const rerunning = Boolean(rerunningScope);
     const msgsRef = React.useRef(null);
     const selectedTab = INSIGHT_TABS.find((tab) => tab.id === activeTab) || INSIGHT_TABS[0];
     const selectedPage = dailyPages.find((page) => page.id === activeTab) || {
@@ -924,14 +929,15 @@
       setTyping(false);
     }
 
-    async function rerunAnalysis() {
+    async function rerunAnalysis(scope = "all") {
       if (!refreshData || rerunning || dailyPending) return;
-      setRerunning(true);
+      const scoped = scope === "tab" && activeTab !== "ask-copilot";
+      setRerunningScope(scoped ? "tab" : "all");
       setProgressOpen(true);
       try {
-        await refreshData({ forceRefresh: true, forceCopilotRefresh: true });
+        await refreshData({ forceRefresh: true, forceCopilotRefresh: true, forceCopilotPageId: scoped ? activeTab : "" });
       } finally {
-        setRerunning(false);
+        setRerunningScope("");
       }
     }
 
@@ -988,7 +994,12 @@
                 <div className="cop-hero__top">
                   <span className="cop-hero__badge"><Icon name="sparkles" size={13} /> Daily prebuilt insight</span>
                   <Badge tone={daily.status === "ready" ? "success" : "neutral"}>{daily.status === "ready" ? "Computed" : "Not computed"}</Badge>
-                  <span className="cop-hero__model"><Icon name="key" size={12} /> {daily.generatedOn ? `Updated ${daily.generatedOn}` : "Updates once per day"}</span>
+                  <div className="cop-hero__actions">
+                    <Button size="sm" variant="ghost" onClick={() => rerunAnalysis("tab")} disabled={rerunning || dailyPending} iconLeft={<Icon name="timer" size={13} />}>
+                      {rerunningScope === "tab" ? "Rerunning" : "Rerun this tab"}
+                    </Button>
+                    <span className="cop-hero__model"><Icon name="key" size={12} /> {daily.generatedOn ? `Updated ${daily.generatedOn}` : "Updates once per day"}</span>
+                  </div>
                 </div>
                 <h2 className="cop-hero__h">{selectedPage.title || selectedTab.label}</h2>
                 {dailyPending ? (
@@ -1040,8 +1051,8 @@
 	              <Card title="Daily status" subtitle="One automatic AI calculation per day" aside={<Icon name="sparkles" size={15} />} padding="default">
                 <div className="cop-status-head">
                   <div className="cop-status-head__text">{progress.statusText || (dailyPending ? "Daily AI calculation in progress." : projectionStatus)}</div>
-                  <Button size="sm" variant="ghost" onClick={rerunAnalysis} disabled={rerunning || dailyPending} iconLeft={<Icon name="timer" size={13} />}>
-                    {rerunning ? "Rerunning" : "Rerun analysis"}
+                  <Button size="sm" variant="ghost" onClick={() => rerunAnalysis("all")} disabled={rerunning || dailyPending} iconLeft={<Icon name="timer" size={13} />}>
+                    {rerunningScope === "all" ? "Rerunning" : "Rerun all"}
                   </Button>
                   <Button size="sm" variant={progressOpen ? "secondary" : "ghost"} onClick={() => setProgressOpen((open) => !open)} iconLeft={<Icon name="timer" size={13} />} aria-expanded={progressOpen}>
                     {progressOpen ? "Hide progress" : "Show progress"}

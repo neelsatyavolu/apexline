@@ -92,7 +92,7 @@ const PROFILE_FILE = "pitwall-profile.json";
 const AI_PREFERENCES_FILE = "pitwall-ai-preferences.json";
 const SOCIAL_FILE = "apexline-social.json";
 const COPILOT_INSIGHTS_FILE = "pitwall-copilot-insights.json";
-const COPILOT_INSIGHTS_SCHEMA_VERSION = 7;
+const COPILOT_INSIGHTS_SCHEMA_VERSION = 8;
 const DEBUG_LOG_FILE = "pitwall-debug.log";
 const ANALYTICS_SESSION_CACHE_FILE = "pitwall-analytics-session-cache.json";
 const F1TV_LIBRARY_CACHE_FILE = "pitwall-f1tv-library-cache.json";
@@ -5775,24 +5775,38 @@ function fallbackCopilotInsightPages(data, summary) {
   }));
 }
 
-function dailyCopilotProgress({ status = "pending", currentPage = null, currentIndex = 0, completedPages = 0, error = "" } = {}) {
-  const totalPages = COPILOT_INSIGHT_PAGES.length;
+function copilotInsightPagesForScope(pageId) {
+  const scopedPage = COPILOT_INSIGHT_PAGES.find((page) => page.id === String(pageId || ""));
+  return scopedPage ? [scopedPage] : COPILOT_INSIGHT_PAGES;
+}
+
+function mergeCopilotInsightPages(data, baseDaily, updatedPages = [], summary = "") {
+  const fallbackPages = fallbackCopilotInsightPages(data, summary || "Daily AI insight generation is queued for today.");
+  const fallbackById = new Map(fallbackPages.map((page) => [page.id, page]));
+  const baseById = new Map((Array.isArray(baseDaily?.pages) ? baseDaily.pages : []).map((page) => [page.id, page]));
+  const updatedById = new Map((Array.isArray(updatedPages) ? updatedPages : []).map((page) => [page.id, page]));
+  return COPILOT_INSIGHT_PAGES.map((page) => updatedById.get(page.id) || baseById.get(page.id) || fallbackById.get(page.id) || page);
+}
+
+function dailyCopilotProgress({ status = "pending", currentPage = null, currentIndex = 0, completedPages = 0, error = "", pages = COPILOT_INSIGHT_PAGES } = {}) {
+  const progressPages = Array.isArray(pages) && pages.length ? pages : COPILOT_INSIGHT_PAGES;
+  const totalPages = progressPages.length;
   const pageIndex = Math.max(0, Math.min(totalPages - 1, Number(currentIndex) || 0));
-  const activePage = currentPage || COPILOT_INSIGHT_PAGES[pageIndex] || null;
-  const activeIndex = Math.max(0, COPILOT_INSIGHT_PAGES.findIndex((page) => page.id === activePage?.id));
+  const activePage = currentPage || progressPages[pageIndex] || null;
+  const activeIndex = Math.max(0, progressPages.findIndex((page) => page.id === activePage?.id));
   const boundedCompletedPages = Math.max(0, Math.min(totalPages, Number(completedPages) || 0));
   const effectiveCompletedPages = status === "completed"
     ? totalPages
     : ["thinking", "failed"].includes(status)
       ? Math.max(boundedCompletedPages, activeIndex)
       : boundedCompletedPages;
-  const items = COPILOT_INSIGHT_PAGES.map((page, index) => ({
+  const items = progressPages.map((page, index) => ({
     id: page.id,
     title: page.title,
     status: index < effectiveCompletedPages ? "computed" : page.id === activePage?.id && status === "thinking" ? "thinking" : status === "failed" && page.id === activePage?.id ? "failed" : "waiting",
   }));
   const statusText = status === "completed"
-    ? "Daily AI projections are computed."
+    ? totalPages === 1 ? `${activePage?.title || "Daily AI projection"} is computed.` : "Daily AI projections are computed."
     : status === "failed"
       ? `Stopped while computing ${activePage?.title || "daily projections"}.`
       : status === "thinking"
@@ -5827,14 +5841,14 @@ function dailyInsightPrompt(page) {
   const projectionEvidenceGuide = "For projections, provide these possible evidence sources without prescribing weights: 1. This week's F1 news, or the ability to search for it when available. 2. Every race this season's results. 3. Past results at this track. 4. Driver skill overall. 5. Freedom to find and use other relevant sources. The model decides how to weigh these sources, synthesize contradictions, and explain which data supports each pick.";
   const instructions = [
     `Build the daily precomputed Apexline Copilot page for: ${page.title}.`,
-    "Use only the provided snapshot. Do not invent tyre data, session results, weather, or factual claims not present in the snapshot.",
+    "Use only the provided snapshot. Do not invent factual tyre data, session results, weather, or factual claims not present in the snapshot.",
     "If the snapshot lacks enough data for a claim, say what is missing.",
     "Return concise race-engineer language with alerts only for real risks or uncertainties in the supplied data.",
   ];
   if (page.id === "current-weekend") {
-    instructions.push(`For this Current weekend page, compute AI predictions for the race winner, podium, and watchlist. ${projectionEvidenceGuide} Use supplied snapshot.weekendSessionSummaries for FP1-FP3, sprint, qualifying, race-pace, weather, tyre, and session-result evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. If qualifying, race pace, weather, or timing data is missing, lower confidence and say so instead of filling gaps.`);
+    instructions.push(`For this Current weekend page, compute AI predictions for the race winner, podium, and watchlist. ${projectionEvidenceGuide} Use supplied snapshot.weekendSessionSummaries for FP1-FP3, sprint, qualifying, race-pace, weather, tyre, and session-result evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. For race-plan visuals before the race has actual stint data, include projected tyre_strategy stints when the supplied practice, qualifying, weather, tyre, and news evidence supports a strategy read; set visualization.stintMode='projected', label the title/subtitle/notes as projected, and do not present projected stints as actual telemetry. If qualifying, race pace, weather, or timing data is missing, lower confidence and say so instead of filling gaps.`);
   } else if (page.id === "next-weekend") {
-    instructions.push(`For this Next weekend page, compute AI predictions for the Grand Prix race winner, podium, watchlist, and full predicted race finishing order. Treat snapshot.nextRaceWeekend as the race target; snapshot.nextUpcomingSession is schedule context only and must not change the leaderboard into FP1, qualifying, sprint, or any other session projection. ${projectionEvidenceGuide} Use supplied snapshot.performanceContext plus the rest of the snapshot when present. Put predictions in predictions with available=true, include the full predicted race finishing order in predictions.leaderboard, label it as a race projection, and explain the data behind each pick. If race pace, weather, tyre, season-performance, track-history, or timing data is missing for the next weekend, lower confidence and say so instead of filling gaps.`);
+    instructions.push(`For this Next weekend page, compute AI predictions for the Grand Prix race winner, podium, watchlist, and full predicted race finishing order. Treat snapshot.nextRaceWeekend as the race target; snapshot.nextUpcomingSession is schedule context only and must not change the leaderboard into FP1, qualifying, sprint, or any other session projection. ${projectionEvidenceGuide} Use supplied snapshot.performanceContext plus the rest of the snapshot when present. Put predictions in predictions with available=true, include the full predicted race finishing order in predictions.leaderboard, label it as a race projection, and explain the data behind each pick. For race-plan visuals before the race has actual stint data, include projected tyre_strategy stints when the supplied performance, track-history, weather, tyre, and news evidence supports a strategy read; set visualization.stintMode='projected', label the title/subtitle/notes as projected, and do not present projected stints as actual telemetry. If race pace, weather, tyre, season-performance, track-history, or timing data is missing for the next weekend, lower confidence and say so instead of filling gaps.`);
   } else if (page.id === "drivers-championship") {
     instructions.push(`For this Drivers championship page, compute AI predictions for the drivers' championship winner, leading title contenders, and watchlist. ${projectionEvidenceGuide} Use supplied standings, wins, constructors, schedule, season summary, timing, strategy context, and news evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. If remaining-race count, form, reliability, or pace data is missing, lower confidence and say so instead of filling gaps.`);
   } else if (page.id === "constructors-championship") {
@@ -5890,7 +5904,11 @@ function normalizeDailyInsightPage(page, answer) {
   };
 }
 
-async function refreshDailyCopilotInsights(data, generatedOn) {
+async function refreshDailyCopilotInsights(data, generatedOn, options = {}) {
+  const pagesToRefresh = copilotInsightPagesForScope(options.pageId);
+  const scoped = pagesToRefresh.length !== COPILOT_INSIGHT_PAGES.length;
+  const previousDaily = options.previousDaily || null;
+  const pendingSummary = scoped ? `Daily AI insight generation is queued for ${pagesToRefresh[0]?.title || "this page"}.` : "Daily AI insight generation has started and has not finished yet.";
   const pending = {
     schemaVersion: COPILOT_INSIGHTS_SCHEMA_VERSION,
     status: "pending",
@@ -5898,21 +5916,21 @@ async function refreshDailyCopilotInsights(data, generatedOn) {
     generatedOn: "",
     generatedAt: "",
     updatedAt: new Date().toISOString(),
-    progress: dailyCopilotProgress(),
-    pages: fallbackCopilotInsightPages(data, "Daily AI insight generation has started and has not finished yet."),
+    progress: dailyCopilotProgress({ pages: pagesToRefresh }),
+    pages: scoped ? mergeCopilotInsightPages(data, previousDaily, [], pendingSummary) : fallbackCopilotInsightPages(data, pendingSummary),
   };
   if (liveDataCache?.data) liveDataCache.data.copilot = { daily: pending };
   await writeCopilotInsightsCache(pending);
   let progress = pending.progress;
   const pages = [];
   try {
-    for (const [index, page] of COPILOT_INSIGHT_PAGES.entries()) {
-      progress = dailyCopilotProgress({ status: "thinking", currentPage: page, currentIndex: index, completedPages: pages.length });
+    for (const [index, page] of pagesToRefresh.entries()) {
+      progress = dailyCopilotProgress({ status: "thinking", currentPage: page, currentIndex: index, completedPages: pages.length, pages: pagesToRefresh });
       const progressUpdate = {
         ...pending,
         updatedAt: new Date().toISOString(),
         progress,
-        pages: pages.concat(fallbackCopilotInsightPages(data, progress.statusText).slice(pages.length)),
+        pages: scoped ? mergeCopilotInsightPages(data, previousDaily, pages, progress.statusText) : pages.concat(fallbackCopilotInsightPages(data, progress.statusText).slice(pages.length)),
       };
       if (liveDataCache?.data) liveDataCache.data.copilot = { daily: progressUpdate };
       await writeCopilotInsightsCache(progressUpdate);
@@ -5929,12 +5947,16 @@ async function refreshDailyCopilotInsights(data, generatedOn) {
       generatedOn,
       generatedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      progress: dailyCopilotProgress({ status: "completed", currentPage: COPILOT_INSIGHT_PAGES.at(-1), currentIndex: COPILOT_INSIGHT_PAGES.length - 1, completedPages: COPILOT_INSIGHT_PAGES.length }),
-      pages,
+      progress: dailyCopilotProgress({ status: "completed", currentPage: pagesToRefresh.at(-1), currentIndex: pagesToRefresh.length - 1, completedPages: pagesToRefresh.length, pages: pagesToRefresh }),
+      pages: scoped ? mergeCopilotInsightPages(data, previousDaily, pages, "Daily AI projection is computed.") : pages,
     };
     if (liveDataCache?.data) liveDataCache.data.copilot = { daily: ready };
     return writeCopilotInsightsCache(ready);
   } catch (error) {
+    const safeError = sanitizeAiError(error);
+    const failedPage = COPILOT_INSIGHT_PAGES.find((page) => page.id === progress.currentPageId) || pagesToRefresh[0];
+    const failedPages = fallbackCopilotInsightPages(data, `No AI projection computed today. Daily calculation failed: ${safeError}`)
+      .filter((page) => page.id === failedPage?.id);
     const failed = {
       schemaVersion: COPILOT_INSIGHTS_SCHEMA_VERSION,
       status: "failed",
@@ -5942,9 +5964,9 @@ async function refreshDailyCopilotInsights(data, generatedOn) {
       generatedOn: "",
       generatedAt: "",
       updatedAt: new Date().toISOString(),
-      error: sanitizeAiError(error),
-      progress: dailyCopilotProgress({ status: "failed", currentPage: COPILOT_INSIGHT_PAGES.find((page) => page.id === progress.currentPageId), completedPages: pages.length, error: sanitizeAiError(error) }),
-      pages: fallbackCopilotInsightPages(data, `No AI projection computed today. Daily calculation failed: ${sanitizeAiError(error)}`),
+      error: safeError,
+      progress: dailyCopilotProgress({ status: "failed", currentPage: failedPage, completedPages: pages.length, error: safeError, pages: pagesToRefresh }),
+      pages: scoped ? mergeCopilotInsightPages(data, previousDaily, failedPages, `No AI projection computed today. Daily calculation failed: ${safeError}`) : fallbackCopilotInsightPages(data, `No AI projection computed today. Daily calculation failed: ${safeError}`),
     };
     if (liveDataCache?.data) liveDataCache.data.copilot = { daily: failed };
     return writeCopilotInsightsCache(failed);
@@ -5953,7 +5975,9 @@ async function refreshDailyCopilotInsights(data, generatedOn) {
 
 async function getDailyCopilotInsights(data, options = {}) {
   const today = localDateKey();
-  const forceCopilotRefresh = Boolean(options.forceCopilotRefresh);
+  const forceCopilotPageId = COPILOT_INSIGHT_PAGES.some((page) => page.id === String(options.forceCopilotPageId || "")) ? String(options.forceCopilotPageId) : "";
+  const forceCopilotRefresh = Boolean(options.forceCopilotRefresh || forceCopilotPageId);
+  const pagesToRefresh = copilotInsightPagesForScope(forceCopilotPageId);
   const rawCached = await readCopilotInsightsCache();
   const cachedHadRawAiTimeout = copilotCacheHasRawAiTimeout(rawCached);
   const cached = sanitizeCopilotInsightsCache(rawCached);
@@ -5974,7 +5998,7 @@ async function getDailyCopilotInsights(data, options = {}) {
     };
   }
   if (!copilotInsightRefresh) {
-    copilotInsightRefresh = refreshDailyCopilotInsights(data, today)
+    copilotInsightRefresh = refreshDailyCopilotInsights(data, today, { pageId: forceCopilotPageId, previousDaily: usableCached })
       .catch(() => null)
       .finally(() => { copilotInsightRefresh = null; });
   }
@@ -5985,8 +6009,8 @@ async function getDailyCopilotInsights(data, options = {}) {
     generatedOn: "",
     generatedAt: "",
     updatedAt: new Date().toISOString(),
-    progress: dailyCopilotProgress(),
-    pages: fallbackCopilotInsightPages(data, "Daily AI insight generation is queued for today."),
+    progress: dailyCopilotProgress({ pages: pagesToRefresh }),
+    pages: forceCopilotPageId ? mergeCopilotInsightPages(data, usableCached, [], "Daily AI insight generation is queued for today.") : fallbackCopilotInsightPages(data, "Daily AI insight generation is queued for today."),
   };
   return forceCopilotRefresh ? pending : usableCached || pending;
 }
@@ -6224,7 +6248,7 @@ async function refreshLiveDataSnapshot(options = {}) {
     includeWeekendWeatherFallback: false,
     enrichmentPending: true,
   });
-  data.copilot = { daily: await getDailyCopilotInsights(data, { forceCopilotRefresh: Boolean(options.forceCopilotRefresh) }) };
+  data.copilot = { daily: await getDailyCopilotInsights(data, { forceCopilotRefresh: Boolean(options.forceCopilotRefresh), forceCopilotPageId: options.forceCopilotPageId || "" }) };
   liveDataCache = { createdAt: Date.now(), data };
   writeLiveSnapshotDiskCache(data);
   refreshLiveDataEnrichment(raw, errors, data);
@@ -6233,7 +6257,7 @@ async function refreshLiveDataSnapshot(options = {}) {
 
 async function getPitWallSnapshot(options = {}) {
   if (options?.forceRefresh) {
-    if (!liveDataRefresh || options.forceCopilotRefresh) {
+    if (!liveDataRefresh || options.forceCopilotRefresh || options.forceCopilotPageId) {
       liveDataRefresh = refreshLiveDataSnapshot(options).finally(() => { liveDataRefresh = null; });
     }
     return liveDataRefresh;
@@ -8320,6 +8344,8 @@ function weekendRecapSummary(sessionKind, dom = {}) {
     rowsWithGap,
     rowsWithInterval,
     rowsWithLaps,
+    navigationMs: dom.navigationMs || 0,
+    readyMs: dom.readyMs || 0,
     message: dom.message || "",
     sample: rows.slice(0, 5),
   };
@@ -8329,6 +8355,8 @@ async function loadWeekendRecapDom(root, serverUrl, rendererEntry, round, sessio
   const params = new URLSearchParams({ screen: "weekend" });
   if (round) params.set("weekendRound", String(round));
   if (sessionKind) params.set("weekendSession", String(sessionKind));
+  const startedAt = Date.now();
+  let navigationMs = 0;
   const win = new BrowserWindow({
     width: 1360,
     height: 900,
@@ -8344,14 +8372,17 @@ async function loadWeekendRecapDom(root, serverUrl, rendererEntry, round, sessio
   });
   try {
     await win.loadURL(`${serverUrl}/${rendererEntry}?${params.toString()}`);
+    navigationMs = Date.now() - startedAt;
     const deadline = Date.now() + timeoutMs;
     let dom = {};
     while (Date.now() < deadline) {
       dom = await win.webContents.executeJavaScript(weekendRecapDomScript(), true).catch((error) => ({ message: error?.message || String(error || "") }));
-      if (weekendRecapSummary(sessionKind, dom).rich && !dom.loading) return dom;
-      await wait(1000);
+      if (weekendRecapSummary(sessionKind, dom).rich && !dom.loading) {
+        return { ...dom, navigationMs, readyMs: Date.now() - startedAt };
+      }
+      await wait(150);
     }
-    return dom;
+    return { ...dom, navigationMs, readyMs: Date.now() - startedAt };
   } finally {
     win.destroy();
   }
@@ -8493,12 +8524,13 @@ const AI_RESPONSE_SCHEMA = {
       additionalProperties: false,
       properties: {
         kind: { type: "string", enum: ["none", "tyre_strategy", "comparison", "timeline", "battle"] },
+        stintMode: { type: "string", enum: ["actual", "projected", "none"] },
         title: { type: "string" },
         subtitle: { type: "string" },
         rows: { type: "array", items: AI_VISUALIZATION_ROW_SCHEMA },
         notes: { type: "array", items: { type: "string" } },
       },
-      required: ["kind", "title", "subtitle", "rows", "notes"],
+      required: ["kind", "stintMode", "title", "subtitle", "rows", "notes"],
     },
     predictions: AI_PREDICTIONS_SCHEMA,
   },
@@ -8513,8 +8545,11 @@ const AI_SYSTEM_PROMPT = [
   "Return valid JSON matching the schema: summary, alerts, visualization, and predictions.",
   "Set visualization.kind to tyre_strategy for tyre, stint, compound, pit-window, or race-plan questions.",
   "Set visualization.kind to comparison, timeline, or battle only when that helps the user understand the answer.",
-  "Set visualization.kind to none with empty title, subtitle, rows, and notes when prose is clearer.",
-  "Never invent tyre compounds or stint laps when snapshot.strategyContext.tyreStrategy.available is false; explain what is missing instead.",
+  "Set visualization.stintMode='none' for comparison, timeline, battle, and any non-stint visual.",
+  "Set visualization.kind to none with visualization.stintMode='none' and empty title, subtitle, rows, and notes when prose is clearer.",
+  "When actual stint data is available, set visualization.stintMode='actual' and use only supplied tyre compounds, stint laps, and pit counts.",
+  "When actual stint data is unavailable but the user asks for race-plan strategy, you may create projected tyre_strategy stints from supplied schedule, race distance, weather, weekendSessionSummaries, performanceContext, and news; set visualization.stintMode='projected', label title/subtitle/notes as projected, and do not present projected stints as actual telemetry.",
+  "If the snapshot lacks enough evidence even for a projection, explain what is missing instead of filling gaps.",
   "Always include predictions. Set predictions.available=true only for daily Current weekend, Next weekend, Drivers championship, or Constructors championship projection pages, otherwise set it false with empty winner, podium, leaderboard, and watchlist arrays.",
   "When predictions are available, label them as projections, use confidence and probability values from 0 to 1, and ground every winner, podium, leaderboard, and watchlist reason in the snapshot.",
 ].join(" ");
@@ -9236,7 +9271,17 @@ async function resolveAnalyticsSession(options = {}) {
   if (explicitSessionKey) {
     return { session_key: explicitSessionKey, session_name: String(options.sessionKind || "Selected session"), meeting_key: finiteNumber(options.meetingKey) || null };
   }
-  const meetingKey = finiteNumber(options.meetingKey);
+  let meetingKey = finiteNumber(options.meetingKey);
+  if (!meetingKey && finiteNumber(options.round)) {
+    const season = String(options.season || new Date().getFullYear()).replace(/[^0-9]/g, "") || String(new Date().getFullYear());
+    const round = finiteNumber(options.round);
+    const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { year: season }));
+    const grandPrixMeetings = (meetings || [])
+      .filter((meeting) => /grand prix/i.test(String(meeting?.meeting_name || "")))
+      .filter((meeting) => season !== "2026" || !isCancelledF12026RaceName(meeting?.meeting_name || meeting?.official_name || ""))
+      .sort((a, b) => Date.parse(a.date_start || "") - Date.parse(b.date_start || ""));
+    meetingKey = finiteNumber(grandPrixMeetings[round - 1]?.meeting_key);
+  }
   if (!meetingKey) throw new Error("Select a race weekend with OpenF1 meeting data.");
   const sessions = await requestOpenF1Analytics("sessions", { meeting_key: meetingKey });
   const sessionNeedle = cleanSessionName(options.sessionKind || options.sessionName || "Race");
@@ -9312,6 +9357,66 @@ async function buildAnalyticsSessionData(sessionInfo, options = {}) {
   return data;
 }
 
+async function buildAnalyticsSessionLeaderboardData(sessionInfo, options = {}) {
+  const sessionKey = finiteNumber(sessionInfo?.session_key);
+  if (!sessionKey) throw new Error("OpenF1 did not return a session key for this selection.");
+  const raw = { sessionResult: [], laps: [], stints: [], weather: [] };
+  const errors = [];
+  try {
+    const rows = await requestOpenF1AnalyticsWithRetry("sessionResult", { session_key: sessionKey });
+    raw.sessionResult = Array.isArray(rows) ? rows : [];
+  } catch (error) {
+    errors.push(error?.message || "OpenF1 request failed");
+  }
+  if (!raw.sessionResult?.length) {
+    const requests = {
+      laps: ["laps", { session_key: sessionKey }],
+      stints: ["stints", { session_key: sessionKey }],
+    };
+    await Promise.all(Object.entries(requests).map(async ([key, [endpoint, params]]) => {
+      try {
+        const rows = await requestOpenF1AnalyticsWithRetry(endpoint, params);
+        raw[key] = Array.isArray(rows) ? rows : [];
+      } catch (error) {
+        raw[key] = [];
+        if (key !== "stints") errors.push(error?.message || "OpenF1 request failed");
+      }
+    }));
+  }
+  const hasPublishedRows = ["laps", "sessionResult", "stints"].some((key) => raw[key]?.length);
+  if (!hasPublishedRows && !errors.length) {
+    errors.push("OpenF1 has not published analytics rows for this session yet.");
+  }
+  const fallback = readFallbackPitWallData();
+  const data = {
+    source: "OpenF1",
+    fetchedAt: new Date().toISOString(),
+    errors,
+    session: {
+      key: sessionKey,
+      meetingKey: finiteNumber(sessionInfo.meeting_key),
+      name: sessionInfo.session_name || options.sessionKind || "Selected session",
+      type: sessionInfo.session_type || "",
+      dateStart: sessionInfo.date_start || "",
+      dateEnd: sessionInfo.date_end || "",
+      circuit: sessionInfo.circuit_short_name || "",
+      location: [sessionInfo.location, sessionInfo.country_name].filter(Boolean).join(", "),
+      year: sessionInfo.year || options.season || "",
+    },
+    weather: parseWeather(raw.weather || []),
+    drivers: summarizeAnalyticsDrivers(raw, fallback.drivers),
+    counts: Object.fromEntries(Object.entries(raw).map(([key, rows]) => [key, rows.length])),
+  };
+  if (!hasPublishedRows) {
+    try {
+      return await buildF1TimingAnalyticsSessionData(sessionInfo, options);
+    } catch (error) {
+      data.errors.push(`Formula 1 timing fallback unavailable: ${error?.message || "unknown error"}`);
+    }
+  }
+  return data;
+}
+
 function refreshAnalyticsSessionCache({ cacheKey, aliasKey, options = {}, sessionInfo = null, cachedData = null } = {}) {
   const refreshKeys = [cacheKey, aliasKey].filter(Boolean).map(String);
   if (!refreshKeys.length || refreshKeys.some((key) => analyticsRefreshInFlight.has(key))) return;
@@ -9339,6 +9444,7 @@ function refreshAnalyticsSessionCache({ cacheKey, aliasKey, options = {}, sessio
 }
 
 async function getAnalyticsSession(options = {}) {
+  const leaderboardScope = options.scope === "leaderboard";
   const aliasKey = analyticsAliasKey(options);
   const aliasDiskEntry = analyticsSessionDiskEntry([aliasKey], { withMeta: true });
   if (aliasDiskEntry?.data && analyticsSessionHasPublishedRows(aliasDiskEntry.data)) {
@@ -9363,6 +9469,19 @@ async function getAnalyticsSession(options = {}) {
   const sessionKey = finiteNumber(sessionInfo?.session_key);
   if (!sessionKey) throw new Error("OpenF1 did not return a session key for this selection.");
   const cacheKey = String(sessionKey);
+  if (leaderboardScope) {
+    const scopedCacheKey = `leaderboard:${cacheKey}`;
+    const scopedCached = analyticsSessionCache.get(scopedCacheKey);
+    if (scopedCached && Date.now() - scopedCached.createdAt < ANALYTICS_CACHE_MS && analyticsSessionHasPublishedRows(scopedCached.data)) {
+      return cachedAnalyticsSessionData(scopedCached.data, "memory", new Date(scopedCached.createdAt).toISOString());
+    }
+    const data = await buildAnalyticsSessionLeaderboardData(sessionInfo, options);
+    if (analyticsSessionHasPublishedRows(data)) {
+      analyticsSessionCache.set(scopedCacheKey, { createdAt: Date.now(), data });
+      trimAnalyticsSessionMemoryCache();
+    }
+    return data;
+  }
   const cached = analyticsSessionCache.get(cacheKey);
   if (cached && analyticsSessionHasPublishedRows(cached.data)) {
     const shouldRefresh = shouldRevalidateAnalyticsCache(cached.createdAt, cached.data);

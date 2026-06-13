@@ -616,6 +616,9 @@
     .wpt-card__name { font-size: var(--text-sm); font-weight: 800; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .wpt-card__eyebrow { margin-left: auto; font-family: var(--font-mono); font-size: 8.5px; font-weight: 800; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--accent); flex: none; }
     .wpt-card__msg { font-size: var(--text-sm); line-height: 1.38; color: var(--text-secondary); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-wrap: pretty; }
+    .wpt-card__icon { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: var(--radius-sm); flex: none; align-self: start; background: var(--accent-quiet); color: var(--accent); }
+    .wpt-card[data-ai] { border-color: var(--accent-border); background: linear-gradient(180deg, color-mix(in srgb, var(--accent-soft) 90%, var(--surface-overlay)), color-mix(in srgb, var(--bg-base) 96%, transparent)); }
+    .wpt-card[data-ai] .wpt-card__eyebrow { display: inline-flex; align-items: center; gap: 3px; }
 
     /* Battle toast */
     .toast { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); z-index: 40; display: flex; align-items: center; gap: var(--space-6); padding: var(--space-6) var(--space-7); border-radius: var(--radius-md); background: var(--surface-overlay); border: 1px solid var(--accent-border); box-shadow: var(--shadow-lg), var(--glow-accent); backdrop-filter: blur(var(--blur-md, 14px)); animation: pw-toast-in var(--dur-base) var(--ease-out); }
@@ -992,6 +995,18 @@
     }
     pairs.sort((a, b) => activeBattleCandidateScore({ priority: b.priority, gap: b.scoreGap }) - activeBattleCandidateScore({ priority: a.priority, gap: a.scoreGap }) || a.priority - b.priority || a.scoreGap - b.scoreGap);
     return pairs.slice(0, 4).map(({ priority, scoreGap, ...pair }) => pair);
+  }
+  function shouldShowPartySender(message = {}, previousMessage = null, myId = "") {
+    if (!message || message.system) return false;
+    if (message.userId && message.userId === myId) return false;
+    const senderKey = (entry = {}) => {
+      if (!entry || entry.system) return "";
+      if (entry.userId) return `id:${entry.userId}`;
+      const name = String(entry.name || "").trim();
+      return name ? `name:${name}` : "";
+    };
+    const current = senderKey(message);
+    return !current || current !== senderKey(previousMessage);
   }
   function buildActiveInsights(options) {
     options = options || {};
@@ -3308,6 +3323,8 @@
     const [partyToasts, setPartyToasts] = React.useState([]);
     const [partyUnread, setPartyUnread] = React.useState(0);
     const partyToastTimers = React.useRef({});
+    const [aiInsightToasts, setAiInsightToasts] = React.useState([]);
+    const aiInsightToastTimers = React.useRef({});
     const [partyIdentity, setPartyIdentity] = React.useState(null);
     const [partyRoom, setPartyRoom] = React.useState(null);
     const [partyMembers, setPartyMembers] = React.useState([]);
@@ -3351,6 +3368,7 @@
       clearTimeout(customChromeTimerRef.current);
       clearTimeout(partyTypingStopTimerRef.current);
       Object.values(partyTypingTimers.current).forEach(clearTimeout);
+      Object.values(aiInsightToastTimers.current).forEach(clearTimeout);
     }, []);
     // Clear the unread badge + queued toasts whenever the tray is fully visible.
     React.useEffect(() => {
@@ -3369,6 +3387,17 @@
       setPartyToasts((list) => [...list.filter((toast) => toast.id !== id), { id, name: message.name || "Apexline fan", text: message.text }].slice(-3));
       clearTimeout(partyToastTimers.current[id]);
       partyToastTimers.current[id] = setTimeout(() => dismissPartyToast(id), 6500);
+    }
+    function dismissAiInsightToast(id) {
+      clearTimeout(aiInsightToastTimers.current[id]);
+      delete aiInsightToastTimers.current[id];
+      setAiInsightToasts((list) => list.filter((toast) => toast.id !== id));
+    }
+    function pushAiInsightToast(card) {
+      const id = `${card.capturedAtMs || ""}:${card.title}`;
+      setAiInsightToasts((list) => [...list.filter((toast) => toast.id !== id), { id, kind: card.kind, title: card.title, body: card.body }].slice(-2));
+      clearTimeout(aiInsightToastTimers.current[id]);
+      aiInsightToastTimers.current[id] = setTimeout(() => dismissAiInsightToast(id), 8500);
     }
     function openPartyTray() {
       setPartyTrayOpen(true);
@@ -4771,11 +4800,13 @@
           autoAiBackoffRef.current = { failures: 0, untilMs: 0 };
           const card = normalizeAutoAiInsight(answer, { mode: current.mode, capturedAtMs: current.capturedAtMs, replayElapsedSeconds: current.replay?.elapsedSeconds });
           if (!card) return;
+          const alreadySeen = aiInsightRecentRef.current.some((item) => item.title === card.title && item.body === card.body);
           aiInsightRecentRef.current = [...aiInsightRecentRef.current, { title: card.title, body: card.body }].slice(-AI_INSIGHT_RECENT_LIMIT);
           setAutoAiInsights((items) => {
             const duplicate = items.some((item) => item.title === card.title && item.body === card.body);
             return duplicate ? items : [card, ...items].slice(0, 2);
           });
+          if (!alreadySeen) pushAiInsightToast(card);
         } catch (error) {
           const failures = autoAiBackoffRef.current.failures + 1;
           const backoffMs = AI_INSIGHT_INTERVAL_MS * Math.min(2 ** (failures - 1), 8);
@@ -5557,15 +5588,17 @@
                   <div className="wpc__chat" ref={partyChatRef}>
                     <div className="wpc-sys"><span className="ic"><Icon name="radio" size={12} /></span> <b>Room {inviteCode || "ready"}</b> · {memberCount} watching</div>
                     {partyMessages.length ? partyMessages.map((message, i) => {
+                      const previousPartyMessage = partyMessages[i - 1];
                       const mine = Boolean(message.userId && message.userId === myId);
                       if (message.system) {
                         return <div className="wpc-sys" key={message.id || `sys-${i}`}><span className="ic"><Icon name="radio" size={12} /></span> {message.text}</div>;
                       }
+                      const showSender = shouldShowPartySender(message, previousPartyMessage, myId);
                       return (
                         <div className="wpc-msg" data-me={String(mine)} key={message.id || `${message.sentAt}:${i}`} style={{ "--ac": mine ? "var(--accent)" : partyAvatarColor(message.userId || message.name) }}>
                           {!mine && <span className="wpc-av" data-size="sm" style={{ "--ac": partyAvatarColor(message.userId || message.name) }}>{partyInitial(message.name)}</span>}
                           <span className="wpc-msg__b">
-                            {!mine && <span className="wpc-msg__name"><b>{message.name || "Apexline fan"}</b></span>}
+                            {showSender && <span className="wpc-msg__name"><b>{message.name || "Apexline fan"}</b></span>}
                             <span className="wpc-msg__bubble">{message.text}</span>
                           </span>
                         </div>
@@ -5596,9 +5629,21 @@
     }
 
     function renderPartyToasts() {
-      if (!partyToasts.length) return null;
+      if (!partyToasts.length && !aiInsightToasts.length) return null;
       return (
         <div className="wp-toasts">
+          {aiInsightToasts.map((toast) => (
+            <button type="button" className="wpt-card" data-ai="true" key={toast.id} onClick={() => { dismissAiInsightToast(toast.id); if (layout === "focus") setAiPopupOpen(true); }}>
+              <span className="wpt-card__icon" data-kind={toast.kind}><Icon name={toast.kind === "battle" ? "zap" : toast.kind === "strategy" ? "flag" : "chart"} size={16} /></span>
+              <span className="wpt-card__b">
+                <span className="wpt-card__top">
+                  <span className="wpt-card__name">{toast.title}</span>
+                  <span className="wpt-card__eyebrow"><Icon name="sparkles" size={10} /> AI Insight</span>
+                </span>
+                <span className="wpt-card__msg">{toast.body}</span>
+              </span>
+            </button>
+          ))}
           {partyToasts.map((toast) => (
             <button type="button" className="wpt-card" key={toast.id} onClick={() => { dismissPartyToast(toast.id); openPartyTray(); }}>
               <span className="wpc-av" data-size="md" style={{ "--ac": partyAvatarColor(toast.name) }}>{partyInitial(toast.name)}</span>

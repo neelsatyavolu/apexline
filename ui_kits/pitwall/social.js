@@ -78,6 +78,8 @@
         channel = realtime.channels.get(`watch:${room.id}`);
         channel.subscribe("chat", (msg) => emit({ type: "chat", message: msg.data }));
         channel.subscribe("sync", (msg) => emit({ type: "sync", message: msg.data }));
+        channel.subscribe("sync-request", (msg) => emit({ type: "sync-request", message: msg.data }));
+        channel.subscribe("typing", (msg) => emit({ type: "typing", message: msg.data }));
         channel.presence.enter({ userId: identity?.userId, name: identity?.displayName || "Apexline fan" });
         channel.presence.subscribe(() => channel.presence.get((_, members) => emit({ type: "presence", members: members || [] })));
         chatHistory().then((history) => {
@@ -123,6 +125,20 @@
       return message;
     }
 
+    function requestHostSync() {
+      if (!room?.id) return null;
+      const message = { requesterId: identity?.userId, sentAt: Date.now() };
+      channel?.publish?.("sync-request", message);
+      return message;
+    }
+
+    function publishTyping(typing) {
+      if (!room?.id) return null;
+      const message = { userId: identity?.userId, name: identity?.displayName || "Apexline fan", typing: Boolean(typing), sentAt: Date.now() };
+      channel?.publish?.("typing", message);
+      return message;
+    }
+
     function leaveRoom() {
       channel?.presence?.leave?.();
       realtime?.close?.();
@@ -141,6 +157,8 @@
       chatHistory,
       sendChat,
       publishHostSync,
+      requestHostSync,
+      publishTyping,
       leaveRoom,
       contentFingerprint,
       getState: () => ({ identity, room }),

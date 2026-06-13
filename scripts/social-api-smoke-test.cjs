@@ -99,8 +99,11 @@ function invoke(handler, payload) {
 
     const first = await invoke(handler, { action: "bootstrap", userId: "user-a", profile: { name: "First fan" } });
     const second = await invoke(handler, { action: "bootstrap", userId: "user-b", profile: { name: "Second fan" } });
+    const renamed = await invoke(handler, { action: "bootstrap", userId: "user-a", profile: { name: "Renamed fan" } });
     const added = await invoke(handler, { action: "addFriend", userId: first.body.userId, friendCode: second.body.friendCode });
 
+    assert.equal(renamed.body.displayName, "Renamed fan", "Bootstrap should refresh an existing user's Settings display name");
+    assert.equal(db.users.get(first.body.userId)?.displayName, "Renamed fan", "Persisted social identity should keep the latest Settings display name");
     assert.equal(added.body.ok, true, "Adding a friend by persisted friend code should succeed");
 
     globalThis.__APEXLINE_SOCIAL_MEMORY__.users.clear();

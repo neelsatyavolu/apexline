@@ -46,12 +46,14 @@
       return !expected || !incoming || expected === incoming;
     },
     replayDecision(message = {}, state = {}) {
+      const sentAt = finite(message.sentAt, Date.now());
+      const elapsed = message.playing === false ? 0 : Math.max(0, (Date.now() - sentAt) / 1000);
       return {
         mode: "replay",
-        masterTime: Math.max(0, finite(message.masterTime, finite(state.masterTime, 0))),
+        masterTime: Math.max(0, finite(message.masterTime, finite(state.masterTime, 0)) + elapsed),
         playing: message.playing !== false,
         sequence: finite(message.sequence, 0),
-        sentAt: finite(message.sentAt, Date.now()),
+        sentAt,
       };
     },
     liveDecision(message = {}, state = {}) {

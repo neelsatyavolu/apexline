@@ -60,12 +60,13 @@ async function bootstrap(body) {
   await ensureSchema(db);
   const displayName = clean(body.profile?.name || body.displayName || "Apexline fan", 80) || "Apexline fan";
   let userId = clean(body.userId || body.localUserId, 80);
+  let code = "";
   if (db && userId) {
     const existing = await db`SELECT id, friend_code, display_name FROM apexline_users WHERE id = ${userId}`;
-    if (existing.rows[0]) return { userId: existing.rows[0].id, friendCode: existing.rows[0].friend_code, displayName: existing.rows[0].display_name };
+    if (existing.rows[0]) code = existing.rows[0].friend_code;
   }
-  if (!userId || !memory.users.has(userId)) userId = randomUUID();
-  let code = memory.users.get(userId)?.friendCode || friendCode();
+  if (!userId || (!db && !memory.users.has(userId))) userId = randomUUID();
+  code = code || memory.users.get(userId)?.friendCode || friendCode();
   if (db) {
     for (let i = 0; i < 4; i += 1) {
       try {

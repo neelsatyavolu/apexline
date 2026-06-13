@@ -564,6 +564,9 @@
     .wpc-av[data-size="md"] { width: 30px; height: 30px; font-size: 12px; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ac, var(--accent)) 80%, transparent); }
     .wpc__meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
     .wpc__sync { display: inline-flex; align-items: center; gap: var(--space-4); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; letter-spacing: 0.06em; color: var(--success); }
+    .wpc__sync[data-tone="ok"] { color: var(--success); }
+    .wpc__sync[data-tone="warn"] { color: var(--warning); }
+    .wpc__sync[data-tone="bad"] { color: var(--live); }
     .wpc__sync[data-tone="off"] { color: var(--text-tertiary); }
     .wpc__role { font-size: var(--text-2xs); color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .wpc__role b { color: var(--text-secondary); }
@@ -588,6 +591,7 @@
     .wpc-msg[data-me="true"] { margin-left: auto; flex-direction: row-reverse; }
     .wpc-msg[data-me="true"] .wpc-msg__b { align-items: flex-end; }
     .wpc-msg[data-me="true"] .wpc-msg__bubble { color: var(--text-primary); background: var(--accent-quiet); border-color: var(--accent-border); border-radius: var(--radius-md); border-top-right-radius: var(--radius-xs); }
+    .wpc__typing { min-height: 18px; padding: 0 var(--space-6) var(--space-3); color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 700; }
     .wpc-sys { align-self: center; display: inline-flex; align-items: center; gap: var(--space-4); font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--text-tertiary); background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); border-radius: var(--radius-pill); padding: 3px var(--space-5); }
     .wpc-sys b { color: var(--text-secondary); font-weight: 700; }
     .wpc-sys .ic { color: var(--success); display: inline-grid; place-items: center; }
@@ -2462,7 +2466,7 @@
     return !target?.closest?.("button, input, select, textarea, a, [role='button'], .pane__controls, .pane__replaybar, .sync-overlay, .pane__top, .pane__playerstatus");
   }
 
-  function PitWallStreamPlayer({ source, muted, volumeLevel = 100, playbackProfile = "main", videoQuality = "medium", onAudioFocus, onReady, onPlaybackState, sync, replaySync, onReplayToggle }) {
+  function PitWallStreamPlayer({ source, muted, volumeLevel = 100, playbackProfile = "main", videoQuality = "medium", onAudioFocus, onReady, onPlaybackState, sync, replaySync, onReplayToggle, playbackLocked = false }) {
     const videoRef = React.useRef(null);
     const replayPlaying = replaySync?.playing !== false;
     const replayPlayingRef = React.useRef(replayPlaying);
@@ -2669,6 +2673,7 @@
     function handleSurfaceClick(event) {
       const video = event.currentTarget;
       event.stopPropagation();
+      if (playbackLocked) return;
       if (replaySync?.mode === "replay") {
         onReplayToggle?.();
         return;
@@ -2900,7 +2905,7 @@
     hasCurrentLiveSession, replayControls, sessionLibrary, onLoadPastSession, onConnectF1Tv,
     replaySync, onReplayToggle, onReplaySeek, onSurfaceToggle, onSyncAll, onPlayerReady, streamStatus, resolving,
     syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset, timingRows, sessionKind, videoQuality,
-    broadcastTickerRows = 3, onTickerRowsChange, lockAspect = false, onLockAspectToggle, hideBuiltinTicker = false, feedTickerOn = false, onToggleFeedTicker }) {
+    broadcastTickerRows = 3, onTickerRowsChange, lockAspect = false, onLockAspectToggle, hideBuiltinTicker = false, feedTickerOn = false, onToggleFeedTicker, playbackLocked = false }) {
     const paneRef = React.useRef(null);
     const [tickerCanFitTop15, setTickerCanFitTop15] = React.useState(false);
     const [tickerCanFitTop10, setTickerCanFitTop10] = React.useState(false);
@@ -2965,12 +2970,12 @@
     return (
       <div ref={paneRef} className="pane pane--bc" data-focus={focus} data-expanded={expanded} data-visible={String(visible)} data-zone={zone} data-lockar={String(Boolean(lockAspect))} data-noticker={String(Boolean(hideBuiltinTicker))} data-replay={String(replaySync?.mode === "replay")} style={paneStyle}
         onClick={(event) => {
-          if (!descriptor || !isPaneSurfaceClickTarget(event.target)) return;
+          if (playbackLocked || !descriptor || !isPaneSurfaceClickTarget(event.target)) return;
           onSurfaceToggle?.();
         }}>
         <div className="pane__feed" />
         <div className="pane__bcwash" />
-        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} videoQuality={videoQuality} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle}
+        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} videoQuality={videoQuality} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle} playbackLocked={playbackLocked}
           onReady={(video) => onPlayerReady?.(syncKey, video)} sync={{ targetLatency: syncTarget, onMetrics: (metrics) => onSyncMetrics?.(syncKey, metrics) }} />}
         <div className="pane__controls">
           <VolumeControl active={audioActive} value={audioVolume} onFocus={onAudioFocus} onChange={onAudioVolumeChange} />
@@ -2983,13 +2988,13 @@
           onAdjust={(delta) => onSyncAdjust?.(syncKey, delta)} onReset={() => onSyncReset?.(syncKey)} />
         {descriptor && replaySync?.mode === "replay" && (
           <div className="pane__replaybar">
-            <button className="pane__replayplay" type="button" onClick={onReplayToggle} data-playing={String(Boolean(replaySync.playing))}
+            <button className="pane__replayplay" type="button" onClick={onReplayToggle} data-playing={String(Boolean(replaySync.playing))} disabled={playbackLocked}
               aria-label={replaySync.playing ? "Pause replay" : "Play replay"} title={replaySync.playing ? "Pause" : "Play"}>
               <Icon name={replaySync.playing ? "pause" : "play"} size={15} />
             </button>
             <div className="pane__replaytrack">
               <span className="pane__replayfill" style={{ width: `${replayProgressPct(replaySync)}%` }} />
-              <input aria-label="Replay position" type="range" min="0" max={Math.max(1, Math.round(replaySync.duration || 1))} value={Math.round(replaySync.masterTime || 0)}
+              <input aria-label="Replay position" disabled={playbackLocked} type="range" min="0" max={Math.max(1, Math.round(replaySync.duration || 1))} value={Math.round(replaySync.masterTime || 0)}
                 onChange={(e) => onReplaySeek?.(Number(e.target.value))} />
             </div>
             <span className="pane__replaytime">{formatReplayTime(replaySync.masterTime)} / {formatReplayTime(replaySync.duration)}</span>
@@ -3111,7 +3116,7 @@
   function OnboardPane({ feed, code, focus, telemetry, channel, streamUrl, audioActive, audioVolume, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand,
     visible = true, style, zone, driverOptions = [], onDriverChange,
     replaySync, onReplayToggle, onReplaySeek, onSurfaceToggle, onPlayerReady, syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset,
-    timingRows = [], sessionKind = "", videoQuality, lockAspect = false, onLockAspectToggle, feedTickerOn = false, onToggleFeedTicker }) {
+    timingRows = [], sessionKind = "", videoQuality, lockAspect = false, onLockAspectToggle, feedTickerOn = false, onToggleFeedTicker, playbackLocked = false }) {
     const [telemetryOn, setTelemetryOn] = React.useState(Boolean(telemetry));
     const [localLockAspect, setLocalLockAspect] = React.useState(false);
     const [streamReady, setStreamReady] = React.useState(false);
@@ -3130,12 +3135,12 @@
         data-telemetry={String(telemetryOn)} data-replay={String(replaySync?.mode === "replay")} data-lockar={String(effectiveLockAspect)}
         data-streaming={String(streaming)} data-stream-ready={String(!streaming || streamReady)} style={style}
         onClick={(event) => {
-          if (!descriptor || !isPaneSurfaceClickTarget(event.target)) return;
+          if (playbackLocked || !descriptor || !isPaneSurfaceClickTarget(event.target)) return;
           onSurfaceToggle?.();
         }}>
         <div className="pane__feed" />
         <div className="pane__scan" />
-        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} playbackProfile="onboard" videoQuality={videoQuality} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle}
+        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} playbackProfile="onboard" videoQuality={videoQuality} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle} playbackLocked={playbackLocked}
           onReady={(video) => onPlayerReady?.(syncKey, video)} onPlaybackState={setStreamReady}
           sync={{ targetLatency: syncTarget, onMetrics: (metrics) => onSyncMetrics?.(syncKey, metrics) }} />}
         <div className="pane__controls">
@@ -3156,13 +3161,13 @@
           onAdjust={(delta) => onSyncAdjust?.(syncKey, delta)} onReset={() => onSyncReset?.(syncKey)} />
         {descriptor && replaySync?.mode === "replay" && (
           <div className="pane__replaybar">
-            <button className="pane__replayplay" type="button" onClick={onReplayToggle} data-playing={String(Boolean(replaySync.playing))}
+            <button className="pane__replayplay" type="button" onClick={onReplayToggle} data-playing={String(Boolean(replaySync.playing))} disabled={playbackLocked}
               aria-label={replaySync.playing ? "Pause replay" : "Play replay"} title={replaySync.playing ? "Pause" : "Play"}>
               <Icon name={replaySync.playing ? "pause" : "play"} size={15} />
             </button>
             <div className="pane__replaytrack">
               <span className="pane__replayfill" style={{ width: `${replayProgressPct(replaySync)}%` }} />
-              <input aria-label="Replay position" type="range" min="0" max={Math.max(1, Math.round(replaySync.duration || 1))} value={Math.round(replaySync.masterTime || 0)}
+              <input aria-label="Replay position" disabled={playbackLocked} type="range" min="0" max={Math.max(1, Math.round(replaySync.duration || 1))} value={Math.round(replaySync.masterTime || 0)}
                 onChange={(e) => onReplaySeek?.(Number(e.target.value))} />
             </div>
             <span className="pane__replaytime">{formatReplayTime(replaySync.masterTime)} / {formatReplayTime(replaySync.duration)}</span>
@@ -3307,11 +3312,13 @@
     const [partyRoom, setPartyRoom] = React.useState(null);
     const [partyMembers, setPartyMembers] = React.useState([]);
     const [partyMessages, setPartyMessages] = React.useState([]);
+    const [partyTyping, setPartyTyping] = React.useState({});
     const [partyDraft, setPartyDraft] = React.useState("");
     const [partyJoinCode, setPartyJoinCode] = React.useState("");
     const [partyStatus, setPartyStatus] = React.useState("Watch Party ready");
     const [partySyncRole, setPartySyncRole] = React.useState("host");
     const [partyLastSequence, setPartyLastSequence] = React.useState(0);
+    const [partyLastHostSync, setPartyLastHostSync] = React.useState(null);
     // Mirrors so the realtime chat handler (inside a long-lived effect) reads
     // the live tray/identity state without re-subscribing on every change.
     const partyTrayOpenRef = React.useRef(partyTrayOpen);
@@ -3321,6 +3328,10 @@
     const partyLastSequenceRef = React.useRef(partyLastSequence);
     const partyMemberCountRef = React.useRef(0);
     const partyChatRef = React.useRef(null);
+    const partyTypingTimers = React.useRef({});
+    const partyLocalTypingRef = React.useRef(false);
+    const partyTypingStopTimerRef = React.useRef(null);
+    const partyTypingLastSentRef = React.useRef(0);
     // Tracks message ids already in the log so a message echoed back over the
     // realtime channel (Ably echoes the sender's own publishes) isn't appended
     // or toasted twice.
@@ -3336,7 +3347,11 @@
     React.useEffect(() => { partyIdentityRef.current = partyIdentity; }, [partyIdentity]);
     React.useEffect(() => { partySyncRoleRef.current = partySyncRole; }, [partySyncRole]);
     React.useEffect(() => { partyLastSequenceRef.current = partyLastSequence; }, [partyLastSequence]);
-    React.useEffect(() => () => clearTimeout(customChromeTimerRef.current), []);
+    React.useEffect(() => () => {
+      clearTimeout(customChromeTimerRef.current);
+      clearTimeout(partyTypingStopTimerRef.current);
+      Object.values(partyTypingTimers.current).forEach(clearTimeout);
+    }, []);
     // Clear the unread badge + queued toasts whenever the tray is fully visible.
     React.useEffect(() => {
       if (partyTrayOpen && !partyTrayMinimized) {
@@ -3545,6 +3560,8 @@
         if (event.type === "room") {
           setPartyRoom(event.room);
           partyMemberCountRef.current = 0;
+          setPartyTyping({});
+          setPartyLastHostSync(null);
           if (event.room) setPartyStatus(`Room ${event.room.code || event.room.id} ready`);
         }
         if (event.type === "presence") {
@@ -3555,6 +3572,33 @@
           setPartyMembers(members);
           if (partySyncRoleRef.current === "host" && nextCount > Math.max(previousCount, 1)) {
             publishHostSync();
+          }
+        }
+        if (event.type === "sync-request" && partySyncRoleRef.current === "host") {
+          publishHostSync();
+        }
+        if (event.type === "typing") {
+          const message = event.message || {};
+          const userId = message.userId || "";
+          if (!userId || userId === partyIdentityRef.current?.userId) return;
+          clearTimeout(partyTypingTimers.current[userId]);
+          if (message.typing === false) {
+            delete partyTypingTimers.current[userId];
+            setPartyTyping((typing) => {
+              const next = { ...typing };
+              delete next[userId];
+              return next;
+            });
+          } else {
+            setPartyTyping((typing) => ({ ...typing, [userId]: { userId, name: message.name || "Apexline fan", sentAt: message.sentAt || Date.now() } }));
+            partyTypingTimers.current[userId] = setTimeout(() => {
+              delete partyTypingTimers.current[userId];
+              setPartyTyping((typing) => {
+                const next = { ...typing };
+                delete next[userId];
+                return next;
+              });
+            }, 3500);
           }
         }
         if (event.type === "chat") {
@@ -3691,6 +3735,7 @@
         const room = await window.PW_SOCIAL?.joinRoom?.(code);
         setPartyRoom(room || null);
         setPartyStatus(room?.code ? `Joined room ${room.code}` : "Joined Watch Party");
+        window.PW_SOCIAL?.requestHostSync?.();
       } catch (error) {
         setPartyStatus(cleanPitWallError(error, "Could not join Watch Party"));
       }
@@ -3699,9 +3744,33 @@
     function sendPartyChat() {
       const text = partyDraft.trim();
       if (!text) return;
+      publishPartyTyping(false);
       const sent = window.PW_SOCIAL?.sendChat?.(text);
       if (sent) setPartyDraft("");
       else setPartyStatus("Join a Watch Party before sending chat.");
+    }
+
+    function publishPartyTyping(typing) {
+      if (!partyRoom) return;
+      const now = Date.now();
+      if (typing) {
+        if (partyLocalTypingRef.current && now - partyTypingLastSentRef.current < 1400) return;
+        partyLocalTypingRef.current = true;
+        partyTypingLastSentRef.current = now;
+        window.PW_SOCIAL?.publishTyping?.(true);
+        clearTimeout(partyTypingStopTimerRef.current);
+        partyTypingStopTimerRef.current = setTimeout(() => publishPartyTyping(false), 2600);
+        return;
+      }
+      if (!partyLocalTypingRef.current) return;
+      partyLocalTypingRef.current = false;
+      clearTimeout(partyTypingStopTimerRef.current);
+      window.PW_SOCIAL?.publishTyping?.(false);
+    }
+
+    function updatePartyDraft(value) {
+      setPartyDraft(value);
+      publishPartyTyping(Boolean(value.trim()));
     }
 
     function publishHostSync() {
@@ -3717,6 +3786,7 @@
       if (message?.sequence) {
         partyLastSequenceRef.current = message.sequence;
         setPartyLastSequence(message.sequence);
+        setPartyLastHostSync(message);
         setPartyStatus("Host sync sent");
       }
       return message;
@@ -3735,6 +3805,7 @@
       const nextSequence = Number(message.sequence || partyLastSequenceRef.current);
       partyLastSequenceRef.current = nextSequence;
       setPartyLastSequence(nextSequence);
+      setPartyLastHostSync(message);
       if (message.mode === "replay") {
         const decision = window.PW_SYNC.partySync.replayDecision(message, { masterTime: replaySync.masterTime });
         seekReplayPlayers(decision.masterTime);
@@ -3747,6 +3818,32 @@
       applyPartyPlaybackState(decision.playing);
       setSyncSettings((settings) => ({ ...settings, worldTarget: clampSyncLatency(decision.targetLatency) }));
       setPartyStatus("Synced to host live latency");
+    }
+
+    function projectedPartyReplayTime(message = {}) {
+      const sentAt = Number(message.sentAt || Date.now());
+      const elapsed = message.playing === false || !Number.isFinite(sentAt) ? 0 : Math.max(0, (Date.now() - sentAt) / 1000);
+      return Math.max(0, Number(message.masterTime || 0) + elapsed);
+    }
+
+    function computePartySyncState() {
+      if (!partyRoom) return { label: "Offline", tone: "off" };
+      if (partySyncRole === "host") return { label: "In sync", tone: "ok" };
+      if (!partyLastHostSync) return { label: "Out of sync", tone: "bad" };
+      if (partyLastHostSync.mode === "replay") {
+        const localElapsed = replayMasterReading().worldElapsed;
+        const drift = Math.abs(Number(localElapsed || 0) - projectedPartyReplayTime(partyLastHostSync));
+        if (drift > 2) return { label: "Out of sync", tone: "bad", drift };
+        if (drift > 0.6) return { label: "Catching up", tone: "warn", drift };
+        return { label: "In sync", tone: "ok", drift };
+      }
+      const liveLatency = Number(syncMetrics.WORLD?.liveLatency);
+      const targetLatency = Number(partyLastHostSync.targetLatency);
+      if (!Number.isFinite(liveLatency) || !Number.isFinite(targetLatency)) return { label: "Catching up", tone: "warn" };
+      const drift = Math.abs(liveLatency - targetLatency);
+      if (drift > 2) return { label: "Out of sync", tone: "bad", drift };
+      if (drift > 0.6) return { label: "Catching up", tone: "warn", drift };
+      return { label: "In sync", tone: "ok", drift };
     }
 
     function startPartyTrayDrag(event) {
@@ -4578,6 +4675,7 @@
     const hasActiveLiveStream = streamDescriptor(streamSources.WORLD)?.playbackMode === "live"
       || resolvedF1TvContent?.playbackMode === "live";
     const hasCurrentLiveSession = Boolean(D.race?.lap || currentLiveSession || hasActiveLiveStream);
+    const partyPlaybackLocked = Boolean(partyRoom && partySyncRole !== "host");
     const sessionStatusLabel = hasCurrentLiveSession && D.race?.lap ? `LAP ${D.race.lap} / ${D.race.laps || "—"}` : "";
     const timingLap = telemetryNumber(sessionClock?.lapCount?.lap) ?? telemetryNumber(D.race?.lap);
     const timingLaps = telemetryNumber(sessionClock?.lapCount?.laps) ?? telemetryNumber(D.race?.laps);
@@ -5127,6 +5225,7 @@
           onReplayToggle={toggleReplayPlayback}
           onReplaySeek={seekReplayPlayers}
           onSurfaceToggle={() => togglePlayerSurfacePlayback(key)}
+          playbackLocked={partyPlaybackLocked}
           onSyncAll={() => syncReplayPlayers(replaySync.masterTime)}
           onPlayerReady={registerPlayer}
           syncKey={key}
@@ -5376,6 +5475,12 @@
       const data = (member && member.data) || member || {};
       return { userId: data.userId || member?.clientId || "", name: data.name || member?.name || member?.clientId || "Fan" };
     }
+    function renderPartyTypingIndicator() {
+      const typing = Object.values(partyTyping).filter((entry) => entry?.name).slice(0, 2);
+      if (!typing.length) return null;
+      const names = typing.map((entry) => entry.name).join(", ");
+      return <div className="wpc__typing">{names}{typing.length === 1 ? " is" : " are"} typing...</div>;
+    }
 
     // Direction C — "Glass Minimal": sync condenses to one header pill + an
     // overlapping avatar stack; sync events fold into the chat as ambient lines.
@@ -5387,6 +5492,8 @@
       const memberCount = Math.max(present.length, partyRoom ? 1 : 0);
       const connected = Boolean(partyRoom);
       const isHost = partySyncRole === "host";
+      const partySyncState = computePartySyncState();
+      const partySyncLabel = connected ? `${partySyncState.label} · ${memberCount}` : "Offline";
       const inviteCode = partyRoom?.code || partyIdentity?.friendCode || "";
       const raceName = D.race?.name || partyRoom?.label || "Live session";
       const lapText = D.race?.lap ? `Lap ${D.race.lap}${D.race?.laps ? ` / ${D.race.laps}` : ""}` : "Live";
@@ -5399,9 +5506,9 @@
               ))}
             </span>
             <span className="wpc__meta">
-              <span className="wpc__sync" data-tone={connected ? undefined : "off"}>
+              <span className="wpc__sync" data-tone={connected ? partySyncState.tone : "off"}>
                 {connected && <span className="wpc__dot" />}
-                {connected ? `In sync · ${memberCount}` : "Offline"}
+                {partySyncLabel}
               </span>
               <span className="wpc__role">{connected ? (<><b>{isHost ? "You're hosting" : "Synced as guest"}</b>{inviteCode ? ` · ${inviteCode}` : ""}</>) : "Create or join a party to watch together"}</span>
             </span>
@@ -5417,7 +5524,8 @@
                 {connected && (
                   <span className="wpc__ctxact">
                     {isHost && <button type="button" className="wpc__resync" onClick={publishHostSync}><Icon name="timer" size={14} /> Resync</button>}
-                    <button type="button" className="wpc__resync wpc__leave" onClick={() => { window.PW_SOCIAL?.leaveRoom?.(); setPartyRoom(null); setPartyMembers([]); setPartyMessages([]); }}>Leave</button>
+                    {!isHost && <button type="button" className="wpc__resync" onClick={() => window.PW_SOCIAL?.requestHostSync?.()}><Icon name="timer" size={14} /> Sync To Host</button>}
+                    <button type="button" className="wpc__resync wpc__leave" onClick={() => { publishPartyTyping(false); window.PW_SOCIAL?.leaveRoom?.(); setPartyRoom(null); setPartyMembers([]); setPartyMessages([]); setPartyTyping({}); setPartyLastHostSync(null); }}>Leave</button>
                   </span>
                 )}
               </div>
@@ -5441,9 +5549,10 @@
                       );
                     }) : <div className="wpc__empty">No messages yet — say something to the party.</div>}
                   </div>
+                  {renderPartyTypingIndicator()}
                   <div className="wpc__compose">
                     <button type="button" className="wpc__plus" aria-label="Copy invite code" onClick={() => { const code = partyRoom?.code || partyIdentity?.friendCode; if (code) { navigator.clipboard?.writeText?.(code)?.catch?.(() => {}); setPartyStatus(`Invite code ${code} copied`); } }} disabled={!inviteCode}><Icon name="plus" size={14} /></button>
-                    <input className="party-input" value={partyDraft} placeholder="Message the party…" onChange={(e) => setPartyDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && partyDraft.trim()) sendPartyChat(); }} />
+                    <input className="party-input" value={partyDraft} placeholder="Message the party…" onChange={(e) => updatePartyDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && partyDraft.trim()) sendPartyChat(); }} />
                     <IconButton variant="accent" label="Send party chat" onClick={sendPartyChat} disabled={!partyDraft.trim()}><Icon name="chevronRight" size={16} /></IconButton>
                   </div>
                 </>

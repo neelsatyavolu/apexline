@@ -446,6 +446,22 @@ assert.match(liveRacingSource, /applyRemotePartySync/, "Live Racing should apply
 assert.match(liveRacingSource, /partySyncRoleRef[\s\S]*applyRemotePartySync[\s\S]*partySyncRoleRef\.current === "host"/, "Watch Party guests should not ignore sync events through a stale host-role closure");
 assert.match(liveRacingSource, /hostPartyPlaybackSnapshot[\s\S]*video\.paused[\s\S]*playing/, "Watch Party host sync should publish the actual player paused or playing state");
 assert.match(liveRacingSource, /event\.type === "presence"[\s\S]*partyMemberCountRef[\s\S]*publishHostSync\(\)/, "Watch Party host should auto-sync guests when the presence count increases");
+assert.match(socialClientSource, /channel\.subscribe\("sync-request"[\s\S]*type: "sync-request"/, "Watch Party realtime client should listen for explicit host sync requests");
+assert.match(socialClientSource, /channel\.subscribe\("typing"[\s\S]*type: "typing"/, "Watch Party realtime client should listen for typing indicators");
+assert.match(socialClientSource, /function requestHostSync[\s\S]*channel\?\.publish\?\.\("sync-request"/, "Watch Party guests should be able to request the host's current sync state after joining");
+assert.match(socialClientSource, /function publishTyping[\s\S]*channel\?\.publish\?\.\("typing"/, "Watch Party users should publish ephemeral typing state");
+assert.match(liveRacingSource, /joinWatchParty[\s\S]*requestHostSync\?\.\(\)/, "Watch Party guests should request a fresh host sync immediately after joining");
+assert.match(liveRacingSource, /event\.type === "sync-request"[\s\S]*partySyncRoleRef\.current === "host"[\s\S]*publishHostSync\(\)/, "Watch Party hosts should answer explicit guest sync requests with the current playback snapshot");
+assert.match(liveRacingSource, /event\.type === "typing"[\s\S]*setPartyTyping/, "Watch Party should render remote typing indicators from realtime events");
+assert.match(liveRacingSource, /function publishPartyTyping[\s\S]*publishTyping/, "Watch Party should publish typing state from the chat composer");
+assert.match(liveRacingSource, /renderPartyTypingIndicator[\s\S]*typing/, "Watch Party should show who is typing in the party tray");
+assert.match(liveRacingSource, /const partyPlaybackLocked = Boolean\(partyRoom && partySyncRole !== "host"\)/, "Watch Party guests should enter a host-authoritative playback lock");
+assert.match(liveRacingSource, /const partySyncState = computePartySyncState[\s\S]*partySyncLabel/, "Watch Party sync pill should use drift-aware state instead of a fixed label");
+assert.match(liveRacingSource, /function computePartySyncState[\s\S]*Out of sync[\s\S]*Catching up[\s\S]*In sync/, "Watch Party sync status should distinguish drift states");
+assert.match(liveRacingSource, /!isHost && <button type="button" className="wpc__resync" onClick=\{\(\) => window\.PW_SOCIAL\?\.requestHostSync\?\.\(\)\}/, "Watch Party guests should get a Sync To Host button");
+assert.match(liveRacingSource, /function handleSurfaceClick\(event\)[\s\S]*if \(playbackLocked\) return;/, "Watch Party guest video clicks should not toggle playback");
+assert.match(liveRacingSource, /disabled=\{playbackLocked\}[\s\S]*aria-label=\{replaySync\.playing \? "Pause replay" : "Play replay"\}/, "Watch Party guest replay play/pause controls should be disabled");
+assert.match(liveRacingSource, /aria-label="Replay position"[\s\S]*disabled=\{playbackLocked\}/, "Watch Party guest replay scrubbers should be disabled");
 const partyDragSandbox = {
   partyTrayPosition: { x: 320, y: 80 },
   partyDragRef: { current: null },
@@ -484,6 +500,7 @@ assert.equal(partySync.shouldApply({ sequence: 3, contentFingerprint: "race:1" }
 assert.equal(partySync.shouldApply({ sequence: 2, contentFingerprint: "race:1" }, { lastSequence: 3, contentFingerprint: "race:1" }), false, "Watch party sync should ignore stale host state");
 assert.equal(partySync.shouldApply({ sequence: 4, contentFingerprint: "race:2" }, { lastSequence: 3, contentFingerprint: "race:1" }), false, "Watch party sync should reject mismatched content");
 assert.equal(partySync.replayDecision({ masterTime: 42, playing: false }, { contentFingerprint: "race:1" }).playing, false, "Watch party replay sync should preserve host pause state");
+assert.ok(Math.abs(partySync.replayDecision({ masterTime: 42, playing: true, sentAt: Date.now() - 3000 }, {}).masterTime - 45) < 0.25, "Watch party replay sync should project the host clock forward while playing");
 assert.equal(partySync.liveDecision({ targetLatency: 8, playing: false }, { liveLatency: 9 }).playing, false, "Watch party live sync should preserve host pause state");
 assert.equal(partySync.liveDecision({ targetLatency: 8 }, { liveLatency: 9 }).playbackRate, 1.2, "Watch party live sync should reuse latency catch-up behavior");
 

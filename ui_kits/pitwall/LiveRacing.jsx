@@ -69,6 +69,14 @@
     .live__syncwrap { position: relative; display: inline-flex; }
     .sync-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 80; width: min(620px, calc(100vw - 28px)); display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4); border-radius: var(--radius-sm); border: 1px solid var(--border-default); background: rgba(8,11,17,0.94); box-shadow: var(--shadow-lg); backdrop-filter: blur(12px); }
     .sync-menu__row { display: flex; align-items: center; gap: var(--space-4); }
+    .sync-menu__live { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-4); padding: var(--space-4); border-radius: var(--radius-sm); border: 1px solid var(--border-default); background: var(--bg-sunken); }
+    .sync-menu__livecopy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .sync-menu__livecopy b { color: var(--text-primary); font-size: var(--text-sm); line-height: 1.1; }
+    .sync-menu__livecopy span { color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sync-menu__live[data-tone="behind"] { border-color: rgba(255, 184, 77, 0.42); }
+    .sync-menu__live[data-tone="ahead"] { border-color: rgba(95, 196, 255, 0.38); }
+    .sync-menu__live[data-tone="ok"] { border-color: rgba(70, 211, 137, 0.38); }
+    .sync-menu__rate { font-family: var(--font-mono); color: var(--text-primary); font-size: var(--text-sm); font-weight: 800; white-space: nowrap; }
     .sync-menu__timing { display: grid; grid-template-columns: repeat(5, minmax(92px, 1fr)); gap: var(--space-3); }
     .sync-menu__btn { appearance: none; -webkit-appearance: none; min-height: 30px; padding: 0 var(--space-4); border-radius: var(--radius-pill); border: 1px solid transparent; background: transparent; color: var(--text-secondary); font-family: var(--font-sans); font-size: var(--text-sm); font-weight: 800; white-space: nowrap; cursor: pointer; transition-property: color, background-color, border-color, transform; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
     .sync-menu__btn:hover { color: var(--text-primary); background: var(--surface-hover); }
@@ -142,6 +150,7 @@
     .timing-driver__code { display: inline-grid; place-items: center; min-width: 42px; height: 24px; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--driver-color, var(--accent)); color: #061017; font-family: var(--font-display); font-size: var(--text-sm); font-weight: 900; letter-spacing: 0.02em; transition-property: background-color, color; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
     .timing-cell { font-family: var(--font-mono); font-size: 13px; font-weight: 800; white-space: nowrap; font-variant-numeric: tabular-nums; transition-property: color, background-color; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
     .timing-cell--pill { display: inline-flex; justify-content: center; min-width: 58px; padding: 4px 7px; border-radius: var(--radius-pill); background: rgba(78,186,87,0.92); color: #061017; }
+    .timing-cell--purple { display: inline-flex; justify-content: center; min-width: 58px; padding: 4px 7px; border-radius: var(--radius-pill); background: rgba(182,64,216,0.95); color: #fff; }
     .timing-cell--status { display: inline-flex; justify-content: center; min-width: 58px; padding: 4px 7px; border-radius: var(--radius-pill); background: rgba(235,51,64,0.95); color: #fff; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12); }
     .timing-cell--gap { color: var(--text-primary); }
     .mini-sector { display: inline-flex; align-items: center; gap: 1.5px; width: fit-content; min-width: 0; max-width: 100%; overflow: hidden; }
@@ -296,6 +305,12 @@
     .pane__replaytrack input::-moz-range-track { height: 8px; background: transparent; border: 0; }
     .pane__replaytrack input::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(236,242,255,0.94); background: var(--accent); box-shadow: 0 0 0 4px rgba(45,123,255,0.16), 0 4px 14px rgba(0,0,0,0.55); }
     .pane__replaytime { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; min-width: 104px; text-align: right; }
+    .pane__scrubpreview { position: absolute; bottom: calc(100% + 7px); transform: translateX(-50%); display: inline-flex; flex-direction: column; align-items: center; gap: 1px; padding: 5px 10px; border-radius: var(--radius-sm); border: 1px solid color-mix(in srgb, var(--accent-border) 55%, var(--border-default)); background: linear-gradient(180deg, rgba(22,28,38,0.96), rgba(8,11,17,0.96)); box-shadow: 0 14px 30px rgba(0,0,0,0.46), inset 0 1px 0 rgba(255,255,255,0.08); backdrop-filter: blur(12px); pointer-events: none; z-index: 6; white-space: nowrap; }
+    .pane__scrubpreview-time { font-family: var(--font-mono); font-size: var(--text-sm); font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+    .pane__scrubpreview-lap { font-family: var(--font-display); font-size: var(--text-2xs); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--accent); }
+    .pane__scrubpreview-caret { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 7px solid rgba(13,17,24,0.97); filter: drop-shadow(0 1px 0 color-mix(in srgb, var(--accent-border) 55%, var(--border-default))); }
+    .pane__scrubpreview[data-variant="onboard"] { padding: 3px 8px; gap: 0; }
+    .pane__scrubpreview[data-variant="onboard"] .pane__scrubpreview-time { font-size: var(--text-xs); }
     .pane__streamready { display: flex; flex-direction: column; align-items: center; gap: var(--space-5); color: var(--text-tertiary); text-align: center; }
     .pane__streamready b { font-family: var(--font-display); font-size: var(--text-lg); color: var(--text-primary); letter-spacing: 0.04em; }
     .pane__driverimg { max-height: 82%; max-width: 72%; object-fit: contain; filter: drop-shadow(0 20px 40px rgba(0,0,0,0.42)); opacity: 0.82; }
@@ -350,8 +365,9 @@
     .obE__lk { font-size: calc(var(--u) * 1.15); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); width: calc(var(--u) * 3.4); flex: none; }
     .obE__lv { font-family: var(--font-mono); font-weight: 600; font-size: calc(var(--u) * 2.5); color: var(--text-strong); line-height: 1; font-variant-numeric: tabular-nums; transition: color var(--dur-fast) var(--ease-standard); }
     .obE__lv--sm { font-size: calc(var(--u) * 2.2); color: var(--text-secondary); }
-    .obE__lv[data-tone="personal"], .obE__lv[data-tone="drs"] { color: var(--t-personal); }
-    .obE__lv[data-tone="fastest"] { color: var(--t-fastest); }
+    .obE__lv[data-tone="personal"], .obE__lv[data-tone="drs"], .obE__lv[data-tone="green"] { color: var(--t-personal); }
+    .obE__lv[data-tone="fastest"], .obE__lv[data-tone="purple"] { color: var(--t-fastest); }
+    .obE__lv[data-tone="yellow"] { color: var(--t-slower); }
     .obE__spacer { flex: 1 1 auto; min-width: calc(var(--u) * 0.5); }
     .obE__perf { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--u) * 0.7); flex: none; }
     .obE__mini { display: flex; gap: calc(var(--u) * 1); }
@@ -363,8 +379,12 @@
     .obE__seg[data-tone="live"], .obE__seg[data-tone="blue"] { background: var(--info); box-shadow: 0 0 calc(var(--u) * 0.9) rgba(89,176,255,0.85); }
     .obE__sectors { display: flex; flex-direction: column; gap: calc(var(--u) * 0.35); }
     .obE__secRow { display: grid; grid-template-columns: repeat(3, calc(var(--u) * 6.4)); gap: calc(var(--u) * 0.6); justify-items: center; }
-    .obE__sec { font-family: var(--font-mono); font-weight: 600; font-size: calc(var(--u) * 1.75); line-height: 1; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+    .obE__sec { font-family: var(--font-mono); font-weight: 600; font-size: calc(var(--u) * 1.75); line-height: 1; color: var(--text-secondary); font-variant-numeric: tabular-nums; transition: color var(--dur-fast) var(--ease-standard); }
+    .obE__sec[data-tone="yellow"] { color: var(--t-slower); }
+    .obE__sec[data-tone="green"] { color: var(--t-personal); }
+    .obE__sec[data-tone="purple"] { color: var(--t-fastest); }
     .obE__sec--best { color: var(--text-tertiary); }
+    .obE__sec--best[data-tone="green"], .obE__sec--best[data-tone="purple"] { opacity: 0.8; }
     .obE__tyre { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--u) * 0.25); flex: none; }
     .obE__tyreC { width: calc(var(--u) * 4.2); height: calc(var(--u) * 4.2); border-radius: 50%; border: calc(var(--u) * 0.42) solid var(--ty, var(--border-default)); color: #fff; display: grid; place-items: center; font-family: var(--font-display); font-weight: 800; font-size: calc(var(--u) * 2.2); line-height: 1; }
     .obE__tyreAge { font-family: var(--font-mono); font-weight: 700; font-size: calc(var(--u) * 1.5); color: var(--text-secondary); }
@@ -606,7 +626,7 @@
     /* unread badge on the Watch Party launcher */
     .wp-unread { display: inline-grid; place-items: center; min-width: 16px; height: 16px; margin-left: 6px; padding: 0 4px; border-radius: var(--radius-pill); background: var(--live); color: #fff; font-family: var(--font-mono); font-size: 9px; font-weight: 800; vertical-align: middle; }
     /* ===== Watch Party mini toasts — Card (Option 2) ===== */
-    .wp-toasts { position: absolute; right: 20px; bottom: 20px; z-index: 95; width: 300px; max-width: calc(100vw - 40px); display: flex; flex-direction: column; gap: var(--space-4); pointer-events: none; }
+    .wp-toasts { position: absolute; right: 20px; bottom: 20px; z-index: 95; width: 380px; max-width: calc(100vw - 40px); display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-4); pointer-events: none; }
     .wp-toasts > * { pointer-events: auto; }
     .wpt-card { position: relative; display: grid; grid-template-columns: auto minmax(0,1fr); gap: var(--space-5); padding: var(--space-5) var(--space-6); text-align: left; width: 100%; border-radius: var(--radius-md); border: 1px solid var(--border-default); background: linear-gradient(180deg, color-mix(in srgb, var(--surface-overlay) 97%, transparent), color-mix(in srgb, var(--bg-base) 97%, transparent)); box-shadow: var(--shadow-lg); backdrop-filter: blur(12px); cursor: pointer; animation: wpt-in var(--dur-base, .2s) var(--ease-out, ease); }
     .wpt-card:hover { border-color: var(--accent-border); }
@@ -617,8 +637,11 @@
     .wpt-card__eyebrow { margin-left: auto; font-family: var(--font-mono); font-size: 8.5px; font-weight: 800; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--accent); flex: none; }
     .wpt-card__msg { font-size: var(--text-sm); line-height: 1.38; color: var(--text-secondary); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-wrap: pretty; }
     .wpt-card__icon { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: var(--radius-sm); flex: none; align-self: start; background: var(--accent-quiet); color: var(--accent); }
+    .wpt-card:not([data-ai]) { width: 300px; }
     .wpt-card[data-ai] { border-color: var(--accent-border); background: linear-gradient(180deg, color-mix(in srgb, var(--accent-soft) 90%, var(--surface-overlay)), color-mix(in srgb, var(--bg-base) 96%, transparent)); }
-    .wpt-card[data-ai] .wpt-card__eyebrow { display: inline-flex; align-items: center; gap: 3px; }
+    .wpt-card[data-ai] .wpt-card__name { font-family: var(--font-display); font-size: var(--text-md); font-weight: var(--fw-bold); letter-spacing: var(--tracking-tight); }
+    .wpt-card[data-ai] .wpt-card__msg { font-size: var(--text-sm); line-height: 1.45; }
+    .wpt-card[data-ai] .wpt-card__eyebrow { display: inline-flex; align-items: center; gap: 3px; font-size: var(--text-3xs); }
 
     /* Battle toast */
     .toast { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); z-index: 40; display: flex; align-items: center; gap: var(--space-6); padding: var(--space-6) var(--space-7); border-radius: var(--radius-md); background: var(--surface-overlay); border: 1px solid var(--accent-border); box-shadow: var(--shadow-lg), var(--glow-accent); backdrop-filter: blur(var(--blur-md, 14px)); animation: pw-toast-in var(--dur-base) var(--ease-out); }
@@ -779,6 +802,24 @@
   const DEFAULT_WORLD_SYNC_TARGET = 36;
   const DEFAULT_NON_WORLD_SYNC_OFFSET = 4;
   const SYNC_EPSILON = 0.075;
+  const SHAKA_LIVE_SYNC_TOLERANCE_MIN = 3;
+  const SHAKA_LIVE_SYNC_TOLERANCE_MAX = 8;
+
+  function liveSyncToleranceForTarget(targetLatency) {
+    const target = Number(targetLatency);
+    if (!Number.isFinite(target) || target <= 0) return SHAKA_LIVE_SYNC_TOLERANCE_MAX;
+    return Math.max(
+      SHAKA_LIVE_SYNC_TOLERANCE_MIN,
+      Math.min(SHAKA_LIVE_SYNC_TOLERANCE_MAX, Math.round(target * 2.2) / 10)
+    );
+  }
+  function shouldSeekLiveVideoToTarget(liveLatency, targetLatency, initialTargetSynced) {
+    if (!initialTargetSynced) return true;
+    const live = Number(liveLatency);
+    const target = Number(targetLatency);
+    if (!Number.isFinite(live) || !Number.isFinite(target) || target <= 0) return false;
+    return Math.abs(live - target) > liveSyncToleranceForTarget(target);
+  }
 
   function readPartyTrayPosition() {
     try {
@@ -1295,11 +1336,26 @@
     else if (/\bIN\s*PIT\b|\bPIT\b/.test(statusText) || row.inPit) lastBadge = "IN PIT";
     return { inactive, lastBadge };
   }
-  function lapTone(row) {
-    const last = telemetryNumber(row?.lastLapDuration) ?? lapSeconds(row?.last);
-    const best = telemetryNumber(row?.bestLapDuration) ?? lapSeconds(row?.best);
-    if (last == null || best == null) return "normal";
-    return last <= best + 0.001 ? "personal" : "normal";
+  function rowLapDuration(row, kind) {
+    const duration = kind === "last" ? row?.lastLapDuration : row?.bestLapDuration;
+    const label = kind === "last" ? row?.last : row?.best;
+    return telemetryNumber(duration) ?? lapSeconds(label);
+  }
+  function overallBestLapDuration(rows) {
+    return (rows || []).reduce((best, row) => {
+      const value = rowLapDuration(row, "best");
+      return value != null && value > 0 && (best == null || value < best) ? value : best;
+    }, null);
+  }
+  function lapTimeTone(current, personalBest, overallBest) {
+    const time = telemetryNumber(current);
+    if (time == null || time <= 0) return "normal";
+    const overall = telemetryNumber(overallBest);
+    const personal = telemetryNumber(personalBest);
+    const epsilon = 0.001;
+    if (overall != null && time <= overall + epsilon) return "purple";
+    if (personal != null && time <= personal + epsilon) return "green";
+    return "yellow";
   }
   function intervalTone(value) {
     const seconds = timingGapSeconds(value);
@@ -1369,8 +1425,41 @@
       return out;
     }, {});
   }
+  // Session-wide fastest split per sector, across every driver, so a live
+  // sector time can be flagged purple when it's the overall benchmark.
+  function overallBestSectorTimes(rows) {
+    return (rows || []).reduce((out, row) => {
+      if (!row?.code) return out;
+      const best = resolveBestSectorTimes(row.code, row.bestSectorTimes);
+      ["s1", "s2", "s3"].forEach((key) => {
+        const value = telemetryNumber(best[key]);
+        if (value != null && value > 0 && (out[key] == null || value < out[key])) out[key] = value;
+      });
+      return out;
+    }, { s1: null, s2: null, s3: null });
+  }
+  // Broadcast colour code for a just-completed split: purple = session
+  // fastest, green = the driver's personal best, yellow = slower.
+  function sectorTimeTones(current, personalBest, overallBest) {
+    const epsilon = 0.0005;
+    return ["s1", "s2", "s3"].reduce((out, key) => {
+      const time = telemetryNumber(current?.[key]);
+      if (time == null || time <= 0) { out[key] = null; return out; }
+      const overall = telemetryNumber(overallBest?.[key]);
+      const personal = telemetryNumber(personalBest?.[key]);
+      if (overall != null && time <= overall + epsilon) out[key] = "purple";
+      else if (personal != null && time <= personal + epsilon) out[key] = "green";
+      else out[key] = "yellow";
+      return out;
+    }, {});
+  }
   function telemetryForCode(rows, code, sessionKind = "") {
     const row = (rows || []).find((item) => item.code === code) || {};
+    const personalBest = resolveBestSectorTimes(code, row.bestSectorTimes);
+    const overallBest = overallBestSectorTimes(rows);
+    const lastLap = rowLapDuration(row, "last");
+    const personalBestLap = rowLapDuration(row, "best");
+    const overallBestLap = overallBestLapDuration(rows);
     return {
       pos: row.pos,
       speed: row.telemetry?.speed,
@@ -1382,11 +1471,14 @@
       intervalTone: intervalTone(row.interval),
       leaderGap: row.gap || "—",
       last: row.last || "—",
-      lastTone: lapTone(row),
+      lastTone: lapTimeTone(lastLap, personalBestLap, overallBestLap),
       best: row.best || "—",
+      bestTone: lapTimeTone(personalBestLap, personalBestLap, overallBestLap),
       sectors: row.sectors,
       sectorTimes: row.sectorTimes,
-      bestSectorTimes: resolveBestSectorTimes(code, row.bestSectorTimes),
+      bestSectorTimes: personalBest,
+      sectorTones: sectorTimeTones(row.sectorTimes, personalBest, overallBest),
+      bestSectorTones: sectorTimeTones(personalBest, personalBest, overallBest),
       comp: row.comp,
       age: row.age,
     };
@@ -1490,7 +1582,7 @@
     { id: "name", label: "Name", width: "86px" },
     { id: "team", label: "Team", width: "72px" },
     { id: "last", label: "Last lap", width: "78px" },
-    { id: "best", label: "Best lap", width: "74px" },
+    { id: "best", label: "Best lap", width: "78px" },
     { id: "gap", label: "Gap", width: "58px" },
     { id: "interval", label: "Interval", width: "58px" },
     { id: "s1", label: "S1 μS", width: "48px" },
@@ -1923,16 +2015,22 @@
       </div>
     );
   }
-  function TimingTowerRow({ row, driver, columns, sectorCounts, selected, moving, elimination, registerRow, onClick }) {
+  function TimingTowerRow({ row, driver, columns, sectorCounts, overallBestLap, selected, moving, elimination, registerRow, onClick }) {
     const setRowRef = React.useCallback((node) => registerRow?.(row.code, node), [registerRow, row.code]);
     const statusState = timingDriverStatusState(row);
-    const lastCellClass = "timing-cell" + (statusState.lastBadge ? " timing-cell--status" : row.last && row.last === row.best ? " timing-cell--pill" : "");
+    // Broadcast colour code: purple = session-fastest lap, green = the driver's
+    // personal best (last-lap column only). Best-lap column flags purple only.
+    const personalBestLap = rowLapDuration(row, "best");
+    const lastTone = lapTimeTone(rowLapDuration(row, "last"), personalBestLap, overallBestLap);
+    const bestPurple = !statusState.inactive && lapTimeTone(personalBestLap, personalBestLap, overallBestLap) === "purple";
+    const lastCellClass = "timing-cell" + (statusState.lastBadge ? " timing-cell--status" : lastTone === "purple" ? " timing-cell--purple" : lastTone === "green" ? " timing-cell--pill" : "");
+    const bestCellClass = "timing-cell" + (bestPurple ? " timing-cell--purple" : "");
     const cells = {
       driver: <span className="timing-driver"><span className="timing-driver__pos">{row.pos}</span><span className="timing-driver__code" style={{ "--driver-color": driver.color || "var(--accent)" }}>{row.code}</span></span>,
       name: <span className="timing-cell">{driver.name || row.code || "—"}</span>,
       team: <span className="timing-cell" style={{ color: driver.color || "var(--text-secondary)" }}>{driver.abbr || driver.team || "—"}</span>,
       last: <span className={lastCellClass}>{statusState.lastBadge || row.last || "—"}</span>,
-      best: <span className="timing-cell">{statusState.inactive ? "—" : row.best || "—"}</span>,
+      best: <span className={bestCellClass}>{statusState.inactive ? "—" : row.best || "—"}</span>,
       gap: <span className="timing-cell timing-cell--gap">{statusState.inactive ? "—" : row.gap || "—"}</span>,
       interval: <span className="timing-cell">{statusState.inactive ? "—" : row.interval || "—"}</span>,
       s1: <MiniSectorBar segments={row.sectors?.s1} slots={sectorCounts.s1} />,
@@ -2131,6 +2229,77 @@
   }
   function fmtSync(value, suffix = "s") {
     return Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}${suffix}` : "--";
+  }
+  function validVideoUtcMs(value) {
+    const ms = Number(value);
+    if (!Number.isFinite(ms)) return null;
+    if (ms < Date.UTC(2020, 0, 1) || ms > Date.now() + 10 * 60 * 1000) return null;
+    return Math.round(ms);
+  }
+  function dateLikeMs(value) {
+    if (!value) return null;
+    const ms = typeof value.getTime === "function" ? value.getTime() : Number(value);
+    return validVideoUtcMs(ms);
+  }
+  function liveVideoPlayheadUtcMs(video, player, hls) {
+    const shakaDate = typeof player?.getPlayheadTimeAsDate === "function" ? player.getPlayheadTimeAsDate() : null;
+    const shakaMs = dateLikeMs(shakaDate);
+    if (shakaMs != null) return shakaMs;
+    const hlsMs = dateLikeMs(hls?.currentProgramDateTime);
+    if (hlsMs != null) return hlsMs;
+    const startDate = typeof video?.getStartDate === "function" ? video.getStartDate() : null;
+    const startMs = dateLikeMs(startDate);
+    const currentTime = Number(video?.currentTime);
+    if (startMs != null && Number.isFinite(currentTime)) return validVideoUtcMs(startMs + currentTime * 1000);
+    return null;
+  }
+  function liveTimingRequestForMetrics(metrics, fallbackTarget) {
+    const configured = Number(metrics?.targetLatency ?? fallbackTarget);
+    const value = Number.isFinite(configured) ? configured : Number(fallbackTarget);
+    const targetLatencySeconds = Number.isFinite(value)
+      ? Math.max(0, Math.min(90, Math.round(value * 10) / 10))
+      : DEFAULT_WORLD_SYNC_TARGET;
+    const targetUtcMs = validVideoUtcMs(metrics?.videoTimeUtcMs);
+    return targetUtcMs == null ? { targetLatencySeconds } : { targetLatencySeconds, targetUtcMs };
+  }
+  function liveSyncStatus(metrics, targetLatency) {
+    const liveLatency = Number(metrics?.liveLatency);
+    const target = Number(metrics?.targetLatency ?? targetLatency);
+    const playbackRate = Number(metrics?.playbackRate || 1);
+    if (!Number.isFinite(liveLatency) || !Number.isFinite(target)) {
+      return { tone: "wait", label: "Waiting for live sync", detail: `Target ${fmtSync(target)}`, rate: `${playbackRate.toFixed(2)}x` };
+    }
+    const delta = liveLatency - target;
+    const magnitude = Math.abs(delta);
+    if (magnitude <= 0.3) {
+      return { tone: "ok", label: "On target", detail: `Live ${fmtSync(liveLatency)} · target ${fmtSync(target)}`, rate: `${playbackRate.toFixed(2)}x` };
+    }
+    if (delta > 0) {
+      return { tone: "behind", label: `${fmtSync(magnitude)} behind target`, detail: `Live ${fmtSync(liveLatency)} · target ${fmtSync(target)}`, rate: `${playbackRate.toFixed(2)}x` };
+    }
+    return { tone: "ahead", label: `${fmtSync(magnitude)} ahead of target`, detail: `Live ${fmtSync(liveLatency)} · target ${fmtSync(target)}`, rate: `${playbackRate.toFixed(2)}x` };
+  }
+  function syncLiveVideoToTargetLatency(video, targetLatency) {
+    const target = Number(targetLatency);
+    if (!video || !Number.isFinite(target) || target <= 0) return { synced: false };
+    const shakaRange = video.__pitwallShakaPlayer?.seekRange?.();
+    const ranges = video.seekable;
+    const rangeIndex = ranges?.length ? ranges.length - 1 : -1;
+    const start = shakaRange && Number.isFinite(Number(shakaRange.start)) ? Number(shakaRange.start) : rangeIndex >= 0 ? Number(ranges.start(rangeIndex)) : NaN;
+    const end = shakaRange && Number.isFinite(Number(shakaRange.end)) ? Number(shakaRange.end) : rangeIndex >= 0 ? Number(ranges.end(rangeIndex)) : NaN;
+    const targetTime = end - target;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(targetTime) || targetTime < start || targetTime > end) {
+      return { synced: false, waitingForRange: true };
+    }
+    const currentTime = Number(video.currentTime);
+    const drift = Number.isFinite(currentTime) ? currentTime - targetTime : null;
+    if (drift != null && Math.abs(drift) <= 0.25) {
+      video.playbackRate = 1;
+      return { synced: false, targetTime, drift };
+    }
+    video.currentTime = targetTime;
+    video.playbackRate = 1;
+    return { synced: true, targetTime, drift };
   }
   function raceLibraryId(race) {
     return String(race?.rnd || race?.meetingKey || race?.name || "");
@@ -2441,10 +2610,27 @@
       hasQualityCap: Object.keys(restrictions).length > 0,
       shaka: {
         streaming: {
-          lowLatencyMode: !replay,
+          lowLatencyMode: false,
           bufferingGoal: maxBufferLength,
           rebufferingGoal: replay ? 4 : 3,
           bufferBehind: backBufferLength,
+          liveSync: {
+            enabled: !replay,
+            targetLatency,
+            targetLatencyTolerance: liveSyncToleranceForTarget(targetLatency),
+            maxPlaybackRate: 1,
+            minPlaybackRate: 1,
+            panicMode: false,
+            panicThreshold: 2,
+            dynamicTargetLatency: {
+              enabled: false,
+              maxAttempts: 0,
+              maxLatency: Math.max(targetLatency + 15, targetLatency * 1.5),
+              minLatency: targetLatency,
+              rebufferIncrement: 0,
+              stabilityThreshold: 0,
+            },
+          },
         },
         abr: Object.keys(restrictions).length ? { restrictions } : undefined,
       },
@@ -2481,7 +2667,7 @@
     return !target?.closest?.("button, input, select, textarea, a, [role='button'], .pane__controls, .pane__replaybar, .sync-overlay, .pane__top, .pane__playerstatus");
   }
 
-  function PitWallStreamPlayer({ source, muted, volumeLevel = 100, playbackProfile = "main", videoQuality = "medium", onAudioFocus, onReady, onPlaybackState, sync, replaySync, onReplayToggle, playbackLocked = false }) {
+  function PitWallStreamPlayer({ source, muted, volumeLevel = 100, playbackProfile = "main", videoQuality = "medium", onAudioFocus, onReady, onPlaybackState, sync, replaySync, onReplayToggle, onSurfaceToggle, playbackLocked = false }) {
     const videoRef = React.useRef(null);
     const replayPlaying = replaySync?.playing !== false;
     const replayPlayingRef = React.useRef(replayPlaying);
@@ -2506,11 +2692,14 @@
       let timer = null;
       let cancelled = false;
       let reportedReady = false;
+      let liveInitialTargetSync = descriptor.playbackMode === "replay";
+      let lastLiveTargetSeekAt = 0;
       const targetLatency = clampSyncLatency(sync?.targetLatency || defaultSyncTarget("WORLD"));
       const headers = descriptor.headers || {};
       const licenseServer = descriptor.licenseUrl || descriptor.drm?.licenseUrl || "";
       const licenseDebug = debugUrlParts(licenseServer);
       const playbackConfig = buildStreamPlaybackConfig(playbackProfile, targetLatency, descriptor.playbackMode, videoQuality);
+      delete video.__pitwallShakaPlayer;
       setReady(false);
       onPlaybackState?.(false);
       const markReady = () => {
@@ -2543,14 +2732,34 @@
       const reportSync = () => {
         if (!video || !sync?.onMetrics) return;
         let liveLatency = NaN;
-        if (video.seekable && video.seekable.length) liveLatency = video.seekable.end(video.seekable.length - 1) - video.currentTime;
+        const range = player?.seekRange?.();
+        if (range && Number.isFinite(range.end)) liveLatency = range.end - video.currentTime;
+        else if (video.seekable && video.seekable.length) liveLatency = video.seekable.end(video.seekable.length - 1) - video.currentTime;
         const decision = window.PW_SYNC?.liveSync ? window.PW_SYNC.liveSync(liveLatency, targetLatency, SYNC_EPSILON) : { playbackRate: 1, delta: 0 };
-        if (!video.paused && descriptor.playbackMode !== "replay" && Number.isFinite(decision.delta)) video.playbackRate = decision.playbackRate;
+        if (player && descriptor.playbackMode !== "replay" && shouldSeekLiveVideoToTarget(liveLatency, targetLatency, liveInitialTargetSync)) {
+          const now = Date.now();
+          if (now - lastLiveTargetSeekAt < 2500) {
+            if (!video.paused) video.playbackRate = 1;
+          } else {
+            lastLiveTargetSeekAt = now;
+            const syncResult = syncLiveVideoToTargetLatency(video, targetLatency);
+            if (syncResult.synced || (syncResult.drift != null && !syncResult.waitingForRange)) {
+              liveInitialTargetSync = true;
+              video.playbackRate = 1;
+              const nextRange = player.seekRange?.();
+              if (nextRange && Number.isFinite(nextRange.end)) liveLatency = nextRange.end - video.currentTime;
+              else if (video.seekable && video.seekable.length) liveLatency = video.seekable.end(video.seekable.length - 1) - video.currentTime;
+            }
+          }
+        }
+        if (player && descriptor.playbackMode !== "replay" && !video.paused) video.playbackRate = 1;
+        if (!player && !video.paused && descriptor.playbackMode !== "replay" && Number.isFinite(decision.delta)) video.playbackRate = decision.playbackRate;
         sync.onMetrics({
           targetLatency,
           liveLatency: Number.isFinite(liveLatency) ? liveLatency : null,
           playbackRate: video.playbackRate || 1,
           delta: Number.isFinite(decision.delta) ? decision.delta : null,
+          videoTimeUtcMs: liveVideoPlayheadUtcMs(video, player, null),
         });
       };
       async function load() {
@@ -2593,6 +2802,7 @@
             setStatus(playerErrorMessage(event));
           });
           await player.attach(video);
+          video.__pitwallShakaPlayer = player;
           player.configure({
             drm: licenseServer ? { servers: { "com.widevine.alpha": licenseServer } } : {},
             streaming: playbackConfig.shaka.streaming,
@@ -2607,6 +2817,10 @@
           });
           const mimeType = descriptor.manifestType === "dash" ? "application/dash+xml" : descriptor.manifestType === "hls" ? "application/x-mpegURL" : undefined;
           await player.load(descriptor.manifestUrl, null, mimeType);
+          if (descriptor.playbackMode !== "replay") {
+            const syncResult = syncLiveVideoToTargetLatency(video, targetLatency);
+            if (syncResult.synced || (syncResult.drift != null && !syncResult.waitingForRange)) liveInitialTargetSync = true;
+          }
           logPitWallDebug("player.shaka-loaded", {
             feedId: descriptor.feedId || descriptor.id || "",
             duration: Number.isFinite(video.duration) ? video.duration : null,
@@ -2672,6 +2886,7 @@
         video.removeEventListener("error", handleVideoError);
         if (hls) hls.destroy();
         if (player) {
+          if (video.__pitwallShakaPlayer === player) delete video.__pitwallShakaPlayer;
           const destroyed = player.destroy();
           if (destroyed?.catch) destroyed.catch(() => {});
         }
@@ -2693,8 +2908,7 @@
         onReplayToggle?.();
         return;
       }
-      if (video.paused) video.play().catch(() => {});
-      else video.pause();
+      onSurfaceToggle?.();
     }
     return (
       <>
@@ -2732,11 +2946,19 @@
     );
   }
 
-  function SyncMenu({ open, replayMode, replayTimingOffset, debugEnabled, onReplayTimingAdjust, onReplayTimingReset, onSyncAll, onToggleDebug }) {
+  function SyncMenu({ open, replayMode, replayTimingOffset, debugEnabled, liveMetrics, liveTarget, onReplayTimingAdjust, onReplayTimingReset, onSyncAll, onLiveSyncToTarget, onToggleDebug }) {
     if (!open) return null;
     const timingLabel = `Timing ${replayTimingOffset > 0 ? "+" : ""}${replayTimingOffset}s`;
+    const liveStatus = liveSyncStatus(liveMetrics, liveTarget);
     return (
       <div className="sync-menu" aria-label="Sync menu">
+        {replayMode !== "replay" && (
+          <div className="sync-menu__live" data-tone={liveStatus.tone}>
+            <span className="sync-menu__livecopy"><b>{liveStatus.label}</b><span>{liveStatus.detail}</span></span>
+            <span className="sync-menu__rate">{liveStatus.rate}</span>
+            <button className="sync-menu__btn sync-menu__btn--box" type="button" onClick={onLiveSyncToTarget}>Match target</button>
+          </div>
+        )}
         {replayMode === "replay" && (
           <div className="sync-menu__timing">
             <button className="sync-menu__btn" type="button" onClick={() => onReplayTimingAdjust?.(-60)}>Timing -1m</button>
@@ -2785,6 +3007,7 @@
           liveLatency: Number.isFinite(liveLatency) ? liveLatency : null,
           playbackRate: video.playbackRate || 1,
           delta: Number.isFinite(delta) ? delta : null,
+          videoTimeUtcMs: liveVideoPlayheadUtcMs(video, null, hls),
         });
       };
       if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -2876,7 +3099,11 @@
     const sessionKind = String(context.sessionKind || "").toLowerCase();
     const practiceMatch = sessionKind.match(/\b(?:free\s+)?practice[\s_-]*([1-3])\b/) || sessionKind.match(/\bfp\s*([1-3])\b/);
     if (practiceMatch) return `FP${practiceMatch[1]} ${clockLabel}`;
-    if (!/qualifying|shootout/.test(sessionKind)) return clockLabel;
+    if (!/qualifying|shootout/.test(sessionKind)) {
+      const lap = Number(clock?.lapCount?.lap);
+      if (Number.isFinite(lap) && lap > 0) return "";
+      return clockLabel;
+    }
     const part = qualifyingPhaseFromSession({
       sessionKind: context.sessionKind,
       qualifyingPhase: clock?.qualifyingPart,
@@ -2891,6 +3118,96 @@
     const time = Number(replaySync?.masterTime || 0);
     if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(time)) return 0;
     return Math.max(0, Math.min(100, (time / duration) * 100));
+  }
+
+  // Builds a (videoSeconds) -> { lap, laps } lookup from the replay lap timeline.
+  // Returns null when no usable timeline is present so the scrub preview falls back to time-only.
+  function buildReplayLapAt(rawTimeline, totalLaps, timingOffset) {
+    const timeline = (Array.isArray(rawTimeline) ? rawTimeline : [])
+      .map((item) => ({ lap: Number(item?.lap), elapsedSeconds: Number(item?.elapsedSeconds) }))
+      .filter((item) => Number.isFinite(item.lap) && Number.isFinite(item.elapsedSeconds))
+      .sort((a, b) => a.elapsedSeconds - b.elapsedSeconds);
+    if (!timeline.length) return null;
+    const laps = Number.isFinite(Number(totalLaps)) ? Number(totalLaps) : null;
+    const offset = Number(timingOffset) || 0;
+    return (videoSeconds) => {
+      const seconds = Number(videoSeconds) + offset;
+      if (!Number.isFinite(seconds)) return null;
+      let lap = timeline[0].lap;
+      for (const item of timeline) {
+        if (item.elapsedSeconds <= seconds) lap = item.lap; else break;
+      }
+      return { lap, laps };
+    };
+  }
+
+  // Replay scrub bar with a hover/drag preview bubble (time + optional lap), like MultiViewer.
+  // Pure UI math (position -> time); never touches video pixels, so it is unaffected by DRM.
+  function ReplayScrubTrack({ replaySync, onReplaySeek, playbackLocked, variant = "main", lapAt }) {
+    const trackRef = React.useRef(null);
+    const draggingRef = React.useRef(false);
+    const [preview, setPreview] = React.useState(null);
+    const duration = Math.max(1, Math.round(replaySync?.duration || 1));
+
+    const updateFromClientX = (clientX) => {
+      const el = trackRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      setPreview({ x: ratio * rect.width, width: rect.width, time: ratio * duration });
+    };
+
+    const handlePointerMove = (event) => {
+      if (playbackLocked) return;
+      updateFromClientX(event.clientX);
+    };
+    const handlePointerLeave = () => {
+      if (draggingRef.current) return;
+      setPreview(null);
+    };
+    const handlePointerDown = (event) => {
+      if (playbackLocked) return;
+      draggingRef.current = true;
+      updateFromClientX(event.clientX);
+    };
+
+    React.useEffect(() => {
+      const endDrag = () => {
+        if (!draggingRef.current) return;
+        draggingRef.current = false;
+        setPreview(null);
+      };
+      window.addEventListener("pointerup", endDrag);
+      return () => window.removeEventListener("pointerup", endDrag);
+    }, []);
+
+    const lapInfo = preview && typeof lapAt === "function" ? lapAt(preview.time) : null;
+    const lapLabel = lapInfo && Number.isFinite(lapInfo.lap)
+      ? (Number.isFinite(lapInfo.laps) ? `L${lapInfo.lap}/${lapInfo.laps}` : `L${lapInfo.lap}`)
+      : "";
+
+    let bubbleLeft = 0;
+    if (preview) {
+      const halfWidth = variant === "onboard" ? 40 : 52;
+      bubbleLeft = Math.max(halfWidth, Math.min(Math.max(halfWidth, preview.width - halfWidth), preview.x));
+    }
+
+    return (
+      <div className="pane__replaytrack" ref={trackRef}
+        onPointerMove={handlePointerMove} onPointerLeave={handlePointerLeave} onPointerDown={handlePointerDown}>
+        <span className="pane__replayfill" style={{ width: `${replayProgressPct(replaySync)}%` }} />
+        <input aria-label="Replay position" disabled={playbackLocked} type="range" min="0" max={duration} value={Math.round(replaySync?.masterTime || 0)}
+          onChange={(e) => onReplaySeek?.(Number(e.target.value))} />
+        {preview && (
+          <div className="pane__scrubpreview" data-variant={variant} style={{ left: `${bubbleLeft}px` }} aria-hidden="true">
+            {lapLabel && <span className="pane__scrubpreview-lap">{lapLabel}</span>}
+            <span className="pane__scrubpreview-time">{formatReplayTime(preview.time)}</span>
+            <i className="pane__scrubpreview-caret" />
+          </div>
+        )}
+      </div>
+    );
   }
 
   function VolumeControl({ active, value, onFocus, onChange }) {
@@ -2918,7 +3235,7 @@
 
   function BroadcastPane({ focus, streamUrl, audioActive, audioVolume, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand, visible = true, style, zone, videoOverlay,
     hasCurrentLiveSession, replayControls, sessionLibrary, onLoadPastSession, onConnectF1Tv,
-    replaySync, onReplayToggle, onReplaySeek, onSurfaceToggle, onSyncAll, onPlayerReady, streamStatus, resolving,
+    replaySync, onReplayToggle, onReplaySeek, replayLapAt, onSurfaceToggle, onSyncAll, onPlayerReady, streamStatus, resolving,
     syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset, timingRows, sessionKind, videoQuality,
     broadcastTickerRows = 3, onTickerRowsChange, lockAspect = false, onLockAspectToggle, hideBuiltinTicker = false, feedTickerOn = false, onToggleFeedTicker, playbackLocked = false }) {
     const paneRef = React.useRef(null);
@@ -2990,7 +3307,7 @@
         }}>
         <div className="pane__feed" />
         <div className="pane__bcwash" />
-        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} videoQuality={videoQuality} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle} playbackLocked={playbackLocked}
+        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} videoQuality={videoQuality} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle} onSurfaceToggle={onSurfaceToggle} playbackLocked={playbackLocked}
           onReady={(video) => onPlayerReady?.(syncKey, video)} sync={{ targetLatency: syncTarget, onMetrics: (metrics) => onSyncMetrics?.(syncKey, metrics) }} />}
         <div className="pane__controls">
           <VolumeControl active={audioActive} value={audioVolume} onFocus={onAudioFocus} onChange={onAudioVolumeChange} />
@@ -3007,11 +3324,7 @@
               aria-label={replaySync.playing ? "Pause replay" : "Play replay"} title={replaySync.playing ? "Pause" : "Play"}>
               <Icon name={replaySync.playing ? "pause" : "play"} size={15} />
             </button>
-            <div className="pane__replaytrack">
-              <span className="pane__replayfill" style={{ width: `${replayProgressPct(replaySync)}%` }} />
-              <input aria-label="Replay position" disabled={playbackLocked} type="range" min="0" max={Math.max(1, Math.round(replaySync.duration || 1))} value={Math.round(replaySync.masterTime || 0)}
-                onChange={(e) => onReplaySeek?.(Number(e.target.value))} />
-            </div>
+            <ReplayScrubTrack replaySync={replaySync} onReplaySeek={onReplaySeek} playbackLocked={playbackLocked} variant="main" lapAt={replayLapAt} />
             <span className="pane__replaytime">{formatReplayTime(replaySync.masterTime)} / {formatReplayTime(replaySync.duration)}</span>
           </div>
         )}
@@ -3130,7 +3443,7 @@
 
   function OnboardPane({ feed, code, focus, telemetry, channel, streamUrl, audioActive, audioVolume, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand,
     visible = true, style, zone, driverOptions = [], onDriverChange,
-    replaySync, onReplayToggle, onReplaySeek, onSurfaceToggle, onPlayerReady, syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset,
+    replaySync, onReplayToggle, onReplaySeek, replayLapAt, onSurfaceToggle, onPlayerReady, syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset,
     timingRows = [], sessionKind = "", videoQuality, lockAspect = false, onLockAspectToggle, feedTickerOn = false, onToggleFeedTicker, playbackLocked = false }) {
     const [telemetryOn, setTelemetryOn] = React.useState(Boolean(telemetry));
     const [localLockAspect, setLocalLockAspect] = React.useState(false);
@@ -3155,7 +3468,7 @@
         }}>
         <div className="pane__feed" />
         <div className="pane__scan" />
-        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} playbackProfile="onboard" videoQuality={videoQuality} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle} playbackLocked={playbackLocked}
+        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} playbackProfile="onboard" videoQuality={videoQuality} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle} onSurfaceToggle={onSurfaceToggle} playbackLocked={playbackLocked}
           onReady={(video) => onPlayerReady?.(syncKey, video)} onPlaybackState={setStreamReady}
           sync={{ targetLatency: syncTarget, onMetrics: (metrics) => onSyncMetrics?.(syncKey, metrics) }} />}
         <div className="pane__controls">
@@ -3180,11 +3493,7 @@
               aria-label={replaySync.playing ? "Pause replay" : "Play replay"} title={replaySync.playing ? "Pause" : "Play"}>
               <Icon name={replaySync.playing ? "pause" : "play"} size={15} />
             </button>
-            <div className="pane__replaytrack">
-              <span className="pane__replayfill" style={{ width: `${replayProgressPct(replaySync)}%` }} />
-              <input aria-label="Replay position" disabled={playbackLocked} type="range" min="0" max={Math.max(1, Math.round(replaySync.duration || 1))} value={Math.round(replaySync.masterTime || 0)}
-                onChange={(e) => onReplaySeek?.(Number(e.target.value))} />
-            </div>
+            <ReplayScrubTrack replaySync={replaySync} onReplaySeek={onReplaySeek} playbackLocked={playbackLocked} variant="onboard" lapAt={replayLapAt} />
             <span className="pane__replaytime">{formatReplayTime(replaySync.masterTime)} / {formatReplayTime(replaySync.duration)}</span>
           </div>
         )}
@@ -3218,7 +3527,7 @@
                 <span className="obE__div" />
                 <div className="obE__stack">
                   <div className="obE__line"><span className="obE__lk">Last</span><span className="obE__lv" data-tone={telemetryData.lastTone}>{telemetryData.last}</span></div>
-                  <div className="obE__line"><span className="obE__lk">Best</span><span className="obE__lv obE__lv--sm" data-tone="fastest">{telemetryData.best}</span></div>
+                  <div className="obE__line"><span className="obE__lk">Best</span><span className="obE__lv obE__lv--sm" data-tone={telemetryData.bestTone}>{telemetryData.best}</span></div>
                 </div>
                 <span className="obE__div" />
                 <div className="obE__stack">
@@ -3239,12 +3548,12 @@
                   <div className="obE__sectors">
                     <div className="obE__secRow">
                       {["s1", "s2", "s3"].map((key) => (
-                        <span className="obE__sec" key={key}>{formatSectorTime(telemetryData.sectorTimes?.[key])}</span>
+                        <span className="obE__sec" data-tone={telemetryData.sectorTones?.[key] || "off"} key={key}>{formatSectorTime(telemetryData.sectorTimes?.[key])}</span>
                       ))}
                     </div>
                     <div className="obE__secRow obE__secRow--best">
                       {["s1", "s2", "s3"].map((key) => (
-                        <span className="obE__sec obE__sec--best" key={key}>{formatSectorTime(telemetryData.bestSectorTimes?.[key])}</span>
+                        <span className="obE__sec obE__sec--best" data-tone={telemetryData.bestSectorTones?.[key] || "off"} key={key}>{formatSectorTime(telemetryData.bestSectorTimes?.[key])}</span>
                       ))}
                     </div>
                   </div>
@@ -3419,6 +3728,7 @@
     const replayTimingInFlightRef = React.useRef(false);
     const liveTimingRequestRef = React.useRef(0);
     const liveTimingInFlightRef = React.useRef(false);
+    const liveTimingSyncRef = React.useRef({ targetLatencySeconds: DEFAULT_WORLD_SYNC_TARGET });
     const partyDragRef = React.useRef(null);
     const intelligentCodesRef = React.useRef([]);
     const debugAutoF1TvLoaded = React.useRef(false);
@@ -3849,8 +4159,10 @@
         return;
       }
       const decision = window.PW_SYNC.partySync.liveDecision(message, { liveLatency: syncMetrics.WORLD?.liveLatency, targetLatency: syncTargetFor("WORLD") });
+      const nextSettings = syncSettingsForWorldTarget(syncSettings, decision.targetLatency);
       applyPartyPlaybackState(decision.playing);
-      setSyncSettings((settings) => ({ ...settings, worldTarget: clampSyncLatency(decision.targetLatency) }));
+      setSyncSettings(nextSettings);
+      syncLivePlayersToTarget("WORLD", nextSettings);
       setPartyStatus("Synced to host live latency");
     }
 
@@ -3955,15 +4267,48 @@
       }
       const video = playerRefs.current[key];
       if (!video) return;
-      if (video.paused) video.play().catch(() => {});
-      else video.pause();
+      const playing = video.paused;
+      const targets = Object.values(playerRefs.current);
+      targets.forEach((targetVideo) => {
+        if (!targetVideo) return;
+        if (playing) targetVideo.play().catch(() => {});
+        else {
+          targetVideo.playbackRate = 1;
+          targetVideo.pause();
+        }
+      });
+      if (partyRoom && partySyncRoleRef.current === "host") publishHostSync();
     }
 
-    function syncTargetFor(key) {
+    function syncLivePlayersToTarget(key = "WORLD", settings = syncSettings) {
+      if (replaySync.mode === "replay") {
+        syncReplayPlayers(replaySync.masterTime);
+        return;
+      }
+      const entries = key === "WORLD"
+        ? Object.entries(playerRefs.current)
+        : [[key, playerRefs.current[key]]];
+      entries.forEach(([syncKey, video]) => {
+        if (video) syncLiveVideoToTargetLatency(video, syncTargetFor(syncKey, settings));
+      });
+      if (partyRoom && partySyncRoleRef.current === "host") publishHostSync();
+    }
+
+    function syncSettingsForWorldTarget(settings, targetLatency) {
+      const worldTarget = clampSyncLatency(settings?.worldTarget == null ? defaultSyncTarget("WORLD") : settings.worldTarget);
+      const nextWorldTarget = clampSyncLatency(targetLatency);
+      return {
+        ...(settings || {}),
+        worldTarget: nextWorldTarget,
+        targets: { ...adjustDependentSyncTargets(settings?.targets, nextWorldTarget - worldTarget), WORLD: nextWorldTarget },
+      };
+    }
+
+    function syncTargetFor(key, settings = syncSettings) {
       const syncKey = key || "WORLD";
-      const worldTarget = clampSyncLatency(syncSettings.worldTarget == null ? defaultSyncTarget("WORLD") : syncSettings.worldTarget);
+      const worldTarget = clampSyncLatency(settings?.worldTarget == null ? defaultSyncTarget("WORLD") : settings.worldTarget);
       if (syncKey === "WORLD") return worldTarget;
-      const value = syncSettings.targets?.[syncKey];
+      const value = settings?.targets?.[syncKey];
       return clampSyncLatency(value == null ? defaultSyncTarget(syncKey, worldTarget) : value);
     }
 
@@ -4731,6 +5076,7 @@
     const sessionStatusLabel = hasCurrentLiveSession && D.race?.lap ? `LAP ${D.race.lap} / ${D.race.laps || "—"}` : "";
     const timingLap = telemetryNumber(sessionClock?.lapCount?.lap) ?? telemetryNumber(D.race?.lap);
     const timingLaps = telemetryNumber(sessionClock?.lapCount?.laps) ?? telemetryNumber(D.race?.laps);
+    const replayLapAt = replaySync.mode === "replay" ? buildReplayLapAt(replayTimingData?.lapTimeline, timingLaps, replayTimingOffset) : null;
     const timingLapLabel = timingLap ? `Lap ${timingLap}/${timingLaps || "—"}` : "";
     const sessionFlag = sessionFlagFromClock(sessionClock, { status: wx.cond === "Rain" ? "yellow" : "green", label: wx.cond || "Session" });
     const timingFlag = sessionFlagFromClock(sessionClock, { status: hasCurrentLiveSession ? "green" : "yellow", label: hasCurrentLiveSession ? "Clear" : "Replay" });
@@ -4915,6 +5261,9 @@
       replayClockRef.current = replaySync.masterTime || 0;
     }, [replaySync.masterTime]);
     React.useEffect(() => {
+      liveTimingSyncRef.current = liveTimingRequestForMetrics(syncMetrics.WORLD, syncTargetFor("WORLD"));
+    }, [syncMetrics.WORLD?.liveLatency, syncMetrics.WORLD?.targetLatency, syncMetrics.WORLD?.videoTimeUtcMs, syncSettings]);
+    React.useEffect(() => {
       if (!liveWorkspaceReady || replaySync.mode === "replay" || pendingF1TvSelection) {
         setLiveTimingData(null);
         return undefined;
@@ -4927,7 +5276,8 @@
         liveTimingRequestRef.current = requestId;
         liveTimingInFlightRef.current = true;
         try {
-          const data = await window.pitwall.data.liveTiming({ source: "f1", targetLatencySeconds: syncTargetFor("WORLD") });
+          const timingSync = liveTimingSyncRef.current || { targetLatencySeconds: syncTargetFor("WORLD") };
+          const data = await window.pitwall.data.liveTiming({ source: "f1", targetUtcMs: timingSync.targetUtcMs, targetLatencySeconds: timingSync.targetLatencySeconds });
           if (cancelled || requestId !== liveTimingRequestRef.current) return;
           setLiveTimingData(data || null);
           logPitWallDebug("live.timing", {
@@ -5225,14 +5575,14 @@
               <>
                 <div className="timing-tower">
                   <TimingTowerHeader columns={towerColumns} sectorCounts={timingMiniSectorCounts} />
-                  {timingRows.map((t) => {
+                  {(() => { const overallBestLap = overallBestLapDuration(timingRows); return timingRows.map((t) => {
                     const d = D.byCode[t.code] || {};
                     return (
-                      <TimingTowerRow key={t.code} row={t} driver={d} columns={towerColumns} sectorCounts={timingMiniSectorCounts}
+                      <TimingTowerRow key={t.code} row={t} driver={d} columns={towerColumns} sectorCounts={timingMiniSectorCounts} overallBestLap={overallBestLap}
                         selected={selectedCode === t.code} moving={Boolean(movingRows[t.code])} elimination={showQualifyingElimination && isQualifyingEliminationRow(t, { qualifyingPhase, rowCount: timingRows.length })} registerRow={registerTimingRow}
                         onClick={() => { setSelected(t.code); setPreset("Intelligent"); setExpandedPane(null); }} />
                     );
-                  })}
+                  }); })()}
                 </div>
                 <RaceControlMessages messages={activeRaceControlMessages} />
               </>
@@ -5278,6 +5628,7 @@
           replaySync={replaySync}
           onReplayToggle={toggleReplayPlayback}
           onReplaySeek={seekReplayPlayers}
+          replayLapAt={replayLapAt}
           onSurfaceToggle={() => togglePlayerSurfacePlayback(key)}
           playbackLocked={partyPlaybackLocked}
           onSyncAll={() => syncReplayPlayers(replaySync.masterTime)}
@@ -5917,9 +6268,12 @@
                 replayMode={replaySync.mode}
                 replayTimingOffset={replayTimingOffset}
                 debugEnabled={syncSettings.debug}
+                liveMetrics={syncMetrics.WORLD}
+                liveTarget={syncTargetFor("WORLD")}
                 onReplayTimingAdjust={adjustReplayTimingOffset}
                 onReplayTimingReset={resetReplayTimingOffset}
                 onSyncAll={() => syncReplayPlayers(replaySync.masterTime)}
+                onLiveSyncToTarget={() => syncLivePlayersToTarget("WORLD")}
                 onToggleDebug={() => setSyncSettings((settings) => ({ ...settings, debug: !settings.debug }))}
               />
             </span>

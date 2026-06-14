@@ -51,6 +51,7 @@
     "Loading F1 news",
     "Checking Apexline connections",
   ];
+  const SEEDED_CONSTRUCTOR_ROWS = (window.PW_DATA?.constructors || []).map((row) => ({ ...row }));
 
   function ensureLoadingStyles() {
     if (document.getElementById("pw-startup-loading-styles")) return;
@@ -246,9 +247,22 @@
     return Object.fromEntries((drivers || []).map((driver) => [driver.code, driver]));
   }
 
-  function mergeRowsByKey(baseRows, incomingRows, key) {
-    const base = new Map((baseRows || []).map((row) => [row[key], row]));
-    return (incomingRows || []).map((row) => ({ ...(base.get(row[key]) || {}), ...row }));
+  function mergeRowsByKey(baseRows, incomingRows, key, options = {}) {
+    const baseList = baseRows || [];
+    const base = new Map(baseList.filter((row) => row?.[key]).map((row) => [row[key], row]));
+    const seen = new Set();
+    const merged = (incomingRows || []).map((row) => {
+      const rowKey = row?.[key];
+      if (!rowKey) return null;
+      seen.add(rowKey);
+      return { ...(base.get(rowKey) || {}), ...row };
+    }).filter(Boolean);
+    if (options.includeMissing === false) return merged;
+    return merged.concat(baseList.filter((row) => row?.[key] && !seen.has(row[key])));
+  }
+
+  function constructorMetadataRows(seedRows, baseRows) {
+    return mergeRowsByKey(seedRows, baseRows, "abbr");
   }
 
   function copilotDailyUpdatedAtMs(daily) {
@@ -271,6 +285,7 @@
 
   function shouldKeepCurrentCopilotDaily(current, incoming) {
     if (!current || !incoming) return false;
+    if (incoming.targetFingerprint && incoming.targetFingerprint !== current.targetFingerprint) return false;
     const currentTime = copilotDailyUpdatedAtMs(current);
     const incomingTime = copilotDailyUpdatedAtMs(incoming);
     if (currentTime && incomingTime && incomingTime < currentTime) return true;
@@ -327,12 +342,13 @@
   }
 
   function mergeData(base, incoming) {
+    const constructorBaseRows = constructorMetadataRows(SEEDED_CONSTRUCTOR_ROWS, base?.constructors);
     const merged = normalizeScheduleData({
       ...EMPTY_DATA,
       ...(base || {}),
       ...(incoming || {}),
       drivers: incoming?.drivers?.length ? mergeRowsByKey(base?.drivers, incoming.drivers, "code") : (base?.drivers || []),
-      constructors: incoming?.constructors?.length ? mergeRowsByKey(base?.constructors, incoming.constructors, "abbr") : (base?.constructors || []),
+      constructors: incoming?.constructors?.length ? mergeRowsByKey(constructorBaseRows, incoming.constructors, "abbr", { includeMissing: false }) : (base?.constructors || []),
       standings: incoming?.standings?.length ? incoming.standings : base?.standings || [],
       driverForm: incoming?.driverForm || base?.driverForm || {},
       formRounds: incoming?.formRounds?.length ? incoming.formRounds : base?.formRounds || [],
@@ -389,7 +405,7 @@
     const dataSource = data.sourceLabel || (data.source === "live" ? "Live data" : "Waiting for live data");
 
     async function refreshData(options = {}) {
-      if (!window.pitwall?.data?.snapshot) return;
+      if (!window.pitwall?.data?.snapshot) return null;
       try {
         if (options.initial) setInitialLoadError("");
         const snapshot = options.forceRefresh
@@ -401,9 +417,11 @@
           clearTimeout(enrichmentTimerRef.current);
           enrichmentTimerRef.current = setTimeout(refreshData, 2500);
         }
+        return snapshot;
       } catch {
         setData((current) => ({ ...current, source: "error", sourceLabel: "Live data unavailable" }));
         if (options.initial) setInitialLoadError("Fresh live data is unavailable right now.");
+        return null;
       }
     }
 
@@ -449,7 +467,7 @@
       const initialRefreshTimer = bypassInitialLiveDataGate
         ? setTimeout(() => refreshData({ forceRefresh: true, initial: true }), 2500)
         : null;
-      if (!bypassInitialLiveDataGate) refreshData({ forceRefresh: true, initial: true });
+      if (!bypassInitialLiveDataGate) refreshData({ initial: true });
       refreshConnections();
       const timer = setInterval(refreshData, 1000 * 60 * 3);
       return () => {

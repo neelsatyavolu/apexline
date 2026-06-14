@@ -87,6 +87,11 @@
     return nextSession?.session?.kind ? `${nextSession.session.kind} starts in` : nextSession?.startsAt ? "Starts in" : "Schedule status";
   }
 
+  function dashboardTrackConditionsSubtitle(race) {
+    const weatherLoc = race?.weatherLoc && race.weatherLoc !== "Latest session" ? race.weatherLoc : "";
+    return [race?.circuit || weatherLoc || race?.loc, "OpenF1"].filter(Boolean).join(" · ");
+  }
+
   function Dashboard({ onNavigate }) {
     const { data: D, profile, dataSource, refreshData } = window.PW.usePitWall();
     const top5 = D.standings.slice(0, 5);
@@ -174,7 +179,7 @@
               </div>
             </Card>
 
-            <Card title="Track conditions" subtitle={(D.race.weatherLoc || D.race.loc || "Latest session") + " · OpenF1"} padding="default">
+            <Card title="Track conditions" subtitle={dashboardTrackConditionsSubtitle(D.race)} padding="default">
               <div className="weather">
                 <div className="wx"><span className="wx__icon"><Icon name="thermometer" size={17} /></span><div><div className="wx__v">{wx.air != null && wx.air !== "" ? wx.air + "°" : "—"}</div><div className="wx__l">Air temp</div></div></div>
                 <div className="wx"><span className="wx__icon"><Icon name="gauge" size={17} /></span><div><div className="wx__v">{wx.track != null && wx.track !== "" ? wx.track + "°" : "—"}</div><div className="wx__l">Track</div></div></div>

@@ -55,6 +55,12 @@
     .saved:last-child { border-bottom: 0; }
     .saved__txt { font-size: var(--text-sm); color: var(--text-secondary); line-height: 1.35; }
     .empty { padding: var(--space-8); border: 1px dashed var(--border-default); border-radius: var(--radius-md); color: var(--text-tertiary); text-align: center; font-size: var(--text-sm); }
+    .news-refresh-loading { min-height: 420px; display: grid; place-items: center; padding: var(--space-9); border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: radial-gradient(110% 90% at 50% 0%, var(--accent-soft), transparent 54%), var(--bg-sunken); }
+    .news-refresh-loading__box { width: min(440px, 100%); display: flex; flex-direction: column; gap: var(--space-5); }
+    .news-refresh-loading__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); }
+    .news-refresh-loading__track { position: relative; height: 8px; border-radius: var(--radius-pill); overflow: hidden; background: rgba(255,255,255,0.08); box-shadow: var(--inset-top-light); }
+    .news-refresh-loading__fill { position: absolute; inset: 0 auto 0 0; width: 42%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--success) 70%, #fff)); box-shadow: 0 0 14px var(--blue-glow); animation: news-refresh-load 1.15s var(--ease-in-out) infinite; }
+    @keyframes news-refresh-load { 0% { transform: translateX(-105%); } 50% { transform: translateX(72%); } 100% { transform: translateX(240%); } }
     .news-reader { position: fixed; inset: 0; z-index: 140; display: grid; place-items: center; padding: var(--space-9); background: radial-gradient(80% 70% at 50% 8%, rgba(226,31,38,0.14), transparent 58%), rgba(3,5,8,0.78); backdrop-filter: blur(14px); }
     .news-reader__panel { width: min(920px, 100%); max-height: min(860px, calc(100vh - 48px)); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); border-radius: var(--radius-lg); border: 1px solid var(--border-default); background: color-mix(in srgb, var(--surface-overlay) 95%, black); box-shadow: 0 28px 90px rgba(0,0,0,0.48), 0 0 0 1px rgba(255,255,255,0.03) inset; }
     .news-reader__bar { min-width: 0; display: flex; align-items: center; gap: var(--space-5); padding: var(--space-6) var(--space-7); border-bottom: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--bg-base) 82%, transparent); }
@@ -117,6 +123,7 @@
     const [selectedId, setSelectedId] = React.useState(stories[0]?.id);
     const [readerStory, setReaderStory] = React.useState(null);
     const [bookmarks, setBookmarks] = React.useState([]);
+    const [refreshing, setRefreshing] = React.useState(false);
     const filters = ["All", ...Array.from(new Set(stories.map((story) => story.tag).filter(Boolean)))];
     const q = query.trim().toLowerCase();
     const filtered = stories.filter((n) => {
@@ -150,6 +157,20 @@
       else window.open(url, "_blank", "noopener");
     }
 
+    async function refreshNews() {
+      if (refreshing) return;
+      setRefreshing(true);
+      try {
+        let snapshot = await refreshData({ forceRefresh: true });
+        for (let attempt = 0; snapshot?.enrichmentPending && attempt < 4; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          snapshot = await refreshData();
+        }
+      } finally {
+        setRefreshing(false);
+      }
+    }
+
     return (
       <div className="news2">
         <div>
@@ -159,11 +180,18 @@
             {filters.map((f) => <Tag key={f} selected={filter === f} onClick={() => setFilter(f)}>{f}</Tag>)}
             <Tag swatch="var(--team-mclaren)" selected={query === "mclaren"} onClick={() => setQuery("mclaren")}>McLaren</Tag>
             <Tag swatch="var(--team-ferrari)" selected={query === "ferrari"} onClick={() => setQuery("ferrari")}>Ferrari</Tag>
-            <div style={{ marginLeft: "auto" }}><Button variant="ghost" size="sm" onClick={() => { setFilter("All"); setQuery(""); }} iconLeft={<Icon name="filter" size={14} />}>Reset</Button></div>
+            <div style={{ marginLeft: "auto" }}><Button variant="secondary" size="sm" onClick={refreshNews} disabled={refreshing} iconLeft={<Icon name="news" size={14} />}>{refreshing ? "Refreshing..." : "Refresh news"}</Button></div>
           </div>
 
           <div className="feed">
-            {lead ? (
+            {refreshing ? (
+              <div className="news-refresh-loading" role="progressbar" aria-label="Loading F1 news" aria-busy="true">
+                <div className="news-refresh-loading__box">
+                  <div className="news-refresh-loading__top"><span>Loading F1 news</span><span>Live sources</span></div>
+                  <div className="news-refresh-loading__track" aria-hidden="true"><span className="news-refresh-loading__fill" /></div>
+                </div>
+              </div>
+            ) : lead ? (
               <article className="lead">
                 <div className="lead__img" style={{ "--_c": lead.color }}>
                   {lead.image && <img src={lead.image} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} />}

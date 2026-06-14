@@ -92,13 +92,13 @@ const PROFILE_FILE = "pitwall-profile.json";
 const AI_PREFERENCES_FILE = "pitwall-ai-preferences.json";
 const SOCIAL_FILE = "apexline-social.json";
 const COPILOT_INSIGHTS_FILE = "pitwall-copilot-insights.json";
-const COPILOT_INSIGHTS_SCHEMA_VERSION = 8;
+const COPILOT_INSIGHTS_SCHEMA_VERSION = 13;
 const DEBUG_LOG_FILE = "pitwall-debug.log";
 const ANALYTICS_SESSION_CACHE_FILE = "pitwall-analytics-session-cache.json";
 const F1TV_LIBRARY_CACHE_FILE = "pitwall-f1tv-library-cache.json";
 const LIVE_SNAPSHOT_CACHE_FILE = "pitwall-live-snapshot-cache.json";
 const F1TV_LIBRARY_CACHE_VERSION = 6;
-const LIVE_SNAPSHOT_CACHE_VERSION = 2;
+const LIVE_SNAPSHOT_CACHE_VERSION = 4;
 const PITWALL_UPDATE_BASE_URL = String(process.env.APEXLINE_UPDATE_BASE_URL || process.env.PITWALL_UPDATE_BASE_URL || appPackage.apexline?.updateBaseUrl || appPackage.pitwall?.updateBaseUrl || "").replace(/\/+$/, "");
 const SOCIAL_API_BASE_URL = String(process.env.APEXLINE_SOCIAL_API_BASE_URL || PITWALL_UPDATE_BASE_URL || "https://apexline.io").replace(/\/+$/, "");
 const F1TV_HOME_URL = "https://f1tv.formula1.com/";
@@ -1667,10 +1667,14 @@ function timeAgo(dateText) {
 
 function classifyNews(title) {
   const text = title.toLowerCase();
+  const reactionStory = /["“”]|\b(message|reaction|reacts?|responds?|says|said|admits?|explains?|reveals?|emotional|dream)\b/.test(text);
+  const resultStory = /\b(qualifying|practice|results?|winner|wins?|won|podium|grid|classification|finishes?|finished|dnfs?|disqualified)\b/.test(text)
+    || /\b(?:claims?|takes?|secures?|seals|earns?|scores?)\b.{0,80}\b(?:win|victory)\b/.test(text)
+    || /\b(?:first|maiden)\b.{0,60}\b(?:win|victory)\b/.test(text);
   if (/breaking|urgent|confirmed|penalty|investigation/.test(text)) return "Breaking";
   if (/upgrade|floor|wing|engine|aero|technical|regulation/.test(text)) return "Tech";
-  if (/strategy|pit|tyre|tire|undercut|overcut/.test(text)) return "Strategy";
-  if (/qualifying|practice|race|result|winner|podium/.test(text)) return "Results";
+  if (resultStory && !reactionStory) return "Results";
+  if (/\b(strategy|pit|pits|pitted|pitstop|pit-stop|tyres?|tires?|undercut|overcut|stints?)\b|\bpit stop\b|\bpit lane\b/.test(text)) return "Strategy";
   return "Paddock";
 }
 
@@ -1712,6 +1716,19 @@ function absoluteNewsUrl(value, baseUrl) {
 
 function normalizeNewsUrl(value) {
   return String(value || "").replace(/[?#].*$/, "").replace(/\/$/, "").toLowerCase();
+}
+
+function extractHtmlCardContext(html, index, length = 0) {
+  const source = String(html || "");
+  const startIndex = Math.max(0, Number(index) || 0);
+  const endIndex = startIndex + Math.max(0, Number(length) || 0);
+  for (const match of source.matchAll(/<article\b[^>]*>[\s\S]*?<\/article>/gi)) {
+    const articleStart = match.index || 0;
+    const articleEnd = articleStart + match[0].length;
+    if (articleStart <= startIndex && articleEnd >= endIndex) return match[0];
+    if (articleStart > startIndex) break;
+  }
+  return "";
 }
 
 function extractHtmlDate(value) {
@@ -1925,14 +1942,15 @@ function parseNewsHtml(html, source) {
     if (seen.has(urlKey)) continue;
     seen.add(urlKey);
     const context = html.slice(Math.max(0, match.index - 900), match.index + match[0].length + 1400);
+    const cardContext = extractHtmlCardContext(html, match.index, match[0].length);
     const afterLink = html.slice(match.index + match[0].length, match.index + match[0].length + 1000);
     stories.push(normalizeNewsStory(source.name, stories.length, {
       title,
-      lead: extractHtmlPreview(afterLink, title),
+      lead: extractHtmlPreview(afterLink, title) || extractHtmlPreview(cardContext, title),
       body: "",
       url,
-      publishedAt: extractHtmlDate(context),
-      image: extractHtmlImage(context, source.url),
+      publishedAt: extractHtmlDate(cardContext) || extractHtmlDate(context),
+      image: extractHtmlImage(cardContext, source.url) || extractHtmlImage(context, source.url),
     }));
     if (stories.length >= 12) break;
   }
@@ -1946,14 +1964,17 @@ function parseNewsSource(raw, source) {
 }
 
 async function enrichNewsStoryImages(stories, limit = 24, fetchText = requestText) {
-  const targets = stories.filter((story) => story.url && (!story.image || !story.publishedAt || story.time === "1m")).slice(0, limit);
+  const targets = stories.filter((story) => story.url && (!story.lead || !story.image || !story.publishedAt || story.time === "1m")).slice(0, limit);
   await Promise.all(targets.map(async (story) => {
     try {
       const html = await fetchText(story.url, 6500);
       story.image = extractArticleMetaImage(html, story.url) || story.image;
       story.images = Array.from(new Set([story.image, ...extractArticleImages(html, story.url)].filter(Boolean))).slice(0, 8);
       const body = extractArticleBody(html, story.lead || story.body || "");
-      if (body) story.body = body;
+      if (body) {
+        story.body = body;
+        if (!story.lead) story.lead = body.split(/\n{2,}/)[0].replace(/\s+/g, " ").trim();
+      }
       const publishedAt = extractArticleMetaDate(html);
       if (publishedAt) {
         story.publishedAt = publishedAt;
@@ -2192,10 +2213,86 @@ function parseOfficialF1ConstructorStandings(html) {
 }
 
 function championshipPositionDelta(row) {
-  const current = Number(row?.position_current || row?.position);
-  const start = Number(row?.position_start);
+  const current = championshipRowPosition(row);
+  const start = championshipStandingNumber(row?.position_start);
   if (!Number.isFinite(current) || !Number.isFinite(start)) return 0;
   return start - current;
+}
+
+function applyChampionshipPositionDeltas(rows = [], previousRows = [], key = "code") {
+  if (!Array.isArray(rows) || !rows.length || !Array.isArray(previousRows) || !previousRows.length) return rows;
+  const previousPositionByKey = new Map(previousRows.map((row) => [
+    String(row?.[key] || "").toUpperCase(),
+    championshipStandingNumber(row?.pos, row?.position),
+  ]).filter(([rowKey, pos]) => rowKey && Number.isFinite(pos)));
+  if (!previousPositionByKey.size) return rows;
+  return rows.map((row) => {
+    const rowKey = String(row?.[key] || "").toUpperCase();
+    const current = championshipStandingNumber(row?.pos, row?.position);
+    const previous = previousPositionByKey.get(rowKey);
+    if (!rowKey || !Number.isFinite(current) || !Number.isFinite(previous)) return row;
+    return { ...row, delta: previous - current };
+  });
+}
+
+function championshipRowsNeedPreviousDeltas(rows = []) {
+  return Array.isArray(rows) && rows.length > 0 && rows.every((row) => !Number(row?.delta));
+}
+
+function championshipStandingNumber(...values) {
+  for (const value of values) {
+    const number = finiteNumber(value);
+    if (number != null) return number;
+  }
+  return null;
+}
+
+function championshipRowPosition(row) {
+  return championshipStandingNumber(row?.position_current, row?.position, row?.position_start);
+}
+
+function championshipRowPoints(row) {
+  return championshipStandingNumber(row?.points_current, row?.points) ?? 0;
+}
+
+function championshipStandingRows(rows = []) {
+  const items = (rows || []).map((row, index) => ({
+    row,
+    index,
+    pos: championshipRowPosition(row),
+    pts: championshipRowPoints(row),
+  }));
+  const fallbackOrder = items.slice().sort((a, b) => {
+    if (b.pts !== a.pts) return b.pts - a.pts;
+    if (a.pos != null && b.pos != null && a.pos !== b.pos) return a.pos - b.pos;
+    if (a.pos != null) return -1;
+    if (b.pos != null) return 1;
+    return a.index - b.index;
+  });
+  const fallbackPositionByIndex = new Map(fallbackOrder.map((item, index) => [item.index, index + 1]));
+  return items
+    .map((item) => ({ ...item, pos: item.pos ?? fallbackPositionByIndex.get(item.index) ?? item.index + 1 }))
+    .sort((a, b) => (a.pos - b.pos) || (b.pts - a.pts) || (a.index - b.index));
+}
+
+function constructorStandingsCoverExpectedTeams(rows = [], expectedRows = []) {
+  const expectedKeys = new Set((expectedRows || []).map((row) => String(row?.abbr || row?.name || "").trim().toUpperCase()).filter(Boolean));
+  const rowKeys = new Set((rows || []).map((row) => String(row?.abbr || row?.name || "").trim().toUpperCase()).filter(Boolean));
+  const expectedCount = expectedKeys.size || 10;
+  return rowKeys.size >= expectedCount;
+}
+
+function selectConstructorStandings(openF1Constructors = [], officialF1Constructors = [], f1ApiConstructors = [], jolpicaConstructors = [], expectedRows = []) {
+  if (constructorStandingsCoverExpectedTeams(openF1Constructors, expectedRows)) return openF1Constructors;
+  if (officialF1Constructors.length) return officialF1Constructors;
+  if (f1ApiConstructors.length) return f1ApiConstructors;
+  if (jolpicaConstructors.length) return jolpicaConstructors;
+  return openF1Constructors;
+}
+
+function shouldFetchOfficialConstructorStandings(raw, expectedRows = []) {
+  if (parseOfficialF1ConstructorStandings(raw?.officialF1ConstructorStandings).length) return false;
+  return !constructorStandingsCoverExpectedTeams(parseOpenF1ConstructorStandings(raw?.openF1ConstructorStandings), expectedRows);
 }
 
 function parseOpenF1DriverStandings(rows = [], fallbackDrivers = []) {
@@ -2205,13 +2302,13 @@ function parseOpenF1DriverStandings(rows = [], fallbackDrivers = []) {
       season: String(new Date().getFullYear()),
       round: 0,
     },
-    standings: (rows || []).map((row) => {
+    standings: championshipStandingRows(rows).map(({ row, pos, pts }) => {
       const driver = driverByNumber.get(Number(row.driver_number)) || {};
       const code = driver.code || String(row.driver_number || "");
       return {
-        pos: Number(row.position_current || row.position),
+        pos,
         code,
-        pts: Number(row.points_current || row.points || 0),
+        pts,
         wins: 0,
         delta: championshipPositionDelta(row),
         driver: {
@@ -2227,17 +2324,17 @@ function parseOpenF1DriverStandings(rows = [], fallbackDrivers = []) {
 }
 
 function parseOpenF1ConstructorStandings(rows = []) {
-  return (rows || []).map((row) => {
-    const name = row.team_name || row.team || "";
+  return championshipStandingRows(rows).map(({ row, pos, pts }) => {
+    const name = [row.team_name, row.team].find((value) => typeof value === "string" && value.trim())?.trim() || "";
     return {
-      pos: Number(row.position_current || row.position),
+      pos,
       abbr: teamAbbr(name),
       name,
-      pts: Number(row.points_current || row.points || 0),
+      pts,
       wins: 0,
       delta: championshipPositionDelta(row),
     };
-  });
+  }).filter((row) => row.abbr && row.name);
 }
 
 function parseDriverRecentForm(json, maxRaces = 5) {
@@ -2270,21 +2367,23 @@ function parseDriverRecentForm(json, maxRaces = 5) {
   return { formRounds, driverForm };
 }
 
-function driverResultsUrl(round) {
-  return `${JOLPICA_ERGAST_BASE_URL}/current/${encodeURIComponent(String(round))}/results.json?limit=100`;
+function driverResultsUrl(season, round) {
+  const year = String(season || new Date().getFullYear()).replace(/[^0-9]/g, "") || String(new Date().getFullYear());
+  return `${JOLPICA_ERGAST_BASE_URL}/${encodeURIComponent(year)}/${encodeURIComponent(String(round))}/results.json?limit=100`;
 }
 
-async function fetchRecentDriverResults(schedule = [], maxRaces = 5) {
+async function fetchRecentDriverResults(schedule = [], maxRaces = 5, season = new Date().getFullYear()) {
+  const year = String(season || new Date().getFullYear()).replace(/[^0-9]/g, "") || String(new Date().getFullYear());
   const recent = (schedule || [])
     .filter((race) => String(race?.status || "").toLowerCase() === "done" && race?.rnd)
     .slice(-Math.max(1, Number(maxRaces) || 5));
   if (!recent.length) return null;
   const races = (await Promise.all(recent.map(async (race) => {
     try {
-      const cacheKey = String(race.rnd);
+      const cacheKey = `${year}:${race.rnd}`;
       const cached = recentDriverResultsCache.get(cacheKey);
       if (cached && Date.now() - cached.createdAt < RECENT_DRIVER_RESULTS_CACHE_MS) return cached.race;
-      const json = await requestMaybeOpenF1Json(driverResultsUrl(race.rnd));
+      const json = await requestMaybeOpenF1Json(driverResultsUrl(year, race.rnd));
       const race = (json?.MRData?.RaceTable?.Races || json?.RaceTable?.Races || [])[0] || null;
       if (race) recentDriverResultsCache.set(cacheKey, { createdAt: Date.now(), race });
       return race;
@@ -3600,6 +3699,13 @@ function f1TimingArchiveStartUtcMs(sessionData) {
   return null;
 }
 
+function f1TimingArchiveSecondsForUtc(sessionData, targetUtcMs) {
+  const utcMs = finiteNumber(targetUtcMs);
+  if (utcMs == null) return null;
+  const archiveStartUtcMs = f1TimingArchiveStartUtcMs(sessionData);
+  return Number.isFinite(archiveStartUtcMs) ? (utcMs - archiveStartUtcMs) / 1000 : utcMs / 1000;
+}
+
 function f1TimingVideoStartArchiveSeconds(sessionData, options) {
   options = options || {};
   const explicitSeconds = finiteNumber(options.videoStartArchiveSeconds);
@@ -3833,6 +3939,90 @@ function f1TimingSegments(sector) {
   const tones = values.map((segment) => timingSegmentTone(segment?.Status ?? segment?.status ?? segment));
   while (tones.at(-1) === "off") tones.pop();
   return tones;
+}
+
+function f1TimingSegmentProgress(segments) {
+  return Array.isArray(segments) ? segments.filter((tone) => tone && tone !== "off").length : 0;
+}
+
+function f1TimingMergeSectorSegments(previous, next) {
+  const previousSegments = Array.isArray(previous) ? previous : [];
+  const nextSegments = Array.isArray(next) ? next : [];
+  return f1TimingSegmentProgress(nextSegments) < f1TimingSegmentProgress(previousSegments)
+    ? previousSegments
+    : nextSegments;
+}
+
+function f1TimingLineSessionLap(line) {
+  return finiteNumber(line?.NumberOfLaps) ?? finiteNumber(line?.NumberOfLap) ?? finiteNumber(line?.LapNumber);
+}
+
+function f1TimingSectorHistoryAt(entries, targetSeconds) {
+  const history = new Map();
+  let state = {};
+  for (const entry of entries || []) {
+    if (entry.seconds > targetSeconds) break;
+    state = mergeF1TimingDelta(state, entry.data);
+    const lines = state?.Lines || {};
+    const deltaLines = entry?.data?.Lines || {};
+    for (const [numberText, deltaLine] of Object.entries(deltaLines)) {
+      const line = lines?.[numberText] || deltaLine;
+      const number = Number(line?.RacingNumber || deltaLine?.RacingNumber || numberText);
+      if (!Number.isFinite(number)) continue;
+      const lap = f1TimingLineSessionLap(line);
+      const previous = history.get(number);
+      const sameLap = previous && (lap == null || previous.lap == null || previous.lap === lap);
+      const deltaSectors = deltaLine?.Sectors || {};
+      const sectorKeys = [["0", "s1"], ["1", "s2"], ["2", "s3"]];
+      const touched = sectorKeys
+        .map(([sectorIndex, sectorKey], index) => (
+          Object.prototype.hasOwnProperty.call(deltaSectors, sectorIndex)
+            ? { index, sectorKey, progress: f1TimingSegmentProgress(f1TimingSegments(deltaSectors[sectorIndex])) }
+            : null
+        ))
+        .filter(Boolean);
+      const previousProgress = sectorKeys.map(([, sectorKey]) => f1TimingSegmentProgress(previous?.sectors?.[sectorKey]));
+      const rollsOverSectorPhase = sameLap && touched.some((item) => (
+        item.progress > 0
+          && previousProgress[item.index] > item.progress
+          && previousProgress.slice(item.index + 1).some((progress) => progress > 0)
+          && !touched.some((other) => other.index > item.index && other.progress > 0)
+      ));
+      const previousSectors = sameLap && !rollsOverSectorPhase ? previous.sectors : {};
+      const sectorSegments = (sectorIndex, sectorKey) => (
+        Object.prototype.hasOwnProperty.call(deltaSectors, sectorIndex)
+          ? f1TimingMergeSectorSegments(previousSectors?.[sectorKey], f1TimingSegments(deltaSectors[sectorIndex]))
+          : sameLap ? previousSectors?.[sectorKey] || [] : []
+      );
+      history.set(number, {
+        lap,
+        sectors: {
+          s1: sectorSegments("0", "s1"),
+          s2: sectorSegments("1", "s2"),
+          s3: sectorSegments("2", "s3"),
+        },
+      });
+    }
+  }
+  return history;
+}
+
+function f1TimingPreservedSegments(line, sectorIndex, sectorHistory, sectorKey) {
+  const current = f1TimingSegments(line?.Sectors?.[sectorIndex]);
+  const preserved = sectorHistory?.sectors?.[sectorKey];
+  if (sectorHistory) return Array.isArray(preserved) ? preserved : [];
+  return current;
+}
+
+function f1TimingPrunePrematureSectorSegments(sectors) {
+  const next = {
+    s1: Array.isArray(sectors?.s1) ? sectors.s1 : [],
+    s2: Array.isArray(sectors?.s2) ? sectors.s2 : [],
+    s3: Array.isArray(sectors?.s3) ? sectors.s3 : [],
+  };
+  const progress = (key) => f1TimingSegmentProgress(next[key]);
+  if (progress("s3") > 0 && progress("s2") < 3) next.s3 = [];
+  return next;
 }
 
 function f1TimingSectorTime(sector) {
@@ -4224,6 +4414,23 @@ function f1TimingLapTimeline(sessionData, timingAnchor, videoStartArchiveSeconds
   return timeline.sort((a, b) => a.lap - b.lap);
 }
 
+// Leader lap timeline for OpenF1 replays: earliest lap start across drivers, as session-elapsed seconds.
+// Powers the scrub-bar hover preview's lap readout. Returns [] when lap data is unavailable.
+function openF1LeaderLapTimeline(openF1Laps, sessionStartMs) {
+  if (!Array.isArray(openF1Laps) || !Number.isFinite(sessionStartMs)) return [];
+  const earliestByLap = new Map();
+  for (const row of openF1Laps) {
+    const lap = finiteNumber(row?.lap_number);
+    const startMs = Date.parse(row?.date_start || "");
+    if (!lap || !Number.isFinite(startMs)) continue;
+    const prev = earliestByLap.get(lap);
+    if (prev == null || startMs < prev) earliestByLap.set(lap, startMs);
+  }
+  return Array.from(earliestByLap.entries())
+    .map(([lap, startMs]) => ({ lap, elapsedSeconds: Math.max(0, (startMs - sessionStartMs) / 1000) }))
+    .sort((a, b) => a.lap - b.lap);
+}
+
 function parseF1TimingRaceControlMessages(entries, targetSeconds) {
   const state = f1TimingStateAt(entries || [], targetSeconds);
   const rawMessages = state?.Messages || state?.messages || state?.Message || [];
@@ -4277,6 +4484,7 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
     { x: row.x, y: row.y, z: row.z, status: row.status },
   ]));
   const knownCompounds = f1TimingKnownCompoundsByNumber(sessionData.timingAppEntries, targetSeconds);
+  const sectorHistoryByNumber = options.preserveSectorProgress ? f1TimingSectorHistoryAt(sessionData.timingEntries, targetSeconds) : null;
   const lines = timingState?.Lines || {};
   const appLines = appState?.Lines || {};
   const rows = Object.entries(lines).map(([numberText, line]) => {
@@ -4288,10 +4496,16 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
     const compound = stintCompound && stintCompound !== "unknown" ? stintCompound : knownCompounds.get(number) || "";
     const lastSeconds = f1TimingLapSeconds(line?.LastLapTime);
     const bestSeconds = f1TimingLapSeconds(line?.BestLapTime);
-    const sessionLap = finiteNumber(line?.NumberOfLaps) ?? finiteNumber(line?.NumberOfLap) ?? finiteNumber(line?.LapNumber);
+    const sessionLap = f1TimingLineSessionLap(line);
     const pos = finiteNumber(line?.Position) ?? finiteNumber(line?.Line) ?? finiteNumber(driver.Line) ?? 99;
     const gapValue = f1TimingValue(line?.GapToLeader);
     const intervalValue = f1TimingValue(line?.IntervalToPositionAhead);
+    const sectorHistory = sectorHistoryByNumber?.get(number);
+    const sectors = f1TimingPrunePrematureSectorSegments({
+      s1: f1TimingPreservedSegments(line, "0", sectorHistory, "s1"),
+      s2: f1TimingPreservedSegments(line, "1", sectorHistory, "s2"),
+      s3: f1TimingPreservedSegments(line, "2", sectorHistory, "s3"),
+    });
     return {
       pos,
       code: String(driver?.Tla || line?.Tla || numberText).toUpperCase(),
@@ -4317,11 +4531,7 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
         laps: finiteNumber(item?.TotalLaps),
         tyreAgeAtStart: finiteNumber(item?.StartLaps),
       })),
-      sectors: {
-        s1: f1TimingSegments(line?.Sectors?.["0"]),
-        s2: f1TimingSegments(line?.Sectors?.["1"]),
-        s3: f1TimingSegments(line?.Sectors?.["2"]),
-      },
+      sectors,
       sectorTimes: {
         s1: f1TimingSectorTime(line?.Sectors?.["0"]),
         s2: f1TimingSectorTime(line?.Sectors?.["1"]),
@@ -4881,8 +5091,7 @@ function getF1LiveTimingSnapshot(options = {}) {
   if (!f1LiveTimingState?.lastMessageAt || Date.now() - f1LiveTimingState.lastMessageAt > F1_TIMING_LIVE_STALE_MS) return null;
   const entriesByTopic = f1LiveTimingState.entriesByTopic || {};
   const targetLatencySeconds = Math.max(0, Math.min(90, Number(options.targetLatencySeconds || 0)));
-  const targetSeconds = Date.now() / 1000 - targetLatencySeconds;
-  const parsed = parseF1TimingArchiveRows({
+  const sessionData = {
     driverListEntries: entriesByTopic.DriverList || [],
     timingEntries: entriesByTopic.TimingData || [],
     timingAppEntries: entriesByTopic.TimingAppData || [],
@@ -4895,48 +5104,60 @@ function getF1LiveTimingSnapshot(options = {}) {
     weatherEntries: entriesByTopic.WeatherData || [],
     carDataEntries: entriesByTopic["CarData.z"] || [],
     positionEntries: entriesByTopic["Position.z"] || [],
-  }, targetLatencySeconds ? targetSeconds : Number.MAX_SAFE_INTEGER);
-  if (!parsed.timing.length && targetLatencySeconds) {
-    const latest = parseF1TimingArchiveRows({
-        driverListEntries: entriesByTopic.DriverList || [],
-        timingEntries: entriesByTopic.TimingData || [],
-        timingAppEntries: entriesByTopic.TimingAppData || [],
-        clockEntries: entriesByTopic.ExtrapolatedClock || [],
-        sessionDataEntries: entriesByTopic.SessionData || [],
-        sessionStatusEntries: entriesByTopic.SessionStatus || [],
-        trackStatusEntries: entriesByTopic.TrackStatus || [],
-        raceControlEntries: entriesByTopic.RaceControlMessages || [],
-        lapCountEntries: entriesByTopic.LapCount || [],
-        weatherEntries: entriesByTopic.WeatherData || [],
-        carDataEntries: entriesByTopic["CarData.z"] || [],
-        positionEntries: entriesByTopic["Position.z"] || [],
-      }, Number.MAX_SAFE_INTEGER);
+  };
+  const rawTargetUtcMs = options.targetUtcMs ?? options.targetUtc;
+  const parsedTargetUtcMs = typeof rawTargetUtcMs === "string" ? Date.parse(rawTargetUtcMs) : Number(rawTargetUtcMs);
+  const targetUtcMs = Number.isFinite(parsedTargetUtcMs) ? parsedTargetUtcMs : null;
+  const targetSeconds = targetUtcMs != null
+    ? f1TimingArchiveSecondsForUtc(sessionData, targetUtcMs)
+    : Date.now() / 1000 - targetLatencySeconds;
+  const hasTimingTarget = (targetUtcMs != null && Number.isFinite(targetSeconds)) || Boolean(targetLatencySeconds);
+  let parsed = parseF1TimingArchiveRows(sessionData, hasTimingTarget ? targetSeconds : Number.MAX_SAFE_INTEGER, { preserveSectorProgress: true });
+  if (hasTimingTarget && parsed.timing.length && parsed.timing.some((row) => (
+    finiteNumber(row?.telemetry?.speed) == null || finiteNumber(row?.telemetry?.gear) == null
+  ))) {
+    const latest = parseF1TimingArchiveRows(sessionData, Number.MAX_SAFE_INTEGER, { preserveSectorProgress: true });
     if (latest.timing.length) {
-      return {
-        ok: true,
-        sourceLabel: "Formula 1 live timing buffer warming",
-        fetchedAt: new Date().toISOString(),
-        timing: latest.timing,
-        weather: latest.weather,
-        sessionClock: latest.sessionClock,
-        raceControlMessages: latest.raceControlMessages,
-        errors: [],
-        diagnostics: latest.diagnostics,
-        message: "Timing is using latest rows until the latency buffer catches up.",
-      };
+      const latestByNumber = new Map();
+      const latestByCode = new Map();
+      latest.timing.forEach((row) => {
+        const number = finiteNumber(row?.number);
+        if (number != null) latestByNumber.set(number, row);
+        if (row?.code) latestByCode.set(String(row.code), row);
+      });
+      let telemetryFallbackRows = 0;
+      const timing = parsed.timing.map((row) => {
+        const current = row.telemetry || {};
+        if (finiteNumber(current.speed) != null && finiteNumber(current.gear) != null) return row;
+        const number = finiteNumber(row?.number);
+        const latestRow = (number != null ? latestByNumber.get(number) : null) || latestByCode.get(String(row?.code || ""));
+        const latestTelemetry = latestRow?.telemetry || {};
+        let changed = false;
+        const telemetry = { ...current };
+        ["speed", "gear", "throttle", "brake"].forEach((key) => {
+          if (finiteNumber(telemetry[key]) == null && finiteNumber(latestTelemetry[key]) != null) {
+            telemetry[key] = latestTelemetry[key];
+            changed = true;
+          }
+        });
+        if (!changed) return row;
+        telemetryFallbackRows += 1;
+        return { ...row, telemetry };
+      });
+      if (telemetryFallbackRows) parsed = { ...parsed, timing, diagnostics: { ...parsed.diagnostics, telemetryFallbackRows } };
     }
   }
   if (!parsed.timing.length) return null;
   return {
     ok: true,
-    sourceLabel: targetLatencySeconds ? `Formula 1 live timing -${Math.round(targetLatencySeconds)}s` : "Formula 1 live timing",
+    sourceLabel: targetUtcMs != null ? `Formula 1 live timing @ ${new Date(targetUtcMs).toISOString()}` : targetLatencySeconds ? `Formula 1 live timing -${Math.round(targetLatencySeconds)}s` : "Formula 1 live timing",
     fetchedAt: new Date().toISOString(),
     timing: parsed.timing,
     weather: parsed.weather,
     sessionClock: parsed.sessionClock,
     raceControlMessages: parsed.raceControlMessages,
     errors: [],
-    diagnostics: parsed.diagnostics,
+    diagnostics: { ...(parsed.diagnostics || {}), targetLatencySeconds, targetUtcMs },
     message: "",
   };
 }
@@ -5132,6 +5353,7 @@ async function getReplayOpenF1TimingSnapshot(options = {}) {
     sourceLabel: `Replay timing ${Math.floor(elapsedSeconds / 60)}:${String(Math.floor(elapsedSeconds % 60)).padStart(2, "0")}`,
     timing,
     weather: parseWeather(weatherRows),
+    lapTimeline: openF1LeaderLapTimeline(sessionData.openF1Laps, startMs),
     diagnostics: {
       positionRows: positions.length,
       intervalRows: intervals.length,
@@ -5254,6 +5476,111 @@ async function getLiveTimingSnapshot(options = {}) {
   };
   liveTimingCache = { key: cacheKey, createdAt: Date.now(), data };
   return data;
+}
+
+function liveTimingSectorProgress(row = {}) {
+  const sectors = row.sectors || {};
+  const count = (key) => Array.isArray(sectors[key]) ? sectors[key].filter((tone) => tone && tone !== "off").length : 0;
+  const s1 = count("s1");
+  const s2 = count("s2");
+  const s3 = count("s3");
+  return { s1, s2, s3, total: s1 + s2 + s3 };
+}
+
+function liveTimingDiagnosticSample(snapshot = {}, startedAt = Date.now()) {
+  const rows = Array.isArray(snapshot.timing) ? snapshot.timing : [];
+  const lap = Number(snapshot.sessionClock?.lapCount?.lap || 0) || null;
+  return {
+    t: Math.round((Date.now() - startedAt) / 100) / 10,
+    ok: Boolean(snapshot.ok),
+    sourceLabel: String(snapshot.sourceLabel || ""),
+    lap,
+    rowCount: rows.length,
+    top: rows.slice(0, 5).map((row) => ({
+      code: String(row.code || ""),
+      pos: Number(row.pos || 0) || null,
+      lap: Number(row.sessionLap || lap || 0) || null,
+      progress: liveTimingSectorProgress(row),
+    })),
+  };
+}
+
+function liveTimingDiagnosticIssues(samples = []) {
+  const lapBacktracks = [];
+  const sectorBacktracks = [];
+  const driverLapBacktracks = [];
+  let previousLap = null;
+  const previousByCode = new Map();
+  for (const sample of samples) {
+    if (sample.lap != null && previousLap != null && sample.lap < previousLap) {
+      lapBacktracks.push({ t: sample.t, previousLap, lap: sample.lap });
+    }
+    if (sample.lap != null) previousLap = sample.lap;
+    for (const row of sample.top || []) {
+      if (!row.code) continue;
+      const previous = previousByCode.get(row.code);
+      const lap = row.lap;
+      const total = Number(row.progress?.total || 0);
+      if (previous) {
+        if (lap != null && previous.lap != null && lap < previous.lap) {
+          driverLapBacktracks.push({ t: sample.t, code: row.code, previousLap: previous.lap, lap });
+        } else if (lap === previous.lap && total < previous.progressTotal) {
+          sectorBacktracks.push({ t: sample.t, code: row.code, lap, previousProgress: previous.progress, progress: row.progress });
+        }
+      }
+      previousByCode.set(row.code, { lap, progress: row.progress, progressTotal: total });
+    }
+  }
+  return { lapBacktracks, sectorBacktracks, driverLapBacktracks };
+}
+
+async function runLiveTimingDiagnosticAndQuit() {
+  if (!process.env.PITWALL_LIVE_TIMING_DIAG) return false;
+  const targetLatencySeconds = Math.max(0, Math.min(90, Number(process.env.PITWALL_LIVE_TIMING_TARGET_SECONDS || 36) || 36));
+  const sampleSeconds = Math.max(5, Math.min(120, Number(process.env.PITWALL_LIVE_TIMING_SAMPLE_SECONDS || 25) || 25));
+  const sampleIntervalMs = Math.max(250, Math.min(5000, Number(process.env.PITWALL_LIVE_TIMING_SAMPLE_INTERVAL_MS || 1000) || 1000));
+  const connectTimeoutMs = Math.max(1000, Math.min(30000, Number(process.env.PITWALL_LIVE_TIMING_CONNECT_TIMEOUT_MS || 12000) || 12000));
+  const startedAt = Date.now();
+  const samples = [];
+  let firstSnapshot = null;
+  while (Date.now() - startedAt < connectTimeoutMs) {
+    firstSnapshot = await getLiveTimingSnapshot({ source: "f1", targetLatencySeconds });
+    if (firstSnapshot?.timing?.length) break;
+    await wait(500);
+  }
+  const sampleStartedAt = Date.now();
+  if (firstSnapshot) samples.push(liveTimingDiagnosticSample(firstSnapshot, sampleStartedAt));
+  while (Date.now() - sampleStartedAt < sampleSeconds * 1000) {
+    await wait(sampleIntervalMs);
+    const snapshot = await getLiveTimingSnapshot({ source: "f1", targetLatencySeconds });
+    samples.push(liveTimingDiagnosticSample(snapshot || {}, sampleStartedAt));
+  }
+  const issues = liveTimingDiagnosticIssues(samples);
+  const hasRows = samples.some((sample) => sample.rowCount > 0);
+  const ok = Boolean(hasRows && !issues.lapBacktracks.length && !issues.sectorBacktracks.length && !issues.driverLapBacktracks.length);
+  const result = {
+    ok,
+    targetLatencySeconds,
+    sampleSeconds,
+    sampleIntervalMs,
+    sampleCount: samples.length,
+    rowCounts: samples.map((sample) => sample.rowCount),
+    laps: samples.map((sample) => sample.lap),
+    issues,
+    samples: samples.slice(0, 40),
+    message: hasRows ? "" : "Formula 1 live timing did not produce rows during the diagnostic window.",
+  };
+  writePitWallDebugLog("f1timing.live-diagnostic", {
+    ok,
+    targetLatencySeconds,
+    sampleCount: samples.length,
+    laps: result.laps,
+    issues,
+    message: result.message,
+  });
+  console.log(JSON.stringify({ pitwallLiveTimingDiagnostic: result }, null, 2));
+  app.exit(ok ? 0 : 2);
+  return true;
 }
 
 function latestLapsByDriverNumber(rows) {
@@ -5413,6 +5740,28 @@ function raceWeekendKey(race = {}) {
   return String(race.meetingKey || race.rnd || race.startsAt || race.name || "");
 }
 
+function copilotSessionIdentity(session = {}) {
+  return {
+    kind: String(session.kind || session.type || session.name || ""),
+    startsAt: String(session.startsAt || session.dateStart || session.date_start || ""),
+    status: String(session.status || ""),
+  };
+}
+
+function copilotRaceIdentity(race = {}) {
+  const round = finiteNumber(race.rnd) ?? finiteNumber(race.round);
+  return {
+    key: raceWeekendKey(race),
+    round: round == null ? null : round,
+    name: String(race.name || race.raceName || ""),
+    circuit: String(race.circuit || ""),
+    loc: String(race.loc || race.location || ""),
+    startsAt: String(race.startsAt || race.dateStart || race.date_start || ""),
+    status: String(race.status || ""),
+    sessions: (Array.isArray(race.sessions) ? race.sessions : []).map(copilotSessionIdentity),
+  };
+}
+
 function raceWeekendOrderValue(race = {}) {
   const round = finiteNumber(race.rnd);
   if (round != null) return round;
@@ -5457,6 +5806,23 @@ function nextUpcomingSession(schedule = []) {
   return sessions
     .filter((sessionItem) => sessionItem.kind)
     .sort((a, b) => Date.parse(a.startsAt || "") - Date.parse(b.startsAt || ""))[0] || {};
+}
+
+function copilotInsightTargetFingerprint(data = {}) {
+  const summary = data.seasonSummary || {};
+  const nextSession = nextUpcomingSession(data.schedule);
+  return JSON.stringify({
+    schemaVersion: 1,
+    season: String(summary.year || summary.season || data.season || ""),
+    round: finiteNumber(summary.round) ?? null,
+    currentRaceWeekend: copilotRaceIdentity(currentRaceWeekend(data.schedule)),
+    nextRaceWeekend: copilotRaceIdentity(nextRaceWeekend(data.schedule)),
+    nextUpcomingSession: nextSession?.kind ? copilotSessionIdentity(nextSession) : null,
+  });
+}
+
+function copilotInsightsCacheMatchesTarget(cached, targetFingerprint) {
+  return Boolean(cached?.targetFingerprint && cached.targetFingerprint === targetFingerprint);
 }
 
 function roundedMetric(value) {
@@ -5666,16 +6032,14 @@ async function fetchCopilotSeasonRaces(season, limit = 4) {
     .slice(0, limit);
 }
 
-async function buildNextWeekendPerformanceContext(data = {}) {
-  const targetRace = nextRaceWeekend(data.schedule);
-  const targetSession = nextUpcomingSession(data.schedule);
+async function buildWeekendPerformanceContext(data = {}, targetRace = {}, targetSessionKind = "Race") {
   const context = {
     available: false,
     target: {
       race: targetRace?.name || "",
       circuit: targetRace?.circuit || "",
       loc: targetRace?.loc || "",
-      session: targetSession?.kind || "Race",
+      session: targetSessionKind || "Race",
     },
     currentSeason: { label: "current season race performance", races: [], errors: [], available: false },
     previousSeason: { label: "previous season race performance", races: [], errors: [], available: false },
@@ -5714,7 +6078,33 @@ async function buildNextWeekendPerformanceContext(data = {}) {
   return context;
 }
 
+async function buildNextWeekendPerformanceContext(data = {}) {
+  const targetSession = nextUpcomingSession(data.schedule);
+  return buildWeekendPerformanceContext(data, nextRaceWeekend(data.schedule), targetSession?.kind || "Race");
+}
+
 async function dailyInsightSnapshot(data, pageId) {
+  const performanceContext = pageId === "next-weekend"
+    ? await buildNextWeekendPerformanceContext(data)
+    : pageId === "current-weekend"
+      ? await buildWeekendPerformanceContext(data, currentRaceWeekend(data.schedule), "Race")
+      : null;
+  const projectionBudget = championshipPointsBudget(data);
+  const projectionConstraints = ["drivers-championship", "constructors-championship"].includes(pageId)
+    ? {
+      type: pageId === "constructors-championship" ? "constructors_final_points" : "drivers_final_points",
+      finalPointsBudget: projectionBudget,
+      currentPointsTotal: championshipCurrentPointsTotal(data, pageId),
+      remainingPointsBudget: Math.max(0, projectionBudget - championshipCurrentPointsTotal(data, pageId)),
+      scoring: "Grand Prix points total 101 across classified points scorers; sprint points total 36. Projected final totals across the returned full order must not exceed finalPointsBudget.",
+    }
+    : { type: "race_points", perDriverProjectedPointsMin: 0, perDriverProjectedPointsMax: 25 };
+  const tyreAvailability = pageId === "current-weekend"
+    ? {
+      supplied: false,
+      guidance: "Driver available tyre sets are not supplied by this snapshot. For a current-weekend stint plan, look up the F1.com Strategy Guide and Pirelli race strategy or tyre graphics for the Tyres Available for Race table when your provider can browse/search; otherwise state that available tyre sets were not supplied.",
+    }
+    : null;
   return {
     focus: pageId,
     race: data.race,
@@ -5722,14 +6112,19 @@ async function dailyInsightSnapshot(data, pageId) {
     nextRaceWeekend: nextRaceWeekend(data.schedule),
     nextUpcomingSession: nextUpcomingSession(data.schedule),
     seasonSummary: data.seasonSummary,
+    drivers: (data.drivers || []).slice(0, 24),
     standings: (data.standings || []).slice(0, 22),
     constructors: (data.constructors || []).slice(0, 11),
+    driverForm: data.driverForm || {},
+    formRounds: (data.formRounds || []).slice(0, 30),
     timing: (data.timing || []).slice(0, 22),
     sessions: data.sessions || [],
     schedule: (data.schedule || []).slice(0, 30),
     strategyContext: data.strategyContext || null,
+    projectionConstraints,
+    tyreAvailability,
     weekendSessionSummaries: await buildWeekendSessionSummaries(data, pageId),
-    performanceContext: pageId === "next-weekend" ? await buildNextWeekendPerformanceContext(data) : null,
+    performanceContext,
     news: (data.news || []).slice(0, 8),
     source: data.sourceLabel || data.source || "",
   };
@@ -5841,18 +6236,19 @@ function dailyInsightPrompt(page) {
   const projectionEvidenceGuide = "For projections, provide these possible evidence sources without prescribing weights: 1. This week's F1 news, or the ability to search for it when available. 2. Every race this season's results. 3. Past results at this track. 4. Driver skill overall. 5. Freedom to find and use other relevant sources. The model decides how to weigh these sources, synthesize contradictions, and explain which data supports each pick.";
   const instructions = [
     `Build the daily precomputed Apexline Copilot page for: ${page.title}.`,
-    "Use only the provided snapshot. Do not invent factual tyre data, session results, weather, or factual claims not present in the snapshot.",
+    "Use only the provided snapshot, except for the explicit current-weekend tyre-availability lookup instruction when snapshot.tyreAvailability is not supplied. Do not invent factual tyre data, session results, weather, or factual claims not present in the snapshot or the cited tyre-availability source.",
     "If the snapshot lacks enough data for a claim, say what is missing.",
+    "For championship projections, obey snapshot.projectionConstraints.finalPointsBudget: the sum of projected final points across the full returned drivers or constructors order must not exceed that official season points budget, and each projected total must be at least the entrant's current points.",
     "Return concise race-engineer language with alerts only for real risks or uncertainties in the supplied data.",
   ];
   if (page.id === "current-weekend") {
-    instructions.push(`For this Current weekend page, compute AI predictions for the race winner, podium, and watchlist. ${projectionEvidenceGuide} Use supplied snapshot.weekendSessionSummaries for FP1-FP3, sprint, qualifying, race-pace, weather, tyre, and session-result evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. For race-plan visuals before the race has actual stint data, include projected tyre_strategy stints when the supplied practice, qualifying, weather, tyre, and news evidence supports a strategy read; set visualization.stintMode='projected', label the title/subtitle/notes as projected, and do not present projected stints as actual telemetry. If qualifying, race pace, weather, or timing data is missing, lower confidence and say so instead of filling gaps.`);
+    instructions.push(`For this Current weekend page, compute AI predictions for the race winner, podium, and watchlist. ${projectionEvidenceGuide} Use supplied snapshot.weekendSessionSummaries for FP1-FP3, sprint, qualifying, race-pace, weather, tyre, and session-result evidence when present — qualifying positions are the projected grid. Also use snapshot.performanceContext for recent-race pace and this circuit's history, snapshot.driverForm/formRounds for recent form, snapshot.standings and snapshot.drivers for the championship picture, and snapshot.strategyContext for tyre/pit context. For current-weekend stint plans, use driver available tyre sets when supplied; if snapshot.tyreAvailability says they are not supplied, look up the F1.com Strategy Guide and Pirelli race strategy or tyre graphics for the Tyres Available for Race table when your provider can browse/search, then cite which source you used. If browsing/search is unavailable or those sources do not show the table yet, explicitly say available tyre sets are not supplied before giving a projected plan. Decide for yourself how to weight each input. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. For race-plan visuals before the race has actual stint data, include projected tyre_strategy stints when the supplied practice, qualifying, weather, tyre, and news evidence supports a strategy read; set visualization.stintMode='projected', label the title/subtitle/notes as projected, and do not present projected stints as actual telemetry. For every prediction candidate set projectedPoints to the points you project they score in THIS race (0-25 for a Grand Prix, 0 if you project no points). If qualifying, race pace, weather, or timing data is missing, lower confidence and say so instead of filling gaps.`);
   } else if (page.id === "next-weekend") {
-    instructions.push(`For this Next weekend page, compute AI predictions for the Grand Prix race winner, podium, watchlist, and full predicted race finishing order. Treat snapshot.nextRaceWeekend as the race target; snapshot.nextUpcomingSession is schedule context only and must not change the leaderboard into FP1, qualifying, sprint, or any other session projection. ${projectionEvidenceGuide} Use supplied snapshot.performanceContext plus the rest of the snapshot when present. Put predictions in predictions with available=true, include the full predicted race finishing order in predictions.leaderboard, label it as a race projection, and explain the data behind each pick. For race-plan visuals before the race has actual stint data, include projected tyre_strategy stints when the supplied performance, track-history, weather, tyre, and news evidence supports a strategy read; set visualization.stintMode='projected', label the title/subtitle/notes as projected, and do not present projected stints as actual telemetry. If race pace, weather, tyre, season-performance, track-history, or timing data is missing for the next weekend, lower confidence and say so instead of filling gaps.`);
+    instructions.push(`For this Next weekend page, compute AI predictions for the Grand Prix race winner, podium, watchlist, and full predicted race finishing order. Treat snapshot.nextRaceWeekend as the race target; snapshot.nextUpcomingSession is schedule context only and must not change the leaderboard into FP1, qualifying, sprint, or any other session projection. ${projectionEvidenceGuide} Use supplied snapshot.performanceContext plus the rest of the snapshot when present. Put predictions in predictions with available=true, include the full predicted race finishing order in predictions.leaderboard, label it as a race projection, and explain the data behind each pick. For race-plan visuals before the race has actual stint data, include projected tyre_strategy stints when the supplied performance, track-history, weather, tyre, and news evidence supports a strategy read; set visualization.stintMode='projected', label the title/subtitle/notes as projected, and do not present projected stints as actual telemetry. For every prediction candidate set projectedPoints to the points you project they score in THIS race (0-25 for a Grand Prix, 0 if you project no points). If race pace, weather, tyre, season-performance, track-history, or timing data is missing for the next weekend, lower confidence and say so instead of filling gaps.`);
   } else if (page.id === "drivers-championship") {
-    instructions.push(`For this Drivers championship page, compute AI predictions for the drivers' championship winner, leading title contenders, and watchlist. ${projectionEvidenceGuide} Use supplied standings, wins, constructors, schedule, season summary, timing, strategy context, and news evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. If remaining-race count, form, reliability, or pace data is missing, lower confidence and say so instead of filling gaps.`);
+    instructions.push(`For this Drivers championship page, compute AI predictions for the drivers' championship winner, leading title contenders, and watchlist. ${projectionEvidenceGuide} Use supplied standings, wins, driver roster, recent form (snapshot.driverForm holds each driver's last finishing positions, snapshot.formRounds the matching rounds), constructors, schedule, season summary, timing, strategy context, and news evidence when present. Decide for yourself how to weight each input. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. Return the full projected drivers' order in predictions.leaderboard, and for every candidate set projectedPoints to your projected FINAL season points total (an integer >= the driver's current points), grounded on remaining rounds and form. If remaining-race count, form, reliability, or pace data is missing, lower confidence and say so instead of filling gaps.`);
   } else if (page.id === "constructors-championship") {
-    instructions.push(`For this Constructors championship page, compute AI predictions for the constructors' championship winner, leading title contenders, and watchlist. ${projectionEvidenceGuide} Use supplied constructors standings, driver standings, schedule, season summary, timing, strategy context, and news evidence when present. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. Use constructor abbreviations or names in prediction candidate code fields. If remaining-race count, form, reliability, or pace data is missing, lower confidence and say so instead of filling gaps.`);
+    instructions.push(`For this Constructors championship page, compute AI predictions for the constructors' championship winner, leading title contenders, and watchlist. ${projectionEvidenceGuide} Use supplied constructors standings, driver standings, driver roster, recent form (snapshot.driverForm / snapshot.formRounds), schedule, season summary, timing, strategy context, and news evidence when present. Decide for yourself how to weight each input. Put predictions in predictions with available=true, label them as projections, and explain the data behind each pick. Return the full projected constructors' order in predictions.leaderboard, and for every constructor candidate set projectedPoints to your projected FINAL season points total (an integer >= the team's current points). Use constructor abbreviations or names in prediction candidate code fields. If remaining-race count, form, reliability, or pace data is missing, lower confidence and say so instead of filling gaps.`);
   } else {
     instructions.push("For predictions, set available=false with empty winner, podium, leaderboard, and watchlist arrays.");
   }
@@ -5860,11 +6256,13 @@ function dailyInsightPrompt(page) {
 }
 
 function normalizePredictionCandidate(row = {}) {
+  const projectedPoints = Number(row.projectedPoints);
   return {
     code: String(row.code || "").slice(0, 8),
     label: String(row.label || row.name || row.code || "").slice(0, 64),
     confidence: Math.max(0, Math.min(1, Number(row.confidence || 0) || 0)),
     probability: Math.max(0, Math.min(1, Number(row.probability || 0) || 0)),
+    projectedPoints: Number.isFinite(projectedPoints) && projectedPoints >= 0 ? Math.round(projectedPoints) : null,
     reason: String(row.reason || "").slice(0, 180),
   };
 }
@@ -5878,9 +6276,143 @@ function normalizePredictionWatchItem(row = {}) {
   };
 }
 
-function normalizeDailyPredictions(value) {
-  if (!value || typeof value !== "object") return emptyDailyPredictions();
+function isMissingTyreAvailabilityAlert(alert = {}) {
+  const text = `${alert.title || ""} ${alert.body || ""} ${alert.detail || ""}`.toLowerCase();
+  return /tyre sets? not supplied|tire sets? not supplied|available tyre sets? (?:are )?not supplied|available tire sets? (?:are )?not supplied/.test(text);
+}
+
+function raceHasSprintPoints(race = {}) {
+  return (Array.isArray(race.sessions) ? race.sessions : []).some((session) => {
+    const text = String(session?.kind || session?.type || session?.name || "").toLowerCase();
+    return /\bsprint\b/.test(text) && !/qualifying|shootout/.test(text);
+  });
+}
+
+function championshipPointsBudget(data = {}) {
+  const grandPrixPoints = 101;
+  const sprintPoints = 36;
+  const schedule = Array.isArray(data.schedule) ? data.schedule : [];
+  const totalRounds = Math.max(0, Number(data?.seasonSummary?.totalRounds || schedule.length || 0) || 0);
+  if (!totalRounds) return 0;
+  const sprintCount = schedule.filter(raceHasSprintPoints).length;
+  return totalRounds * grandPrixPoints + sprintCount * sprintPoints;
+}
+
+function championshipCurrentPointsTotal(data = {}, pageId = "") {
+  const rows = pageId === "constructors-championship" ? data.constructors : data.standings;
+  return (Array.isArray(rows) ? rows : []).reduce((sum, row) => {
+    const points = Number(row?.pts);
+    return sum + (Number.isFinite(points) && points > 0 ? points : 0);
+  }, 0);
+}
+
+function projectionTextKey(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function currentPointsForProjectionCandidate(row = {}, data = {}, pageId = "") {
+  const code = String(row.code || "").toUpperCase();
+  const labelKey = projectionTextKey(row.label || row.name || row.code);
+  const rows = pageId === "constructors-championship" ? data.constructors : data.standings;
+  for (const item of Array.isArray(rows) ? rows : []) {
+    const itemCode = String(pageId === "constructors-championship" ? item.abbr : item.code || "").toUpperCase();
+    const itemNameKey = projectionTextKey(item.name || item.team || item.label || itemCode);
+    if (code && itemCode && code === itemCode) return Math.max(0, Math.round(Number(item.pts) || 0));
+    if (labelKey && itemNameKey && (labelKey.includes(itemNameKey) || itemNameKey.includes(labelKey))) {
+      return Math.max(0, Math.round(Number(item.pts) || 0));
+    }
+  }
+  return 0;
+}
+
+function scaleProjectedPointsToBudget(candidates = [], data = {}, pageId = "") {
+  const budget = championshipPointsBudget(data);
+  if (!budget || !Array.isArray(candidates) || !candidates.length) return candidates;
+  const normalized = candidates.map((candidate) => {
+    const current = currentPointsForProjectionCandidate(candidate, data, pageId);
+    const projected = Number(candidate.projectedPoints);
+    return {
+      candidate,
+      current,
+      value: Number.isFinite(projected) ? Math.max(current, Math.round(projected)) : null,
+    };
+  });
+  const entries = normalized.filter((entry) => entry.value != null);
+  const projectedTotal = entries.reduce((sum, entry) => sum + entry.value, 0);
+  if (projectedTotal <= budget) {
+    return normalized.map((entry) => entry.value == null ? entry.candidate : { ...entry.candidate, projectedPoints: entry.value });
+  }
+  const currentTotal = entries.reduce((sum, entry) => sum + entry.current, 0);
+  if (currentTotal >= budget) {
+    return normalized.map((entry) => entry.value == null ? entry.candidate : { ...entry.candidate, projectedPoints: entry.current });
+  }
+  const deltaBudget = budget - currentTotal;
+  const deltaTotal = entries.reduce((sum, entry) => sum + Math.max(0, entry.value - entry.current), 0);
+  if (!deltaTotal) {
+    return normalized.map((entry) => entry.value == null ? entry.candidate : { ...entry.candidate, projectedPoints: entry.current });
+  }
+
+  const currentRows = pageId === "constructors-championship" ? data.constructors : data.standings;
+  const completeProjection = entries.length >= (Array.isArray(currentRows) ? currentRows.length : Infinity);
+  const scaled = entries.map((entry) => {
+    const raw = entry.current + Math.max(0, entry.value - entry.current) * (deltaBudget / deltaTotal);
+    const floor = Math.floor(raw);
+    return { ...entry, adjusted: floor, remainder: raw - floor };
+  });
+  if (completeProjection) {
+    let spare = Math.max(0, budget - scaled.reduce((sum, entry) => sum + entry.adjusted, 0));
+    for (const entry of scaled.slice().sort((a, b) => b.remainder - a.remainder)) {
+      if (!spare) break;
+      entry.adjusted += 1;
+      spare -= 1;
+    }
+  }
+  const byCandidate = new Map(scaled.map((entry) => [entry.candidate, entry.adjusted]));
+  return normalized.map((entry) => (
+    byCandidate.has(entry.candidate)
+      ? { ...entry.candidate, projectedPoints: byCandidate.get(entry.candidate) }
+      : entry.candidate
+  ));
+}
+
+function normalizeChampionshipPredictionTotals(predictions, data = {}, pageId = "") {
+  if (!["drivers-championship", "constructors-championship"].includes(pageId)) return predictions;
+  const byCode = new Map();
+  for (const row of [...predictions.leaderboard, ...predictions.winner, ...predictions.podium]) {
+    const key = String(row.code || row.label || "").toUpperCase();
+    if (key && !byCode.has(key)) byCode.set(key, row);
+  }
+  const scaled = scaleProjectedPointsToBudget(Array.from(byCode.values()), data, pageId);
+  const scaledByCode = new Map(scaled.map((row) => [String(row.code || row.label || "").toUpperCase(), row.projectedPoints]));
+  const apply = (row) => {
+    const key = String(row.code || row.label || "").toUpperCase();
+    return scaledByCode.has(key) ? { ...row, projectedPoints: scaledByCode.get(key) } : row;
+  };
   return {
+    ...predictions,
+    winner: predictions.winner.map(apply),
+    podium: predictions.podium.map(apply),
+    leaderboard: predictions.leaderboard.map(apply),
+  };
+}
+
+function normalizeRaceProjectionTotals(predictions, pageId = "") {
+  if (!["current-weekend", "next-weekend"].includes(pageId)) return predictions;
+  const apply = (row) => {
+    if (row.projectedPoints == null) return row;
+    return { ...row, projectedPoints: Math.max(0, Math.min(25, Math.round(Number(row.projectedPoints) || 0))) };
+  };
+  return {
+    ...predictions,
+    winner: predictions.winner.map(apply),
+    podium: predictions.podium.map(apply),
+    leaderboard: predictions.leaderboard.map(apply),
+  };
+}
+
+function normalizeDailyPredictions(value, page = {}, data = {}) {
+  if (!value || typeof value !== "object") return emptyDailyPredictions();
+  const predictions = {
     available: Boolean(value.available),
     title: String(value.title || "").slice(0, 80),
     summary: String(value.summary || "").slice(0, 260),
@@ -5890,27 +6422,33 @@ function normalizeDailyPredictions(value) {
     watchlist: Array.isArray(value.watchlist) ? value.watchlist.slice(0, 4).map(normalizePredictionWatchItem) : [],
     caveat: String(value.caveat || "").slice(0, 220),
   };
+  return normalizeRaceProjectionTotals(normalizeChampionshipPredictionTotals(predictions, data, page.id), page.id);
 }
 
-function normalizeDailyInsightPage(page, answer) {
+function normalizeDailyInsightPage(page, answer, data = {}) {
+  const alerts = Array.isArray(answer?.alerts)
+    ? answer.alerts.filter((alert) => !isMissingTyreAvailabilityAlert(alert)).slice(0, 4)
+    : [];
   return {
     ...page,
     summary: String(answer?.summary || "The AI provider returned no summary for this page."),
-    bullets: (answer?.alerts || []).slice(0, 4).map((alert) => [alert.title, alert.body].filter(Boolean).join(": ")).filter(Boolean),
-    alerts: Array.isArray(answer?.alerts) ? answer.alerts.slice(0, 4) : [],
+    bullets: alerts.map((alert) => [alert.title, alert.body].filter(Boolean).join(": ")).filter(Boolean),
+    alerts,
     visualization: answer?.visualization || null,
-    predictions: normalizeDailyPredictions(answer?.predictions),
+    predictions: normalizeDailyPredictions(answer?.predictions, page, data),
     computed: true,
   };
 }
 
 async function refreshDailyCopilotInsights(data, generatedOn, options = {}) {
+  const targetFingerprint = copilotInsightTargetFingerprint(data);
   const pagesToRefresh = copilotInsightPagesForScope(options.pageId);
   const scoped = pagesToRefresh.length !== COPILOT_INSIGHT_PAGES.length;
   const previousDaily = options.previousDaily || null;
   const pendingSummary = scoped ? `Daily AI insight generation is queued for ${pagesToRefresh[0]?.title || "this page"}.` : "Daily AI insight generation has started and has not finished yet.";
   const pending = {
     schemaVersion: COPILOT_INSIGHTS_SCHEMA_VERSION,
+    targetFingerprint,
     status: "pending",
     attemptedOn: generatedOn,
     generatedOn: "",
@@ -5938,10 +6476,11 @@ async function refreshDailyCopilotInsights(data, generatedOn, options = {}) {
         prompt: dailyInsightPrompt(page),
         snapshot: await dailyInsightSnapshot(data, page.id),
       });
-      pages.push(normalizeDailyInsightPage(page, answer));
+      pages.push(normalizeDailyInsightPage(page, answer, data));
     }
     const ready = {
       schemaVersion: COPILOT_INSIGHTS_SCHEMA_VERSION,
+      targetFingerprint,
       status: "ready",
       attemptedOn: generatedOn,
       generatedOn,
@@ -5959,6 +6498,7 @@ async function refreshDailyCopilotInsights(data, generatedOn, options = {}) {
       .filter((page) => page.id === failedPage?.id);
     const failed = {
       schemaVersion: COPILOT_INSIGHTS_SCHEMA_VERSION,
+      targetFingerprint,
       status: "failed",
       attemptedOn: generatedOn,
       generatedOn: "",
@@ -5975,6 +6515,7 @@ async function refreshDailyCopilotInsights(data, generatedOn, options = {}) {
 
 async function getDailyCopilotInsights(data, options = {}) {
   const today = localDateKey();
+  const targetFingerprint = copilotInsightTargetFingerprint(data);
   const forceCopilotPageId = COPILOT_INSIGHT_PAGES.some((page) => page.id === String(options.forceCopilotPageId || "")) ? String(options.forceCopilotPageId) : "";
   const forceCopilotRefresh = Boolean(options.forceCopilotRefresh || forceCopilotPageId);
   const pagesToRefresh = copilotInsightPagesForScope(forceCopilotPageId);
@@ -5983,11 +6524,14 @@ async function getDailyCopilotInsights(data, options = {}) {
   const cached = sanitizeCopilotInsightsCache(rawCached);
   const cachedSchemaMatches = cached?.schemaVersion === COPILOT_INSIGHTS_SCHEMA_VERSION;
   const usableCached = cachedSchemaMatches ? cached : null;
-  if (!forceCopilotRefresh && usableCached?.generatedOn === today && usableCached.status === "ready") return usableCached;
-  if (!forceCopilotRefresh && usableCached?.attemptedOn === today && usableCached.status !== "ready" && !cachedHadRawAiTimeout && !shouldRetryDailyCopilotInsights(usableCached, today)) return usableCached;
+  const cacheMatchesTarget = copilotInsightsCacheMatchesTarget(usableCached, targetFingerprint);
+  const previousDaily = cacheMatchesTarget ? usableCached : null;
+  if (!forceCopilotRefresh && cacheMatchesTarget && usableCached?.generatedOn === today && usableCached.status === "ready") return usableCached;
+  if (!forceCopilotRefresh && cacheMatchesTarget && usableCached?.attemptedOn === today && usableCached.status !== "ready" && !cachedHadRawAiTimeout && !shouldRetryDailyCopilotInsights(usableCached, today)) return usableCached;
   if (!(await hasConfiguredAiProvider())) {
     return {
       schemaVersion: COPILOT_INSIGHTS_SCHEMA_VERSION,
+      targetFingerprint,
       status: "not_configured",
       attemptedOn: "",
       generatedOn: "",
@@ -5998,21 +6542,22 @@ async function getDailyCopilotInsights(data, options = {}) {
     };
   }
   if (!copilotInsightRefresh) {
-    copilotInsightRefresh = refreshDailyCopilotInsights(data, today, { pageId: forceCopilotPageId, previousDaily: usableCached })
+    copilotInsightRefresh = refreshDailyCopilotInsights(data, today, { pageId: forceCopilotPageId, previousDaily })
       .catch(() => null)
       .finally(() => { copilotInsightRefresh = null; });
   }
   const pending = {
     schemaVersion: COPILOT_INSIGHTS_SCHEMA_VERSION,
+    targetFingerprint,
     status: "pending",
     attemptedOn: today,
     generatedOn: "",
     generatedAt: "",
     updatedAt: new Date().toISOString(),
     progress: dailyCopilotProgress({ pages: pagesToRefresh }),
-    pages: forceCopilotPageId ? mergeCopilotInsightPages(data, usableCached, [], "Daily AI insight generation is queued for today.") : fallbackCopilotInsightPages(data, "Daily AI insight generation is queued for today."),
+    pages: forceCopilotPageId ? mergeCopilotInsightPages(data, previousDaily, [], "Daily AI insight generation is queued for today.") : fallbackCopilotInsightPages(data, "Daily AI insight generation is queued for today."),
   };
-  return forceCopilotRefresh ? pending : usableCached || pending;
+  return forceCopilotRefresh ? pending : previousDaily || pending;
 }
 
 function shouldRetryDailyCopilotInsights(cached, today, nowMs = Date.now(), retryMs = COPILOT_INSIGHT_RETRY_MS) {
@@ -6041,10 +6586,10 @@ async function fetchLiveDataEntries(urls) {
 
 async function fetchOfficialF1StandingsFallback(raw, errors = []) {
   const season = new Date().getFullYear();
+  const fallbackData = readFallbackPitWallData();
   const hasOfficialDrivers = parseOfficialF1DriverStandings(raw.officialF1DriverStandings).standings.length > 0;
-  const hasOfficialConstructors = parseOfficialF1ConstructorStandings(raw.officialF1ConstructorStandings).length > 0;
   const needsDrivers = (!Array.isArray(raw.openF1DriverStandings) || !raw.openF1DriverStandings.length) && !hasOfficialDrivers;
-  const needsConstructors = (!Array.isArray(raw.openF1ConstructorStandings) || !raw.openF1ConstructorStandings.length) && !hasOfficialConstructors;
+  const needsConstructors = shouldFetchOfficialConstructorStandings(raw, fallbackData.constructors);
   const requests = [];
   if (needsDrivers) requests.push(["officialF1DriverStandings", officialF1ResultsUrl("drivers", season)]);
   if (needsConstructors) requests.push(["officialF1ConstructorStandings", officialF1ResultsUrl("team", season)]);
@@ -6063,6 +6608,38 @@ async function fetchOfficialF1StandingsFallback(raw, errors = []) {
   return raw;
 }
 
+function jolpicaChampionshipStandingsUrl(kind = "drivers", season = new Date().getFullYear(), round = 0) {
+  const year = String(season || new Date().getFullYear()).replace(/[^0-9]/g, "") || String(new Date().getFullYear());
+  const roundNumber = Math.max(0, Number(round) || 0);
+  const roundPart = roundNumber ? `/${roundNumber}` : "";
+  const endpoint = kind === "constructors" ? "constructorStandings" : "driverStandings";
+  return `${JOLPICA_ERGAST_BASE_URL}/${year}${roundPart}/${endpoint}.json`;
+}
+
+async function fetchPreviousChampionshipStandings(season, round, options = {}) {
+  const previousRound = Math.max(0, Number(round) - 1);
+  if (previousRound < 1) return {};
+  const requests = [];
+  if (options.drivers) requests.push(["drivers", jolpicaChampionshipStandingsUrl("drivers", season, previousRound)]);
+  if (options.constructors) requests.push(["constructors", jolpicaChampionshipStandingsUrl("constructors", season, previousRound)]);
+  if (!requests.length) return {};
+  const results = await Promise.all(requests.map(async ([key, url]) => {
+    try {
+      return { key, value: await requestJson(url, 6500) };
+    } catch (error) {
+      writePitWallDebugLog("live-data.previous-standings-failed", { key, message: error?.message || "previous standings fetch failed" });
+      return { key, error };
+    }
+  }));
+  const previous = {};
+  for (const result of results) {
+    if (result.error) continue;
+    if (result.key === "drivers") previous.standings = parseDriverStandings(result.value).standings;
+    else if (result.key === "constructors") previous.constructors = parseConstructorStandings(result.value);
+  }
+  return previous;
+}
+
 async function buildPitWallSnapshot(raw, errors = [], options = {}) {
   const fallbackData = readFallbackPitWallData();
   const openF1DriverResult = parseOpenF1DriverStandings(raw.openF1DriverStandings, fallbackData.drivers);
@@ -6073,7 +6650,9 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
   const openF1Constructors = parseOpenF1ConstructorStandings(raw.openF1ConstructorStandings);
   const officialF1Constructors = parseOfficialF1ConstructorStandings(raw.officialF1ConstructorStandings);
   const f1ApiConstructors = parseF1ApiConstructorStandings(raw.f1ApiConstructorStandings);
-  const constructors = openF1Constructors.length ? openF1Constructors : officialF1Constructors.length ? officialF1Constructors : f1ApiConstructors.length ? f1ApiConstructors : parseConstructorStandings(raw.constructorStandings);
+  const jolpicaConstructors = parseConstructorStandings(raw.constructorStandings);
+  let standings = driverResult.standings;
+  let constructors = selectConstructorStandings(openF1Constructors, officialF1Constructors, f1ApiConstructors, jolpicaConstructors, fallbackData.constructors);
   let raceWinners = parseRaceWinners(raw.driverResults, fallbackData.drivers);
   const schedule = applyScheduleWinners(parseSchedule(raw.schedule, raw.openF1Meetings), raceWinners);
   const openF1Schedule = parseOpenF1Schedule(raw.openF1Meetings, raw.openF1Sessions);
@@ -6144,11 +6723,18 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
     round: driverResult.seasonSummary.round || nextRace.rnd || 0,
     totalRounds: effectiveSchedule.length,
   };
+  const standingsRound = driverResult.seasonSummary.round || currentRaceWeekend(effectiveSchedule)?.rnd || 0;
+  const previousStandings = await fetchPreviousChampionshipStandings(driverResult.seasonSummary.season, standingsRound, {
+    drivers: championshipRowsNeedPreviousDeltas(standings),
+    constructors: championshipRowsNeedPreviousDeltas(constructors),
+  });
+  standings = applyChampionshipPositionDeltas(standings, previousStandings.standings, "code");
+  constructors = applyChampionshipPositionDeltas(constructors, previousStandings.constructors, "abbr");
   const strategyContext = buildStrategyContext({
     race,
     seasonSummary,
     drivers,
-    standings: driverResult.standings,
+    standings,
     constructors,
     timing,
     battlePairs,
@@ -6165,7 +6751,7 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
     byCode,
     driverForm: recentForm.driverForm,
     formRounds: recentForm.formRounds,
-    standings: driverResult.standings,
+    standings,
     constructors,
     schedule: effectiveSchedule,
     sessions: nextRace.sessions || [],
@@ -6186,7 +6772,7 @@ function refreshLiveDataEnrichment(baseRaw, baseErrors, baseData) {
   liveDataEnrichmentRefresh = (async () => {
     const [enrichment, recentDriverResults] = await Promise.all([
       fetchLiveDataEntries(LIVE_TIMING_ENRICHMENT_URLS),
-      fetchRecentDriverResults(baseData.schedule),
+      fetchRecentDriverResults(baseData.schedule, 5, baseData.seasonSummary?.season),
     ]);
     const raw = { ...baseRaw, ...enrichment.raw };
     if (recentDriverResults) raw.driverResults = recentDriverResults;
@@ -6241,6 +6827,24 @@ function writeLiveSnapshotDiskCache(data) {
   } catch {}
 }
 
+// Recent driver form is otherwise only fetched during the post-snapshot enrichment
+// pass, which runs AFTER the daily Copilot insights — so the AI projections (and the
+// first UI render) ship with an empty driverForm. Populate it on the base snapshot,
+// before the daily run, using the same cached results fetch the enrichment uses.
+async function ensureRecentDriverForm(raw, data) {
+  if (data.driverForm && Object.keys(data.driverForm).length) return;
+  try {
+    const recentDriverResults = await fetchRecentDriverResults(data.schedule, 5, data.seasonSummary?.season);
+    if (!recentDriverResults) return;
+    raw.driverResults = recentDriverResults;
+    const recentForm = parseDriverRecentForm(recentDriverResults);
+    data.driverForm = recentForm.driverForm;
+    data.formRounds = recentForm.formRounds;
+  } catch (error) {
+    writePitWallDebugLog("live-data.recent-form-failed", { message: error?.message || "recent driver form fetch failed" });
+  }
+}
+
 async function refreshLiveDataSnapshot(options = {}) {
   const { raw, errors } = await fetchLiveDataEntries(LIVE_CORE_DATA_URLS);
   await fetchOfficialF1StandingsFallback(raw, errors);
@@ -6248,6 +6852,7 @@ async function refreshLiveDataSnapshot(options = {}) {
     includeWeekendWeatherFallback: false,
     enrichmentPending: true,
   });
+  await ensureRecentDriverForm(raw, data);
   data.copilot = { daily: await getDailyCopilotInsights(data, { forceCopilotRefresh: Boolean(options.forceCopilotRefresh), forceCopilotPageId: options.forceCopilotPageId || "" }) };
   liveDataCache = { createdAt: Date.now(), data };
   writeLiveSnapshotDiskCache(data);
@@ -6266,6 +6871,10 @@ async function getPitWallSnapshot(options = {}) {
   const diskData = readLiveSnapshotDiskCache();
   if (diskData) {
     const data = { ...diskData, sourceLabel: "Live data (refreshing)", enrichmentPending: true };
+    if (!data.driverForm || !Object.keys(data.driverForm).length) {
+      await ensureRecentDriverForm({}, data);
+      if (data.driverForm && Object.keys(data.driverForm).length) writeLiveSnapshotDiskCache(data);
+    }
     liveDataCache = { createdAt: Date.now(), data };
     if (!liveDataRefresh) {
       liveDataRefresh = refreshLiveDataSnapshot()
@@ -6412,7 +7021,7 @@ async function fetchF1TvMedia(_event, request = {}) {
     contentType: response.headers["content-type"] || "",
     errorText: response.status >= 400 ? response.body.slice(0, 180).toString("utf8").replace(/\s+/g, " ") : "",
     licenseErrorHint,
-    responseHint: requestType === 2 ? response.body.slice(0, 180).toString("utf8").replace(/\s+/g, " ") : "",
+    responseHint: requestType === 2 && response.status >= 400 ? response.body.slice(0, 180).toString("utf8").replace(/\s+/g, " ") : "",
   });
   return {
     status: response.status,
@@ -7887,6 +8496,450 @@ async function runF1TvMediaDiagnostic(result = {}) {
   }
 }
 
+function roundLiveSyncProbeNumber(value, digits = 3) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  const factor = 10 ** digits;
+  return Math.round(number * factor) / factor;
+}
+
+const SHAKA_LIVE_SYNC_TOLERANCE_MIN = 3;
+const SHAKA_LIVE_SYNC_TOLERANCE_MAX = 8;
+
+function liveSyncToleranceForTargetLatency(targetLatency) {
+  const target = Number(targetLatency);
+  if (!Number.isFinite(target) || target <= 0) return SHAKA_LIVE_SYNC_TOLERANCE_MAX;
+  return Math.max(
+    SHAKA_LIVE_SYNC_TOLERANCE_MIN,
+    Math.min(SHAKA_LIVE_SYNC_TOLERANCE_MAX, Math.round(target * 2.2) / 10)
+  );
+}
+
+function selectedLiveSyncProbeFeed(result = {}) {
+  const requested = String(process.env.PITWALL_F1TV_LIVE_SYNC_FEED_ID || "WORLD").trim().toUpperCase();
+  const feeds = Array.isArray(result.feeds) ? result.feeds : [];
+  return feeds.find((feed) => String(feed.feedId || "").toUpperCase() === requested)
+    || feeds.find((feed) => feed.kind === "world" || feed.feedId === "WORLD")
+    || feeds[0]
+    || null;
+}
+
+function liveSyncProbeScript(payload = {}) {
+  return `
+    (async () => {
+      const payload = ${JSON.stringify(payload)};
+      const feed = payload.feed || {};
+      const targetLatency = Number(payload.targetLatency) || 36;
+      const sampleSeconds = Number(payload.sampleSeconds) || 45;
+      const sampleIntervalMs = Number(payload.sampleIntervalMs) || 1000;
+      const nearTolerance = Number(payload.nearTolerance) || 1.5;
+      const liveSyncTolerance = Number(payload.liveSyncTolerance) || 8;
+      const finalWindowSeconds = Number(payload.finalWindowSeconds) || 12;
+      const rateTolerance = Number(payload.rateTolerance) || 0.03;
+      const loadTimeoutMs = Number(payload.loadTimeoutMs) || 25000;
+      const playTimeoutMs = Number(payload.playTimeoutMs) || 5000;
+      const errors = [];
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const withTimeout = (promise, ms, label) => Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error(label + " timed out after " + ms + "ms")), ms)),
+      ]);
+      const finite = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
+      const round = (value, digits = 3) => {
+        const number = finite(value);
+        if (number === null) return null;
+        const factor = 10 ** digits;
+        return Math.round(number * factor) / factor;
+      };
+      const safeError = (error) => {
+        const detail = error?.detail || error || {};
+        const message = String(detail.message || error?.message || error || "")
+          .replace(/https?:\\/\\/\\S+/g, "[url]")
+          .slice(0, 180);
+        return {
+          code: Number(detail.code || 0) || 0,
+          category: Number(detail.category || 0) || 0,
+          severity: Number(detail.severity || 0) || 0,
+          message,
+        };
+      };
+      const measure = (player, video) => {
+        const range = player.seekRange?.() || {};
+        const start = finite(range.start);
+        const end = finite(range.end);
+        const currentTime = finite(video.currentTime);
+        const latency = end !== null && currentTime !== null ? end - currentTime : null;
+        const playheadDate = typeof player.getPlayheadTimeAsDate === "function" ? player.getPlayheadTimeAsDate() : null;
+        const playheadUtcMs = playheadDate && Number.isFinite(playheadDate.getTime?.()) ? playheadDate.getTime() : null;
+        return {
+          latency,
+          playbackRate: finite(video.playbackRate) || 1,
+          currentTime,
+          playheadUtcMs,
+          playheadUtc: playheadUtcMs !== null ? new Date(playheadUtcMs).toISOString() : "",
+          rangeStart: start,
+          rangeEnd: end,
+          rangeSeconds: start !== null && end !== null ? end - start : null,
+          paused: Boolean(video.paused),
+          readyState: video.readyState,
+        };
+      };
+      const waitForUsableRange = async (player, video, timeoutMs) => {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          const state = measure(player, video);
+          if (Number.isFinite(state.rangeEnd) && Number.isFinite(state.rangeStart) && state.rangeSeconds > 0) return state;
+          await wait(250);
+        }
+        return measure(player, video);
+      };
+      const waitForSeek = (video, timeoutMs) => new Promise((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          video.removeEventListener("seeked", done);
+          resolve();
+        };
+        video.addEventListener("seeked", done);
+        setTimeout(done, timeoutMs);
+      });
+
+      if (!window.shaka?.Player) {
+        return { ok: false, message: "Shaka Player was not available in the diagnostic window." };
+      }
+      if (!window.pitwall?.f1tv?.mediaFetch) {
+        return { ok: false, message: "F1 TV media bridge was not available in the diagnostic window." };
+      }
+
+      const video = document.getElementById("probe-video");
+      video.muted = true;
+      video.autoplay = true;
+      video.playsInline = true;
+      window.shaka.polyfill?.installAll?.();
+      const NetworkingEngine = window.shaka.net.NetworkingEngine;
+      const priority = NetworkingEngine.PluginPriority?.APPLICATION || 3;
+      NetworkingEngine.registerScheme("https", (uri, request, requestType, progressUpdated, headersReceived) => {
+        let aborted = false;
+        const startedAt = Date.now();
+        const promise = window.pitwall.f1tv.mediaFetch({
+          url: uri,
+          method: request.method || "GET",
+          headers: request.headers || {},
+          body: request.body || null,
+          requestType,
+        }).then((response) => {
+          if (aborted) throw new Error("Request aborted.");
+          const data = response.data || new ArrayBuffer(0);
+          const bytes = data.byteLength || data.length || 0;
+          if (requestType === NetworkingEngine.RequestType.LICENSE && Number(response.status || 0) >= 400) {
+            throw new Error(response.errorHint ? "F1 TV license rejected: " + response.errorHint : "F1 TV license request failed.");
+          }
+          headersReceived?.(response.headers || {});
+          progressUpdated?.(Date.now() - startedAt, bytes, 0);
+          return {
+            uri: response.url || uri,
+            originalUri: uri,
+            data,
+            headers: response.headers || {},
+            fromCache: false,
+            status: response.status || 0,
+          };
+        });
+        return new window.shaka.util.AbortableOperation(promise, () => {
+          aborted = true;
+          return Promise.resolve();
+        });
+      }, priority, false);
+
+      const player = new window.shaka.Player();
+      player.addEventListener("error", (event) => errors.push(safeError(event)));
+      try {
+        await player.attach(video);
+        const licenseServer = feed.licenseUrl || feed.drm?.licenseUrl || "";
+        player.configure({
+          drm: licenseServer ? { servers: { "com.widevine.alpha": licenseServer } } : {},
+          streaming: {
+            lowLatencyMode: false,
+            bufferingGoal: 12,
+            rebufferingGoal: 3,
+            bufferBehind: 8,
+            liveSync: {
+              enabled: true,
+              targetLatency,
+              targetLatencyTolerance: liveSyncTolerance,
+              maxPlaybackRate: 1,
+              minPlaybackRate: 1,
+              panicMode: false,
+              panicThreshold: 2,
+              dynamicTargetLatency: {
+                enabled: false,
+                maxAttempts: 0,
+                maxLatency: Math.max(targetLatency + 15, targetLatency * 1.5),
+                minLatency: targetLatency,
+                rebufferIncrement: 0,
+                stabilityThreshold: 0,
+              },
+            },
+          },
+        });
+        player.getNetworkingEngine()?.registerRequestFilter((type, request) => {
+          request.allowCrossSiteCredentials = true;
+          request.headers = { ...(request.headers || {}), ...(feed.headers || {}) };
+          if (licenseServer && type === NetworkingEngine.RequestType.LICENSE) request.uris = [licenseServer];
+        });
+        const mimeType = feed.manifestType === "dash" ? "application/dash+xml" : feed.manifestType === "hls" ? "application/x-mpegURL" : undefined;
+        await withTimeout(player.load(feed.manifestUrl, null, mimeType), loadTimeoutMs, "Shaka load");
+        await withTimeout(video.play(), playTimeoutMs, "Video play");
+        await wait(1000);
+        const beforeMatch = await waitForUsableRange(player, video, 20000);
+        if (!Number.isFinite(beforeMatch.rangeEnd) || !Number.isFinite(beforeMatch.rangeStart)) {
+          return { ok: false, message: "No live seek range was available after loading playback.", errors: errors.slice(0, 4) };
+        }
+        if (beforeMatch.rangeSeconds < Math.max(1, targetLatency - 1)) {
+          return {
+            ok: false,
+            message: "The current live DVR window is shorter than the requested target latency.",
+            targetLatency,
+            availableRangeSeconds: round(beforeMatch.rangeSeconds),
+            errors: errors.slice(0, 4),
+          };
+        }
+        const targetTime = Math.max(beforeMatch.rangeStart, beforeMatch.rangeEnd - targetLatency);
+        video.currentTime = targetTime;
+        await waitForSeek(video, 3000);
+        await wait(1000);
+        const afterMatch = measure(player, video);
+        const samples = [];
+        const startedAt = performance.now();
+        while ((performance.now() - startedAt) / 1000 < sampleSeconds) {
+          const state = measure(player, video);
+          const elapsed = (performance.now() - startedAt) / 1000;
+          samples.push({
+            t: round(elapsed, 1),
+            latency: round(state.latency),
+            playbackRate: round(state.playbackRate, 3),
+            playheadUtcMs: state.playheadUtcMs,
+            playheadUtc: state.playheadUtc,
+            rangeSeconds: round(state.rangeSeconds),
+            readyState: state.readyState,
+          });
+          await wait(sampleIntervalMs);
+        }
+        const validSamples = samples.filter((sample) => Number.isFinite(sample.latency));
+        const reachedTarget = validSamples.some((sample) => Math.abs(sample.latency - targetLatency) <= nearTolerance);
+        const finalSamples = validSamples.filter((sample) => sample.t >= Math.max(0, sampleSeconds - finalWindowSeconds));
+        const finalLatencyDeltas = finalSamples.map((sample) => Math.abs(sample.latency - targetLatency));
+        const finalRateMatches = finalSamples.filter((sample) => Math.abs((sample.playbackRate || 1) - 1) <= rateTolerance).length;
+        const finalLatencyTolerance = Math.max(nearTolerance, liveSyncTolerance);
+        const averageFinalDelta = finalLatencyDeltas.length
+          ? finalLatencyDeltas.reduce((sum, value) => sum + value, 0) / finalLatencyDeltas.length
+          : null;
+        const maxFinalDelta = finalLatencyDeltas.length ? Math.max(...finalLatencyDeltas) : null;
+        const rateStableRatio = finalSamples.length ? finalRateMatches / finalSamples.length : 0;
+        const stabilized = Boolean(
+          reachedTarget &&
+          finalSamples.length >= Math.max(3, Math.floor(finalWindowSeconds / 2)) &&
+          averageFinalDelta !== null &&
+          averageFinalDelta <= finalLatencyTolerance &&
+          maxFinalDelta <= finalLatencyTolerance &&
+          rateStableRatio >= 0.7
+        );
+        const latencies = validSamples.map((sample) => sample.latency);
+        const final = validSamples[validSamples.length - 1] || null;
+        return {
+          ok: Boolean(reachedTarget && stabilized),
+          targetLatency,
+          nearTolerance,
+          liveSyncTolerance,
+          finalLatencyTolerance,
+          sampleSeconds,
+          reachedTarget,
+          stabilized,
+          rateReturnedToOne: rateStableRatio >= 0.7,
+          beforeMatch: {
+            latency: round(beforeMatch.latency),
+            playbackRate: round(beforeMatch.playbackRate, 3),
+            rangeSeconds: round(beforeMatch.rangeSeconds),
+            currentTime: round(beforeMatch.currentTime),
+            playheadUtcMs: beforeMatch.playheadUtcMs,
+            playheadUtc: beforeMatch.playheadUtc,
+            rangeStart: round(beforeMatch.rangeStart),
+            rangeEnd: round(beforeMatch.rangeEnd),
+          },
+          afterMatch: {
+            latency: round(afterMatch.latency),
+            playbackRate: round(afterMatch.playbackRate, 3),
+            rangeSeconds: round(afterMatch.rangeSeconds),
+            currentTime: round(afterMatch.currentTime),
+            playheadUtcMs: afterMatch.playheadUtcMs,
+            playheadUtc: afterMatch.playheadUtc,
+            rangeStart: round(afterMatch.rangeStart),
+            rangeEnd: round(afterMatch.rangeEnd),
+            requestedTime: round(targetTime),
+          },
+          final,
+          latencySummary: {
+            min: latencies.length ? round(Math.min(...latencies)) : null,
+            max: latencies.length ? round(Math.max(...latencies)) : null,
+            averageFinalDelta: round(averageFinalDelta),
+            maxFinalDelta: round(maxFinalDelta),
+            rateStableRatio: round(rateStableRatio, 3),
+          },
+          samples,
+          errors: errors.slice(0, 4),
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          message: safeError(error).message || "Live sync playback probe failed.",
+          errors: [safeError(error), ...errors].slice(0, 4),
+        };
+      } finally {
+        await player.destroy().catch(() => {});
+      }
+    })();
+  `;
+}
+
+async function runF1TvLiveSyncDiagnostic(result = {}) {
+  if (!process.env.PITWALL_F1TV_LIVE_SYNC_DIAG) return null;
+  const feed = selectedLiveSyncProbeFeed(result);
+  if (!feed?.manifestUrl) {
+    return { ok: false, message: "No resolved feed manifest was available for live sync playback." };
+  }
+  const root = path.resolve(app.getAppPath());
+  const shakaPath = [
+    path.join(root, "node_modules/shaka-player/dist/shaka-player.compiled.js"),
+    path.join(__dirname, "../node_modules/shaka-player/dist/shaka-player.compiled.js"),
+  ].find((candidate) => fs.existsSync(candidate));
+  if (!shakaPath) {
+    return { ok: false, message: "Shaka Player was not available for live sync playback." };
+  }
+  const targetLatency = Math.max(5, Math.min(120, Number(process.env.PITWALL_F1TV_LIVE_SYNC_TARGET_SECONDS || 36) || 36));
+  const liveSyncTolerance = liveSyncToleranceForTargetLatency(targetLatency);
+  const sampleSeconds = Math.max(8, Math.min(180, Number(process.env.PITWALL_F1TV_LIVE_SYNC_SAMPLE_SECONDS || 45) || 45));
+  const nearTolerance = Math.max(0.25, Math.min(5, Number(process.env.PITWALL_F1TV_LIVE_SYNC_TOLERANCE_SECONDS || 1.5) || 1.5));
+  const sampleIntervalMs = Math.max(500, Math.min(5000, Number(process.env.PITWALL_F1TV_LIVE_SYNC_SAMPLE_INTERVAL_MS || 1000) || 1000));
+  const finalWindowSeconds = Math.max(4, Math.min(sampleSeconds, Number(process.env.PITWALL_F1TV_LIVE_SYNC_FINAL_WINDOW_SECONDS || 12) || 12));
+  const rateTolerance = Math.max(0.005, Math.min(0.2, Number(process.env.PITWALL_F1TV_LIVE_SYNC_RATE_TOLERANCE || 0.03) || 0.03));
+  const loadTimeoutMs = Math.max(5000, Math.min(60000, Number(process.env.PITWALL_F1TV_LIVE_SYNC_LOAD_TIMEOUT_MS || 25000) || 25000));
+  const playTimeoutMs = Math.max(1000, Math.min(15000, Number(process.env.PITWALL_F1TV_LIVE_SYNC_PLAY_TIMEOUT_MS || 5000) || 5000));
+  if (process.env.PITWALL_F1TV_LIVE_SYNC_CHECK_TIMING) {
+    ensureF1TimingLiveClient().catch(() => {});
+    const timingConnectDeadline = Date.now() + Math.max(1000, Math.min(30000, Number(process.env.PITWALL_F1TV_LIVE_SYNC_TIMING_CONNECT_MS || 12000) || 12000));
+    while ((!f1LiveTimingState?.lastMessageAt || Date.now() - f1LiveTimingState.lastMessageAt > F1_TIMING_LIVE_STALE_MS) && Date.now() < timingConnectDeadline) {
+      await wait(500);
+    }
+  }
+  const payload = {
+    feed,
+    targetLatency,
+    sampleSeconds,
+    sampleIntervalMs,
+    nearTolerance,
+    liveSyncTolerance,
+    finalWindowSeconds,
+    rateTolerance,
+    loadTimeoutMs,
+    playTimeoutMs,
+  };
+  const win = new BrowserWindow({
+    width: 960,
+    height: 540,
+    show: false,
+    backgroundColor: "#05070a",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webviewTag: false,
+      backgroundThrottling: false,
+      preload: path.join(root, "electron/preload.cjs"),
+    },
+  });
+  const { server, url } = await startStaticServer(root);
+  staticServer = server;
+  diagnosticWindowRunActive = true;
+  try {
+    await win.loadURL(`${url}/ui_kits/pitwall/index.html?probe=live-sync`);
+    await win.webContents.executeJavaScript(`
+      document.documentElement.innerHTML = '<head><meta charset="utf-8"><title>Apexline live sync probe</title></head><body style="margin:0;background:#05070a"><video id="probe-video" muted autoplay playsinline style="width:1px;height:1px;opacity:0"></video></body>';
+    `, true);
+    const shakaSource = fs.readFileSync(shakaPath, "utf8");
+    await win.webContents.executeJavaScript(shakaSource, true);
+    const resultPayload = await win.webContents.executeJavaScript(liveSyncProbeScript(payload), true);
+    const diagnostic = {
+      ...(resultPayload || {}),
+      feed: {
+        feedId: feed.feedId || "",
+        kind: feed.kind || "",
+        manifestType: feed.manifestType || "",
+        manifestId: createHash("sha256").update(String(feed.manifestUrl || "")).digest("hex").slice(0, 16),
+        hasLicenseUrl: Boolean(feed.licenseUrl || feed.drm?.licenseUrl),
+        licenseHost: urlDebugParts(feed.licenseUrl || feed.drm?.licenseUrl || "").host,
+      },
+      targetLatency: roundLiveSyncProbeNumber(resultPayload?.targetLatency ?? targetLatency),
+      liveSyncTolerance: roundLiveSyncProbeNumber(resultPayload?.liveSyncTolerance ?? liveSyncTolerance),
+      sampleSeconds,
+    };
+    if (process.env.PITWALL_F1TV_LIVE_SYNC_CHECK_TIMING) {
+      const finalPlayheadUtcMs = Number(resultPayload?.final?.playheadUtcMs || resultPayload?.afterMatch?.playheadUtcMs);
+      let timingSnapshot = null;
+      const deadline = Date.now() + Math.max(1000, Math.min(30000, Number(process.env.PITWALL_F1TV_LIVE_SYNC_TIMING_TIMEOUT_MS || 12000) || 12000));
+      while (Number.isFinite(finalPlayheadUtcMs) && Date.now() < deadline) {
+        timingSnapshot = getF1LiveTimingSnapshot({ source: "f1", targetUtcMs: finalPlayheadUtcMs, targetLatencySeconds: targetLatency });
+        if (timingSnapshot?.timing?.length) break;
+        await wait(500);
+      }
+      diagnostic.liveTimingAtPlayhead = {
+        ok: Boolean(timingSnapshot?.timing?.length),
+        targetUtcMs: Number.isFinite(finalPlayheadUtcMs) ? finalPlayheadUtcMs : null,
+        targetUtc: Number.isFinite(finalPlayheadUtcMs) ? new Date(finalPlayheadUtcMs).toISOString() : "",
+        rowCount: timingSnapshot?.timing?.length || 0,
+        lap: finiteNumber(timingSnapshot?.sessionClock?.lapCount?.lap),
+        sourceLabel: timingSnapshot?.sourceLabel || "",
+        timingTargetSeconds: roundLiveSyncProbeNumber(timingSnapshot?.diagnostics?.targetSeconds),
+        message: timingSnapshot?.message || "",
+      };
+      diagnostic.ok = Boolean(diagnostic.ok && diagnostic.liveTimingAtPlayhead.ok);
+    }
+    writePitWallDebugLog("f1tv.live-sync-diagnostic", {
+      ok: Boolean(diagnostic.ok),
+      feed: diagnostic.feed,
+      targetLatency: diagnostic.targetLatency,
+      liveSyncTolerance: diagnostic.liveSyncTolerance,
+      reachedTarget: Boolean(diagnostic.reachedTarget),
+      stabilized: Boolean(diagnostic.stabilized),
+      final: diagnostic.final || null,
+      latencySummary: diagnostic.latencySummary || null,
+      liveTimingAtPlayhead: diagnostic.liveTimingAtPlayhead || null,
+      message: diagnostic.message || "",
+    });
+    return diagnostic;
+  } catch (error) {
+    const diagnostic = {
+      ok: false,
+      message: error?.message || "F1 TV live sync diagnostic failed.",
+      feed: {
+        feedId: feed.feedId || "",
+        kind: feed.kind || "",
+        manifestType: feed.manifestType || "",
+        manifestId: createHash("sha256").update(String(feed.manifestUrl || "")).digest("hex").slice(0, 16),
+      },
+      targetLatency,
+      sampleSeconds,
+    };
+    writePitWallDebugLog("f1tv.live-sync-diagnostic", diagnostic);
+    return diagnostic;
+  } finally {
+    diagnosticWindowRunActive = false;
+    if (!win.isDestroyed()) win.destroy();
+    server.close();
+    if (staticServer === server) staticServer = null;
+  }
+}
+
 async function runF1TvDiagnosticAndQuit() {
   const detailUrl = String(process.env.PITWALL_F1TV_DIAG_URL || "").trim();
   const season = String(process.env.PITWALL_F1TV_DIAG_SEASON || "").trim();
@@ -7907,11 +8960,13 @@ async function runF1TvDiagnosticAndQuit() {
       allowHiddenPlaybackFallback: Boolean(process.env.PITWALL_F1TV_DIAG_FALLBACK),
     });
     const mediaDiagnostic = await runF1TvMediaDiagnostic(result);
+    const liveSyncDiagnostic = await runF1TvLiveSyncDiagnostic(result);
     console.log(JSON.stringify({
       pitwallF1TvDiagnostic: sanitizeF1TvDiagnosticResult(result),
       pitwallF1TvMediaDiagnostic: mediaDiagnostic || undefined,
+      pitwallF1TvLiveSyncDiagnostic: liveSyncDiagnostic || undefined,
     }, null, 2));
-    app.exit(result.ok && (!mediaDiagnostic || mediaDiagnostic.ok) ? 0 : 2);
+    app.exit(result.ok && (!mediaDiagnostic || mediaDiagnostic.ok) && (!liveSyncDiagnostic || liveSyncDiagnostic.ok) ? 0 : 2);
   } catch (error) {
     const authStatus = await getF1TvStatus().catch(() => ({}));
     console.log(JSON.stringify({
@@ -8467,9 +9522,10 @@ const AI_PREDICTION_CANDIDATE_SCHEMA = {
     label: { type: "string" },
     confidence: { type: "number" },
     probability: { type: "number" },
+    projectedPoints: { type: "number" },
     reason: { type: "string" },
   },
-  required: ["code", "label", "confidence", "probability", "reason"],
+  required: ["code", "label", "confidence", "probability", "projectedPoints", "reason"],
 };
 
 const AI_PREDICTION_WATCH_SCHEMA = {
@@ -9788,6 +10844,7 @@ app.whenReady().then(async () => {
   await ensureElectronComponentsReady();
   installF1TvPlaybackPermissions();
   installF1TvStreamCapture();
+  if (await runLiveTimingDiagnosticAndQuit()) return null;
   if (await runF1TvProbeDiagnosticAndQuit()) return null;
   if (await runF1TvLibraryDiagnosticAndQuit()) return null;
   if (await runReplayTimingAvailabilityDiagnosticAndQuit()) return null;

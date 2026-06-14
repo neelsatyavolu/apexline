@@ -138,6 +138,31 @@
     return timingRows(D);
   }
 
+  function liveLapCountLabel(sessionClock, race) {
+    const lap = Number(sessionClock?.lapCount?.lap || race?.lap || 0);
+    const laps = Number(sessionClock?.lapCount?.laps || race?.laps || 0);
+    if (!Number.isFinite(lap) || lap <= 0) return "";
+    return `${lap}/${Number.isFinite(laps) && laps > 0 ? laps : "—"}`;
+  }
+
+  function weekendSessionFlagFromClock(clock, fallback) {
+    const fallbackFlag = fallback || { status: "green", label: "Green flag" };
+    const trackCode = String(clock?.trackStatus?.status || "").trim();
+    const trackMessage = String(clock?.trackStatus?.message || "").trim();
+    const trackText = `${trackCode} ${trackMessage}`.toLowerCase();
+    if (trackCode === "5" || /\bred\b/.test(trackText)) return { status: "red", label: "Red flag" };
+    if (trackCode === "4" || /\bsafety\s*car\b|\bsc\b/.test(trackText)) return { status: "sc", label: "Safety car" };
+    if (trackCode === "6" || trackCode === "7" || /\bvsc\b|virtual\s+safety\s+car/.test(trackText)) return { status: "vsc", label: "VSC" };
+    if (trackCode === "2" || trackCode === "3" || /\byellow\b/.test(trackText)) return { status: "yellow", label: "Yellow flag" };
+    if (trackCode === "1" || /all\s*clear|\bgreen\b/.test(trackText)) return { status: "green", label: "Green flag" };
+
+    const sessionText = String(clock?.status || "").trim().toLowerCase();
+    if (/aborted|red|suspended|stopped|interrupted/.test(sessionText)) return { status: "red", label: "Red flag" };
+    if (/yellow/.test(sessionText)) return { status: "yellow", label: "Yellow flag" };
+    if (/started|resumed|active|running|green/.test(sessionText)) return { status: "green", label: "Green flag" };
+    return fallbackFlag;
+  }
+
   function recapDefaultSessionKind(sessions, selectedRaceSession) {
     const live = sessions.find((s) => s.status === "live");
     const done = sessions.filter((s) => s.status === "done").at(-1);
@@ -154,6 +179,20 @@
     if (status === "done" || status === "live" || status === "completed") return true;
     if (status === "upcoming" || status === "scheduled") return false;
     return true;
+  }
+
+  function sessionCountdownState(session, race, nowMs) {
+    const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+    const status = raceMatchText(session?.status);
+    const raceStatus = raceMatchText(race?.status);
+    const startsAt = Date.parse(session?.startsAt || session?.dateStart || session?.date_start || "");
+    const endsAt = Date.parse(session?.endsAt || session?.dateEnd || session?.date_end || "");
+    if (status === "live") return "live";
+    if (status === "done" || status === "completed" || raceStatus === "done" || raceStatus === "completed") return "done";
+    if (Number.isFinite(endsAt) && endsAt <= now) return "done";
+    if (Number.isFinite(startsAt) && startsAt > now) return "upcoming";
+    if (Number.isFinite(startsAt) && startsAt <= now) return "done";
+    return "unknown";
   }
 
   function raceMatchText(value) {
@@ -238,10 +277,11 @@
     return null;
   }
 
-  function computedGapValue(driver, leader, previous) {
-    const driverTime = resultMetric(driver?.resultDuration, driver?.fastestLap);
-    const leaderTime = resultMetric(leader?.resultDuration, leader?.fastestLap);
-    const previousTime = resultMetric(previous?.resultDuration, previous?.fastestLap);
+  function computedGapValue(driver, leader, previous, options) {
+    const useFastestLapFallback = options?.useFastestLapFallback !== false;
+    const driverTime = resultMetric(driver?.resultDuration, useFastestLapFallback ? driver?.fastestLap : null);
+    const leaderTime = resultMetric(leader?.resultDuration, useFastestLapFallback ? leader?.fastestLap : null);
+    const previousTime = resultMetric(previous?.resultDuration, useFastestLapFallback ? previous?.fastestLap : null);
     return {
       gap: driverTime != null && leaderTime != null ? Math.max(0, driverTime - leaderTime) : null,
       interval: driverTime != null && previousTime != null ? Math.max(0, driverTime - previousTime) : null,
@@ -268,17 +308,40 @@
     return currentGap != null ? `+${Math.max(0, currentGap - previousGap).toFixed(3)}s` : "—";
   }
 
+  function formatLapDelta(currentLaps, referenceLaps, options) {
+    const current = Number(currentLaps);
+    const reference = Number(referenceLaps);
+    if (!Number.isFinite(current) || !Number.isFinite(reference) || current < 0 || reference <= 0) return "";
+    const delta = Math.round(reference - current);
+    if (delta > 0) return `+${delta} LAP${delta === 1 ? "" : "S"}`;
+    return options?.sameLap && delta === 0 ? "SAME LAP" : "";
+  }
+
   function sessionResultRows(D, analytics, fallbackRows, selectedSession, options) {
     if (options?.loading) return [];
     if (!sessionHasStarted(selectedSession)) return pendingSessionRows(D, selectedSession, fallbackRows);
     const drivers = analytics?.drivers || [];
     if (drivers.length) {
       const sessionLabel = String([analytics?.session?.name, analytics?.session?.type].filter(Boolean).join(" ")).toLowerCase();
+      const useRaceClassification = /race/.test(sessionLabel);
       const usePracticeLapOrder = /practice/.test(sessionLabel);
       const useLapOrder = /practice|qualifying/.test(sessionLabel);
+      const sessionResultCount = Number(analytics?.counts?.sessionResult);
+      if (useRaceClassification && Number.isFinite(sessionResultCount) && sessionResultCount <= 0) return [];
       const ordered = drivers.slice().sort((a, b) => {
         const aMetric = resultMetric(a.resultDuration, a.fastestLap);
         const bMetric = resultMetric(b.resultDuration, b.fastestLap);
+        const aPosition = Number(a.position);
+        const bPosition = Number(b.position);
+        const aHasPosition = Number.isFinite(aPosition) && aPosition > 0;
+        const bHasPosition = Number.isFinite(bPosition) && bPosition > 0;
+        if (useRaceClassification) {
+          if (aHasPosition && bHasPosition) return aPosition - bPosition;
+          if (aHasPosition !== bHasPosition) return aHasPosition ? -1 : 1;
+          const aLaps = Number(a.laps) || 0;
+          const bLaps = Number(b.laps) || 0;
+          if (aLaps !== bLaps) return bLaps - aLaps;
+        }
         if (usePracticeLapOrder && (aMetric != null || bMetric != null)) {
           if (aMetric == null) return 1;
           if (bMetric == null) return -1;
@@ -292,25 +355,45 @@
       return ordered.map((driver, index) => {
         const previous = ordered[index - 1];
         const leader = ordered[0];
-        const computed = computedGapValue(driver, leader, previous);
-        const previousComputed = previous ? computedGapValue(previous, leader, ordered[index - 2]) : {};
+        const gapOptions = { useFastestLapFallback: !useRaceClassification };
+        const computed = computedGapValue(driver, leader, previous, gapOptions);
+        const previousComputed = previous ? computedGapValue(previous, leader, ordered[index - 2], gapOptions) : {};
         const rawGap = numericGap(driver.gapToLeader);
         const previousRawGap = numericGap(previous?.gapToLeader);
-        const gapValue = rawGap != null && rawGap > 0 ? rawGap : (computed.gap != null ? computed.gap : driver.gapToLeader);
-        const previousGapValue = previousRawGap != null && previousRawGap > 0 ? previousRawGap : (previousComputed.gap != null ? previousComputed.gap : previous?.gapToLeader);
-        const timeMetric = resultMetric(driver.resultDuration, driver.fastestLap);
+        const hasTextGap = driver.gapToLeader != null && driver.gapToLeader !== "" && rawGap == null;
+        const previousHasTextGap = previous?.gapToLeader != null && previous.gapToLeader !== "" && previousRawGap == null;
+        const hasClassifiedPosition = Number.isFinite(Number(driver.position)) && Number(driver.position) > 0;
+        const previousHasClassifiedPosition = Number.isFinite(Number(previous?.position)) && Number(previous.position) > 0;
+        const lapGap = useRaceClassification && hasClassifiedPosition ? formatLapDelta(driver.laps, leader.laps) : "";
+        const previousLapGap = useRaceClassification && previousHasClassifiedPosition ? formatLapDelta(previous.laps, leader.laps) : "";
+        const gapValue = useRaceClassification
+          ? index === 0 ? 0 : rawGap != null && rawGap > 0 ? rawGap : hasTextGap ? driver.gapToLeader : lapGap || (computed.gap != null && computed.gap > 0 ? computed.gap : "")
+          : rawGap != null && rawGap > 0 ? rawGap : (computed.gap != null ? computed.gap : driver.gapToLeader);
+        const previousGapValue = useRaceClassification
+          ? !previous ? null : previousRawGap != null && previousRawGap > 0 ? previousRawGap : previousHasTextGap ? previous.gapToLeader : previousLapGap || (previousComputed.gap != null && previousComputed.gap > 0 ? previousComputed.gap : "")
+          : previousRawGap != null && previousRawGap > 0 ? previousRawGap : (previousComputed.gap != null ? previousComputed.gap : previous?.gapToLeader);
+        const timeMetric = useRaceClassification ? resultMetric(driver.resultDuration) : resultMetric(driver.resultDuration, driver.fastestLap);
         const fastestLapMetric = resultMetric(driver.fastestLap);
+        const raceStatusTime = useRaceClassification && index > 0 ? formatGap(gapValue, index) : "—";
+        const intervalValue = useRaceClassification
+          ? (() => {
+            if (computed.interval != null && (previousGapValue == null || gapValue == null || previousGapValue === "" || gapValue === "")) return formatGap(computed.interval, index);
+            const formatted = formatInterval(gapValue, previousGapValue, index);
+            if (formatted !== "—") return formatted;
+            return hasClassifiedPosition ? formatLapDelta(driver.laps, previous?.laps, { sameLap: true }) || "—" : "—";
+          })()
+          : computed.interval != null && (previousGapValue == null || gapValue == null)
+            ? formatGap(computed.interval, index)
+            : formatInterval(gapValue, previousGapValue, index);
         return {
           pos: usePracticeLapOrder ? index + 1 : driver.position || index + 1,
           code: driver.code,
           name: driver.name || driver.code,
           number: driver.number,
           color: driver.color || D.byCode[driver.code]?.color || "var(--accent)",
-          time: formatSeconds(timeMetric),
+          time: timeMetric != null ? formatSeconds(timeMetric) : raceStatusTime,
           gap: formatGap(gapValue, index),
-          interval: computed.interval != null && (previousGapValue == null || gapValue == null)
-            ? formatGap(computed.interval, index)
-            : formatInterval(gapValue, previousGapValue, index),
+          interval: intervalValue,
           laps: driver.laps || "—",
           fastestLap: formatSeconds(fastestLapMetric),
           detail: [driver.stints?.length ? `${driver.stints.length} stint${driver.stints.length === 1 ? "" : "s"}` : "", driver.pitStops ? `${driver.pitStops} pit` : "", driver.overtakes ? `${driver.overtakes} moves` : ""].filter(Boolean).join(" · ") || "session data",
@@ -364,14 +447,15 @@
     );
   }
 
-  function LiveTiming({ D, selectedRace, selectedRaceSession, rows, onGoLive, dataSource, raceWeather, raceStatus }) {
+  function LiveTiming({ D, selectedRace, selectedRaceSession, rows, onGoLive, dataSource, raceWeather, sessionClock }) {
     const sessionIsLive = selectedRaceSession?.status === "live";
     const [selected, setSelected] = React.useState(rows[0]?.code || "");
     const leaderRow = rows[0] || {};
     const leader = D.byCode[leaderRow.code] || {};
     const second = rows[1] || {};
-    const laps = Number(D.race?.laps || 0);
-    const lap = Number(D.race?.lap || 0);
+    const laps = Number(sessionClock?.lapCount?.laps || D.race?.laps || 0);
+    const lap = Number(sessionClock?.lapCount?.lap || D.race?.lap || 0);
+    const lapCountLabel = liveLapCountLabel(sessionClock, D.race);
     const remaining = laps && lap ? Math.max(0, laps - lap) : null;
     const pct = laps && lap ? Math.min(100, Math.round((lap / laps) * 100)) : (selectedRaceSession?.status === "live" ? 45 : 0);
     const fastest = rows.find((row) => row.last) || leaderRow;
@@ -379,7 +463,10 @@
     const battleA = battlePair ? D.byCode[battlePair.a] || {} : D.byCode[leaderRow.code] || {};
     const battleB = battlePair ? D.byCode[battlePair.b] || {} : D.byCode[second.code] || {};
     const weather = raceWeather || D.race?.weather || {};
-    const statusLabel = raceStatus || weather.cond || "Status";
+    const flagStatus = weekendSessionFlagFromClock(sessionClock, {
+      status: weather.cond === "Rain" ? "yellow" : "green",
+      label: weather.cond === "Rain" ? "Yellow flag" : "Green flag",
+    });
 
     return (
       <>
@@ -393,7 +480,7 @@
           <StatTile label="Closest interval" value={second.interval || second.gap || "n/a"}
             foot={<GapDelta value={battlePair ? battlePair.gap.toFixed(1) + "s" : "watching"} trend={battlePair ? "gain" : "flat"} size="sm" />}
             icon={<Icon name="timer" size={12} />} />
-          <StatTile label="Timing rows" value={rows.length || "n/a"}
+          <StatTile label="Laps" value={lapCountLabel || "n/a"}
             foot={<span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>{remaining != null ? remaining + " laps to go" : dataSource}</span>}
             icon={<Icon name="calendar" size={12} />} />
         </div>
@@ -418,7 +505,7 @@
           </Card>
 
           <div className="wk__rail">
-            <Card title="Race control" aside={<FlagStatus status={weather.cond === "Rain" ? "yellow" : "green"} label={statusLabel} />}>
+            <Card title="Race control" aside={<FlagStatus status={flagStatus.status} label={flagStatus.label} />}>
               <div className="wk-rc">
                 <div className="wk-rc__row"><span className="wk-rc__k"><Icon name="flag" size={15} /> Session</span><span className="wk-rc__v">{selectedRaceSession?.kind || "n/a"}</span></div>
                 <div className="wk-rc__row"><span className="wk-rc__k"><Icon name="timer" size={15} /> Starts</span><span className="wk-rc__v">{selectedRaceSession?.time || selectedRace.date || "n/a"}</span></div>
@@ -495,7 +582,10 @@
       leaderboardCacheRef.current = window.PW.weekendLeaderboardCache || (window.PW.weekendLeaderboardCache = new Map());
     }
     const [analyticsState, setAnalyticsState] = React.useState({ key: "", loading: false, data: null, error: "" });
-    const countdownTarget = selectedRaceSession?.startsAt || selectedRace.startsAt || D.race?.startsAt || "";
+    const heroSession = selectedRecapSession || selectedRaceSession;
+    const heroCountdownState = sessionCountdownState(heroSession, recapRace);
+    const heroCountdownLabel = heroCountdownState === "done" && heroSession?.kind ? heroSession.kind + " completed" : heroSession?.kind ? heroSession.kind + " starts in" : "Next session";
+    const countdownTarget = heroSession?.startsAt || recapRace.startsAt || selectedRace.startsAt || D.race?.startsAt || "";
     const cachedAnalytics = leaderboardCacheRef.current.get(analyticsKey) || null;
     const selectedAnalytics = (analyticsState.key === analyticsKey ? analyticsState.data : null) || cachedAnalytics;
     const selectedSessionStarted = sessionHasStarted(selectedRecapSession);
@@ -507,6 +597,7 @@
       (analyticsRequestReady && analyticsState.key !== analyticsKey && !cachedAnalytics)
     );
     const resultRows = sessionResultRows(D, selectedAnalytics, rows, selectedRecapSession, { loading: leaderboardLoading });
+    const emptyLeaderboardMessage = analyticsState.error || (/race/.test(raceMatchText(selectedSessionKind || selectedRecapSession?.kind || "")) ? "Waiting for official race results." : "Waiting for selected session results.");
     const metrics = recapMetrics(selectedAnalytics, resultRows, selectedRecapSession, dataSource);
     const loadingLabel = resolveLoading ? "Resolving weekend sessions" : "Loading session result";
     const shouldDeferLibrary = !selectedRace.meetingKey && directRound && !selectedAnalytics?.drivers?.length && !analyticsState.error;
@@ -576,17 +667,20 @@
           <div className="wk-hero__eyebrow">
             <span>Race weekend</span>
             <span className="wk-hero__round">Round {selectedRace.rnd || D.race?.round || D.seasonSummary?.round || "n/a"} / {D.seasonSummary?.totalRounds || D.schedule?.length || "n/a"}</span>
-            <Badge tone="outline">{selectedRaceSession?.status === "live" ? "Session live" : "Between sessions"}</Badge>
+            <Badge tone={heroCountdownState === "live" ? "live" : "outline"}>{heroCountdownState === "live" ? "Session live" : heroCountdownState === "done" ? "Weekend complete" : "Between sessions"}</Badge>
           </div>
           <h1 className="wk-hero__name">{recapRace.name || D.race?.name || "Formula 1 weekend"}</h1>
           <div className="wk-hero__circuit"><Icon name="pin" size={15} /> {[recapRace.circuit || D.race?.circuit, recapRace.loc || D.race?.loc].filter(Boolean).join(" · ") || dataSource}</div>
           <div className="wk-hero__cd">
             <div>
-              <div className="wk-hero__cdl">{selectedRaceSession?.kind ? selectedRaceSession.kind + " starts in" : "Next session"}</div>
-              {countdownTarget ? <Countdown to={countdownTarget} size="md" /> : <Badge tone="outline">{dataSource}</Badge>}
+              <div className="wk-hero__cdl">{heroCountdownLabel}</div>
+              {heroCountdownState === "done" ? <Badge tone="neutral">Completed</Badge>
+                : heroCountdownState === "live" && countdownTarget ? <Countdown to={countdownTarget} size="md" />
+                : heroCountdownState === "upcoming" && countdownTarget ? <Countdown to={countdownTarget} size="md" />
+                : <Badge tone="outline">{dataSource}</Badge>}
             </div>
             <div style={{ marginLeft: "auto" }}>
-              <Button variant="primary" size="md" iconLeft={<Icon name="play" size={15} />} onClick={onGoLive}>Watch live</Button>
+              <Button variant="primary" size="md" iconLeft={<Icon name="play" size={15} />} onClick={onGoLive}>{heroCountdownState === "done" ? "Watch replay" : "Watch live"}</Button>
             </div>
           </div>
         </section>
@@ -621,13 +715,13 @@
                   <div className="wk-recap-loading__track" aria-hidden="true"><span className="wk-recap-loading__fill" /></div>
                 </div>
               </div>
-            ) : (
+            ) : resultRows.length ? (
               <div className="wk-recap-scroll">
                 <div className="wk-recap-table">
                   <div className="wk-recap-head">
                     <span>Pos</span><span>Driver</span><span>Time</span><span>Gap</span><span>Interval</span><span>Laps</span><span>Data</span>
                   </div>
-                  {resultRows.length ? resultRows.map((g, index) => (
+                  {resultRows.map((g, index) => (
                     <div className="wk-recap-row" key={`${g.code}-${index}`} data-leader={index === 0 && !g.placeholder}>
                       <span className="wk-recap-pos">{g.pos || index + 1}</span>
                       <DriverTag code={g.code} name={g.name || g.code} number={g.number} team={g.color || "var(--accent)"} compact />
@@ -637,9 +731,11 @@
                       <span className="wk-recap-mono">{g.laps}</span>
                       <span className="wk-recap-meta">{g.detail}</span>
                     </div>
-                  )) : <div className="wk-story" style={{ margin: "var(--space-6)" }}><span className="wk-story__ic"><Icon name="trophy" size={16} /></span><div><div className="wk-story__tag">Results</div><div className="wk-story__txt">{analyticsState.error || "Waiting for selected session results."}</div></div></div>}
+                  ))}
                 </div>
               </div>
+            ) : (
+              <div className="wk-story" style={{ margin: "var(--space-6)" }}><span className="wk-story__ic"><Icon name="trophy" size={16} /></span><div><div className="wk-story__tag">Results</div><div className="wk-story__txt">{emptyLeaderboardMessage}</div></div></div>
             )}
             <div className="wk-recap-detail">
               {metrics.map((metric) => (
@@ -707,12 +803,6 @@
     const liveWeather = liveTimingData?.weather && Object.values(liveTimingData.weather).some((value) => value !== "" && value !== null && value !== undefined)
       ? liveTimingData.weather
       : null;
-    const liveRaceStatus = liveTimingData?.raceStatus
-      || liveTimingData?.sessionStatus
-      || liveTimingData?.sessionClock?.trackStatus?.message
-      || liveTimingData?.sessionClock?.trackStatus?.status
-      || liveTimingData?.sessionClock?.status
-      || "";
     const [mode, setMode] = React.useState(requestedMode === "recap" ? "recap" : hasLiveTiming ? "live" : "recap");
 
     React.useEffect(() => {
@@ -769,7 +859,7 @@
         </div>
 
         {mode === "live"
-          ? <LiveTiming D={D} selectedRace={selectedRace} selectedRaceSession={selectedRaceSession} rows={liveRows} onGoLive={onGoLive} dataSource={liveDataSource} raceWeather={liveWeather} raceStatus={liveRaceStatus} />
+          ? <LiveTiming D={D} selectedRace={selectedRace} selectedRaceSession={selectedRaceSession} rows={liveRows} onGoLive={onGoLive} dataSource={liveDataSource} raceWeather={liveWeather} sessionClock={liveTimingData?.sessionClock} />
           : <Recap D={D} selectedRace={selectedRace} selectedRaceSession={selectedRaceSession} rows={recapRows} onGoLive={onGoLive} dataSource={dataSource} requestedSessionKind={requestedSessionKind} />}
       </div>
     );

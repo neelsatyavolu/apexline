@@ -1,6 +1,6 @@
 {
   "name": "apexline",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "private": true,
   "description": "Apexline macOS F1 companion app",
   "main": "electron/main.cjs",

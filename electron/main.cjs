@@ -211,11 +211,11 @@ const ANALYTICS_REVALIDATE_MS = ANALYTICS_CACHE_MS;
 const F1TV_LIBRARY_CACHE_MS = 1000 * 60;
 const RECENT_DRIVER_RESULTS_CACHE_MS = 1000 * 60 * 30;
 const RACE_WINNER_CACHE_MS = 1000 * 60 * 30;
-const OPENF1_ANALYTICS_REQUEST_DELAY_MS = 1000;
 const OPENF1_ANALYTICS_RETRY_MS = 750;
 const OPENF1_TOKEN_URL = "https://api.openf1.org/token";
 const OPENF1_TOKEN_PROXY_URL = `${SOCIAL_API_BASE_URL}/api/openf1-token`;
 const OPENF1_REQUEST_INTERVAL_MS = 1000;
+const OPENF1_MAX_CONCURRENT_REQUESTS = 3;
 const OPENF1_SECOND_LIMIT = 6;
 const OPENF1_MINUTE_LIMIT = 60;
 const OPENF1_SECOND_WINDOW_MS = 1000;
@@ -258,6 +258,7 @@ let trackMapReplayStreamCache = new Map();
 const f1TimingTelemetrySampleCache = new WeakMap();
 const f1TimingPositionSampleCache = new WeakMap();
 const f1TimingStateCursorCache = new WeakMap();
+const replayRowTimelineCache = new WeakMap();
 let liveTimingCache = null;
 let f1LiveTimingClient = null;
 let f1LiveTimingState = null;
@@ -1124,7 +1125,10 @@ function requestFormJson(targetUrl, body, timeout = 12000) {
 let openF1TokenCache = null;
 let openF1TokenRefresh = null;
 let openF1TokenProxyCooldownUntil = 0;
-let openF1Queue = Promise.resolve();
+const openF1ForegroundQueue = [];
+const openF1BackgroundQueue = [];
+let openF1ActiveRequests = 0;
+let openF1DrainQueued = false;
 const openF1RequestTimes = [];
 
 function openF1IsUrl(targetUrl) {
@@ -1185,13 +1189,40 @@ async function waitForOpenF1Slot() {
   }
 }
 
-function scheduleOpenF1Request(fn) {
-  const run = openF1Queue.then(async () => {
-    await waitForOpenF1Slot();
-    return fn();
+function pickNextOpenF1Task() {
+  return openF1ForegroundQueue.shift() || openF1BackgroundQueue.shift() || null;
+}
+
+function drainOpenF1Queue() {
+  if (openF1DrainQueued) return;
+  openF1DrainQueued = true;
+  setImmediate(() => {
+    openF1DrainQueued = false;
+    while (openF1ActiveRequests < OPENF1_MAX_CONCURRENT_REQUESTS) {
+      const task = pickNextOpenF1Task();
+      if (!task) return;
+      openF1ActiveRequests += 1;
+      Promise.resolve()
+        .then(async () => {
+          await waitForOpenF1Slot();
+          return task.fn();
+        })
+        .then(task.resolve, task.reject)
+        .finally(() => {
+          openF1ActiveRequests = Math.max(0, openF1ActiveRequests - 1);
+          drainOpenF1Queue();
+        });
+    }
   });
-  openF1Queue = run.catch(() => {});
-  return run;
+}
+
+function scheduleOpenF1Request(fn, options = {}) {
+  return new Promise((resolve, reject) => {
+    const task = { fn, resolve, reject };
+    if (options.priority === "background") openF1BackgroundQueue.push(task);
+    else openF1ForegroundQueue.push(task);
+    drainOpenF1Queue();
+  });
 }
 
 async function requestOpenF1Json(targetUrl, options = {}) {
@@ -1203,7 +1234,7 @@ async function requestOpenF1Json(targetUrl, options = {}) {
         const token = await getOpenF1AccessToken();
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
         return requestJson(targetUrl, timeout, headers);
-      });
+      }, options);
     } catch (error) {
       lastError = error;
       if (error?.statusCode === 401 && openF1TokenCache) {
@@ -1217,8 +1248,25 @@ async function requestOpenF1Json(targetUrl, options = {}) {
   throw lastError || new Error("OpenF1 request failed");
 }
 
-async function requestMaybeOpenF1Json(targetUrl, timeout = 8500) {
-  return openF1IsUrl(targetUrl) ? requestOpenF1Json(targetUrl, { timeout }) : requestJson(targetUrl, timeout);
+async function requestMaybeOpenF1Json(targetUrl, timeout = 8500, options = {}) {
+  return openF1IsUrl(targetUrl) ? requestOpenF1Json(targetUrl, { timeout, priority: options.priority }) : requestJson(targetUrl, timeout);
+}
+
+async function requestOpenF1JsonMap(requests = {}, options = {}) {
+  const entries = await Promise.all(Object.entries(requests).map(async ([key, url]) => {
+    try {
+      return { key, value: await requestOpenF1Json(url, { timeout: options.timeout, priority: options.priority }) };
+    } catch (error) {
+      return { key, error };
+    }
+  }));
+  const raw = {};
+  const errors = [];
+  for (const result of entries) {
+    if (!result.error) raw[result.key] = result.value;
+    else errors.push({ key: result.key, error: result.error });
+  }
+  return { raw, errors };
 }
 
 function requestJsonPost(targetUrl, body, headers = {}, timeout = 20000) {
@@ -2394,6 +2442,56 @@ async function fetchRecentDriverResults(schedule = [], maxRaces = 5, season = ne
   return races.length ? { MRData: { RaceTable: { Races: races } } } : null;
 }
 
+function openF1RaceResultToRecentFormRace(race = {}, sessionResult = [], fallbackDrivers = []) {
+  const fallbackByNumber = new Map((fallbackDrivers || []).map((driver) => [Number(driver.num || driver.number), driver]));
+  const Results = (sessionResult || [])
+    .map((row) => {
+      const position = finiteNumber(row?.position);
+      const number = finiteNumber(row?.driver_number ?? row?.number ?? row?.num);
+      const rawCode = String(row?.name_acronym || row?.driver_code || row?.code || "").trim().toUpperCase();
+      const fallback = fallbackByNumber.get(number) || {};
+      const code = /^[A-Z]{2,4}$/.test(rawCode) ? rawCode : String(fallback.code || "").trim().toUpperCase();
+      if (position == null || !code) return null;
+      return {
+        position: String(position),
+        positionOrder: String(position),
+        number: number != null ? String(number) : "",
+        Driver: { code },
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Number(a.positionOrder) - Number(b.positionOrder));
+  if (!Results.length) return null;
+  return {
+    round: String(race.rnd || race.round || ""),
+    raceName: race.name || race.raceName || "Grand Prix",
+    Circuit: { Location: { locality: race.loc || race.location || race.circuit || "" } },
+    Results,
+  };
+}
+
+async function fetchRecentOpenF1DriverResults(schedule = [], maxRaces = 5, season = new Date().getFullYear(), fallbackDrivers = [], options = {}) {
+  const year = String(season || new Date().getFullYear()).replace(/[^0-9]/g, "") || String(new Date().getFullYear());
+  const recent = (schedule || [])
+    .filter((race) => String(race?.status || "").toLowerCase() === "done" && race?.meetingKey)
+    .slice(-Math.max(1, Number(maxRaces) || 5));
+  if (!recent.length) return null;
+  const races = (await Promise.all(recent.map(async (race) => {
+    try {
+      const cacheKey = `openf1:${year}:${race.meetingKey}`;
+      const cached = recentDriverResultsCache.get(cacheKey);
+      if (cached && Date.now() - cached.createdAt < RECENT_DRIVER_RESULTS_CACHE_MS) return cached.race;
+      const analytics = await getAnalyticsSession({ season: year, meetingKey: race.meetingKey, sessionKind: "Race", scope: "leaderboard", priority: options.priority });
+      const shapedRace = openF1RaceResultToRecentFormRace(race, analytics?.drivers, fallbackDrivers);
+      if (shapedRace) recentDriverResultsCache.set(cacheKey, { createdAt: Date.now(), race: shapedRace });
+      return shapedRace;
+    } catch {
+      return null;
+    }
+  }))).filter((race) => Array.isArray(race?.Results) && race.Results.length);
+  return races.length ? { MRData: { RaceTable: { Races: races } } } : null;
+}
+
 function fallbackDriverName(fallbackDrivers, code, number) {
   const normalizedCode = String(code || "").trim().toUpperCase();
   const numeric = Number(number);
@@ -2491,7 +2589,7 @@ function openF1RaceWinnerName(result, openDrivers, fallbackDrivers) {
   return String(fallback || openDriver?.full_name || result.driver_name || result.name_acronym || number || "").trim();
 }
 
-async function fetchMissingOpenF1RaceWinners(schedule, season, fallbackDrivers) {
+async function fetchMissingOpenF1RaceWinners(schedule, season, fallbackDrivers, options = {}) {
   const missing = (schedule || [])
     .filter((race) => race?.status === "done" && !race.winner && race.meetingKey)
     .slice(0, 8);
@@ -2500,10 +2598,10 @@ async function fetchMissingOpenF1RaceWinners(schedule, season, fallbackDrivers) 
     const cached = raceWinnerCache.get(cacheKey);
     if (cached?.winner && Date.now() - cached.createdAt < RACE_WINNER_CACHE_MS) return cached.winner;
     try {
-      const session = await resolveAnalyticsSession({ season, meetingKey: race.meetingKey, sessionKind: "Race" });
+      const session = await resolveAnalyticsSession({ season, meetingKey: race.meetingKey, sessionKind: "Race", priority: options.priority });
       const sessionKey = finiteNumber(session?.session_key);
       if (!sessionKey) return null;
-      const sessionResult = await requestOpenF1AnalyticsWithRetry("sessionResult", { session_key: sessionKey });
+      const sessionResult = await requestOpenF1AnalyticsWithRetry("sessionResult", { session_key: sessionKey }, { priority: options.priority });
       const winnerResult = (sessionResult || []).find((row) => Number(row.position) === 1) || sessionResult?.[0];
       const winner = openF1RaceWinnerName(winnerResult, [], fallbackDrivers);
       const row = winner ? { meetingKey: race.meetingKey, name: race.name, winner } : null;
@@ -4615,6 +4713,17 @@ async function getReplayF1TimingSessionData(meetingKey, sessionKind, options = {
   const maxAgeMs = 1000 * 60 * 60;
   if (cached && Date.now() - cached.createdAt < maxAgeMs) return cached.data;
 
+  const optionIdentity = f1TimingArchiveIdentityFromOptions(options, sessionKind);
+  if (optionIdentity) {
+    try {
+      const archive = await resolveF1TimingArchiveBase(optionIdentity.meeting, optionIdentity.session);
+      const data = await readF1TimingArchiveSessionData(optionIdentity.meeting, optionIdentity.session, archive.baseUrl);
+      replayF1TimingCache.set(cacheKey, { createdAt: Date.now(), data });
+      if (replayF1TimingCache.size > 12) replayF1TimingCache = new Map(Array.from(replayF1TimingCache.entries()).slice(-8));
+      return data;
+    } catch {}
+  }
+
   const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { meeting_key: meetingKey })).catch(() => []);
   const sessions = await requestOpenF1Json(openF1ApiUrl("sessions", { meeting_key: meetingKey }));
   const meeting = meetings?.[0] || {};
@@ -4622,7 +4731,6 @@ async function getReplayF1TimingSessionData(meetingKey, sessionKind, options = {
     .slice()
     .sort((a, b) => scoreOpenF1ReplaySession(b, sessionKind) - scoreOpenF1ReplaySession(a, sessionKind))[0];
   if (!selectedSession?.session_key) throw new Error(`No ${sessionKind} session matched this replay.`);
-  const optionIdentity = f1TimingArchiveIdentityFromOptions(options, sessionKind);
   let archive = null;
   let resolvedMeeting = meeting;
   let resolvedSession = selectedSession;
@@ -5181,13 +5289,13 @@ function pickOpenF1WeatherSession(sessions) {
     .sort((a, b) => b.start - a.start)[0]?.session || null;
 }
 
-async function fetchOpenF1WeekendWeather(race) {
+async function fetchOpenF1WeekendWeather(race, options = {}) {
   const meetingKey = String(race?.meetingKey || "").replace(/[^0-9]/g, "");
   if (!meetingKey) return [];
-  const sessions = await requestOpenF1Json(openF1ApiUrl("sessions", { meeting_key: meetingKey })).catch(() => []);
+  const sessions = await requestOpenF1Json(openF1ApiUrl("sessions", { meeting_key: meetingKey }), { priority: options.priority }).catch(() => []);
   const session = pickOpenF1WeatherSession(sessions);
   if (!session?.session_key) return [];
-  return requestOpenF1Json(openF1ApiUrl("weather", { session_key: session.session_key })).catch(() => []);
+  return requestOpenF1Json(openF1ApiUrl("weather", { session_key: session.session_key }), { priority: options.priority }).catch(() => []);
 }
 
 function openF1ApiUrl(resource, params = {}) {
@@ -5229,13 +5337,31 @@ function replayRowDateMs(row) {
   return Number.isFinite(value) ? value : null;
 }
 
+function replayRowsTimeline(rows) {
+  if (!Array.isArray(rows) || !rows.length) return [];
+  const cached = replayRowTimelineCache.get(rows);
+  if (cached) return cached;
+  const timeline = rows
+    .map((row, index) => {
+      const rowMs = replayRowDateMs(row);
+      return { row, index, rowMs, sortMs: rowMs ?? 0 };
+    })
+    .sort((a, b) => a.sortMs - b.sortMs || a.index - b.index);
+  replayRowTimelineCache.set(rows, timeline);
+  return timeline;
+}
+
 function filterReplayRowsAt(rows, targetMs) {
   if (!Array.isArray(rows) || !rows.length) return [];
-  return rows
-    .map((row, index) => ({ row, index, rowMs: replayRowDateMs(row) }))
-    .filter((item) => item.rowMs == null || item.rowMs <= targetMs)
-    .sort((a, b) => (a.rowMs ?? 0) - (b.rowMs ?? 0) || a.index - b.index)
-    .map((item) => item.row);
+  const timeline = replayRowsTimeline(rows);
+  let low = 0;
+  let high = timeline.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (timeline[middle].sortMs <= targetMs) low = middle + 1;
+    else high = middle;
+  }
+  return timeline.slice(0, low).map((item) => item.row);
 }
 
 function firstReplayRowDateMs(rows) {
@@ -5286,13 +5412,22 @@ async function getReplayOpenF1SessionData(meetingKey, sessionKind) {
     }
 
     const sessionKey = selectedSession.session_key;
-    const drivers = await requestOpenF1Json(openF1ApiUrl("drivers", { session_key: sessionKey })).catch(() => []);
-    const positions = await requestOpenF1Json(openF1ApiUrl("position", { session_key: sessionKey })).catch(() => []);
-    const intervals = await requestOpenF1Json(openF1ApiUrl("intervals", { session_key: sessionKey })).catch(() => []);
-    const weatherRows = await requestOpenF1Json(openF1ApiUrl("weather", { session_key: sessionKey })).catch(() => []);
-    const openF1Laps = await requestOpenF1Json(openF1ApiUrl("laps", { session_key: sessionKey })).catch(() => []);
-    const stints = await requestOpenF1Json(openF1ApiUrl("stints", { session_key: sessionKey })).catch(() => []);
-    const pitRows = await requestOpenF1Json(openF1ApiUrl("pit", { session_key: sessionKey })).catch(() => []);
+    const replayRows = await requestOpenF1JsonMap({
+      drivers: openF1ApiUrl("drivers", { session_key: sessionKey }),
+      positions: openF1ApiUrl("position", { session_key: sessionKey }),
+      intervals: openF1ApiUrl("intervals", { session_key: sessionKey }),
+      weatherRows: openF1ApiUrl("weather", { session_key: sessionKey }),
+      openF1Laps: openF1ApiUrl("laps", { session_key: sessionKey }),
+      stints: openF1ApiUrl("stints", { session_key: sessionKey }),
+      pitRows: openF1ApiUrl("pit", { session_key: sessionKey }),
+    });
+    const drivers = Array.isArray(replayRows.raw.drivers) ? replayRows.raw.drivers : [];
+    const positions = Array.isArray(replayRows.raw.positions) ? replayRows.raw.positions : [];
+    const intervals = Array.isArray(replayRows.raw.intervals) ? replayRows.raw.intervals : [];
+    const weatherRows = Array.isArray(replayRows.raw.weatherRows) ? replayRows.raw.weatherRows : [];
+    const openF1Laps = Array.isArray(replayRows.raw.openF1Laps) ? replayRows.raw.openF1Laps : [];
+    const stints = Array.isArray(replayRows.raw.stints) ? replayRows.raw.stints : [];
+    const pitRows = Array.isArray(replayRows.raw.pitRows) ? replayRows.raw.pitRows : [];
     const carDataOffsetMs = await getReplayCarDataOffsetMs(sessionKey, positions, drivers);
     const data = { ok: true, selectedSession, drivers, positions, intervals, weatherRows, openF1Laps, stints, pitRows, carDataOffsetMs };
     replayOpenF1Cache.set(cacheKey, { createdAt: Date.now(), data });
@@ -5446,22 +5581,20 @@ async function getLiveTimingSnapshot(options = {}) {
   const cacheKey = `openf1:${Math.round(targetLatencySeconds)}`;
   if (liveTimingCache?.key === cacheKey && Date.now() - liveTimingCache.createdAt < 15000) return liveTimingCache.data;
   const keys = ["openF1Drivers", "openF1Position", "openF1Intervals", "openF1Laps", "openF1Stints", "openF1Pit", "openF1Weather", "openF1CarData"];
-  const entries = [];
-  for (const key of keys) {
-    try {
-      const url = key === "openF1CarData"
-        ? openF1ApiUrl("car_data", { session_key: "latest", "date>": new Date(Date.now() - 10000).toISOString() })
-        : LIVE_DATA_URLS[key];
-      entries.push({ key, value: await requestOpenF1Json(url) });
-    } catch (error) {
-      entries.push({ key, error });
-    }
-  }
+  const timingRequests = Object.fromEntries(keys.map((key) => [
+    key,
+    key === "openF1CarData"
+      ? openF1ApiUrl("car_data", { session_key: "latest", "date>": new Date(Date.now() - 10000).toISOString() })
+      : LIVE_DATA_URLS[key],
+  ]));
+  const entries = await requestOpenF1JsonMap(timingRequests);
   const raw = {};
   const errors = [];
-  for (const result of entries) {
+  for (const result of Object.entries(entries.raw).map(([key, value]) => ({ key, value }))) {
     if (!result.error) raw[result.key] = result.value;
-    else if (!OPTIONAL_LIVE_DATA_KEYS.has(result.key)) errors.push(result.error.message);
+  }
+  for (const result of entries.errors) {
+    if (!OPTIONAL_LIVE_DATA_KEYS.has(result.key)) errors.push(result.error.message);
   }
   const timing = parseTiming(raw.openF1Drivers, raw.openF1Position, raw.openF1Intervals, [], raw.openF1Stints, raw.openF1Pit, raw.openF1Laps, raw.openF1CarData);
   const weather = parseWeather(raw.openF1Weather || []);
@@ -5771,19 +5904,19 @@ function raceWeekendOrderValue(race = {}) {
 
 function currentRaceWeekend(schedule = []) {
   const done = (schedule || []).filter((race) => race.status === "done");
-  return (schedule || []).find(raceWeekendIsActive) || done.at(-1) || (schedule || []).find((race) => race.status === "upcoming") || {};
+  return (schedule || []).find(raceWeekendIsActive) || (schedule || []).find((race) => race.status === "upcoming") || done.at(-1) || {};
 }
 
 function nextRaceWeekend(schedule = []) {
-  const active = (schedule || []).find(raceWeekendIsActive);
-  const activeKey = raceWeekendKey(active);
-  const activeOrder = raceWeekendOrderValue(active);
+  const current = currentRaceWeekend(schedule);
+  const currentKey = raceWeekendKey(current);
+  const currentOrder = raceWeekendOrderValue(current);
   return (schedule || [])
     .filter((race) => race.status === "upcoming")
-    .filter((race) => !activeKey || raceWeekendKey(race) !== activeKey)
-    .filter((race) => !activeKey || raceWeekendOrderValue(race) > activeOrder)
+    .filter((race) => !currentKey || raceWeekendKey(race) !== currentKey)
+    .filter((race) => !currentKey || raceWeekendOrderValue(race) > currentOrder)
     .sort((a, b) => raceWeekendOrderValue(a) - raceWeekendOrderValue(b))[0]
-    || (schedule || []).find((race) => race.status === "upcoming" && (!activeKey || raceWeekendKey(race) !== activeKey))
+    || (schedule || []).find((race) => race.status === "upcoming" && (!currentKey || raceWeekendKey(race) !== currentKey))
     || {};
 }
 
@@ -5895,7 +6028,7 @@ function summarizeWeekendSessionForCopilot(session = {}, analytics = {}) {
   };
 }
 
-async function buildWeekendSessionSummaries(data, pageId) {
+async function buildWeekendSessionSummaries(data, pageId, options = {}) {
   if (pageId !== "current-weekend") return [];
   const race = currentRaceWeekend(data.schedule);
   const meetingKey = finiteNumber(race?.meetingKey);
@@ -5907,7 +6040,7 @@ async function buildWeekendSessionSummaries(data, pageId) {
   const summaries = [];
   for (const session of sessions.slice(0, 6)) {
     try {
-      const analytics = await getAnalyticsSession({ season, meetingKey, sessionKind: session.kind });
+      const analytics = await getAnalyticsSession({ season, meetingKey, sessionKind: session.kind, priority: options.priority });
       summaries.push(summarizeWeekendSessionForCopilot(session, analytics));
     } catch (error) {
       summaries.push({
@@ -5958,7 +6091,7 @@ function copilotMeetingToRace(meeting = {}) {
   };
 }
 
-async function findCopilotHistoricalTrackRaces(data = {}, targetRace = {}) {
+async function findCopilotHistoricalTrackRaces(data = {}, targetRace = {}, options = {}) {
   const byKey = new Map();
   const addRace = (race) => {
     const meetingKey = String(race?.meetingKey || "").replace(/[^0-9]/g, "");
@@ -5977,7 +6110,7 @@ async function findCopilotHistoricalTrackRaces(data = {}, targetRace = {}) {
 
   const targetSeason = copilotSessionYear(targetRace, data);
   for (const season of [targetSeason - 1, targetSeason - 2, targetSeason - 3].filter((year) => year >= 2023)) {
-    const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { year: season })).catch((error) => {
+    const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { year: season }), { priority: options.priority }).catch((error) => {
       throw new Error(`OpenF1 ${season} meetings unavailable: ${sanitizeAiError(error)}`);
     });
     for (const meeting of meetings || []) {
@@ -5990,7 +6123,7 @@ async function findCopilotHistoricalTrackRaces(data = {}, targetRace = {}) {
     .slice(0, 2);
 }
 
-async function buildCompletedRacePerformance(data = {}, races = [], label = "completed races") {
+async function buildCompletedRacePerformance(data = {}, races = [], label = "completed races", options = {}) {
   const performance = {
     label,
     races: [],
@@ -6004,6 +6137,7 @@ async function buildCompletedRacePerformance(data = {}, races = [], label = "com
         season: finiteNumber(race.season) || copilotSessionYear(race, data),
         meetingKey,
         sessionKind: "Race",
+        priority: options.priority,
       });
       performance.races.push({
         season: finiteNumber(race.season) || copilotSessionYear(race, data),
@@ -6023,8 +6157,8 @@ async function buildCompletedRacePerformance(data = {}, races = [], label = "com
   return performance;
 }
 
-async function fetchCopilotSeasonRaces(season, limit = 4) {
-  const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { year: season })).catch(() => []);
+async function fetchCopilotSeasonRaces(season, limit = 4, options = {}) {
+  const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { year: season }), { priority: options.priority }).catch(() => []);
   return (meetings || [])
     .filter((meeting) => /grand prix/i.test(String(meeting?.meeting_name || "")))
     .map(copilotMeetingToRace)
@@ -6032,7 +6166,7 @@ async function fetchCopilotSeasonRaces(season, limit = 4) {
     .slice(0, limit);
 }
 
-async function buildWeekendPerformanceContext(data = {}, targetRace = {}, targetSessionKind = "Race") {
+async function buildWeekendPerformanceContext(data = {}, targetRace = {}, targetSessionKind = "Race", options = {}) {
   const context = {
     available: false,
     target: {
@@ -6061,15 +6195,15 @@ async function buildWeekendPerformanceContext(data = {}, targetRace = {}, target
     .filter((race) => race?.status === "done" && race?.meetingKey)
     .slice(-4)
     .reverse();
-  context.currentSeason = await buildCompletedRacePerformance(data, currentSeasonRaces, "current season race performance");
+  context.currentSeason = await buildCompletedRacePerformance(data, currentSeasonRaces, "current season race performance", { priority: options.priority });
 
   const targetSeason = copilotSessionYear(targetRace, data);
-  const previousSeasonRaces = await fetchCopilotSeasonRaces(targetSeason - 1, 4);
-  context.previousSeason = await buildCompletedRacePerformance(data, previousSeasonRaces, "previous season race performance");
+  const previousSeasonRaces = await fetchCopilotSeasonRaces(targetSeason - 1, 4, { priority: options.priority });
+  context.previousSeason = await buildCompletedRacePerformance(data, previousSeasonRaces, "previous season race performance", { priority: options.priority });
 
   try {
-    const historicalTrackRaces = await findCopilotHistoricalTrackRaces(data, targetRace);
-    context.trackHistory = await buildCompletedRacePerformance(data, historicalTrackRaces, "target-track race history");
+    const historicalTrackRaces = await findCopilotHistoricalTrackRaces(data, targetRace, { priority: options.priority });
+    context.trackHistory = await buildCompletedRacePerformance(data, historicalTrackRaces, "target-track race history", { priority: options.priority });
   } catch (error) {
     context.trackHistory.errors.push(sanitizeAiError(error));
   }
@@ -6078,16 +6212,16 @@ async function buildWeekendPerformanceContext(data = {}, targetRace = {}, target
   return context;
 }
 
-async function buildNextWeekendPerformanceContext(data = {}) {
+async function buildNextWeekendPerformanceContext(data = {}, options = {}) {
   const targetSession = nextUpcomingSession(data.schedule);
-  return buildWeekendPerformanceContext(data, nextRaceWeekend(data.schedule), targetSession?.kind || "Race");
+  return buildWeekendPerformanceContext(data, nextRaceWeekend(data.schedule), targetSession?.kind || "Race", { priority: options.priority });
 }
 
-async function dailyInsightSnapshot(data, pageId) {
+async function dailyInsightSnapshot(data, pageId, options = {}) {
   const performanceContext = pageId === "next-weekend"
-    ? await buildNextWeekendPerformanceContext(data)
+    ? await buildNextWeekendPerformanceContext(data, { priority: options.priority })
     : pageId === "current-weekend"
-      ? await buildWeekendPerformanceContext(data, currentRaceWeekend(data.schedule), "Race")
+      ? await buildWeekendPerformanceContext(data, currentRaceWeekend(data.schedule), "Race", { priority: options.priority })
       : null;
   const projectionBudget = championshipPointsBudget(data);
   const projectionConstraints = ["drivers-championship", "constructors-championship"].includes(pageId)
@@ -6123,7 +6257,7 @@ async function dailyInsightSnapshot(data, pageId) {
     strategyContext: data.strategyContext || null,
     projectionConstraints,
     tyreAvailability,
-    weekendSessionSummaries: await buildWeekendSessionSummaries(data, pageId),
+    weekendSessionSummaries: await buildWeekendSessionSummaries(data, pageId, { priority: options.priority }),
     performanceContext,
     news: (data.news || []).slice(0, 8),
     source: data.sourceLabel || data.source || "",
@@ -6474,7 +6608,7 @@ async function refreshDailyCopilotInsights(data, generatedOn, options = {}) {
       await writeCopilotInsightsCache(progressUpdate);
       const answer = await askConfiguredAi({
         prompt: dailyInsightPrompt(page),
-        snapshot: await dailyInsightSnapshot(data, page.id),
+        snapshot: await dailyInsightSnapshot(data, page.id, { priority: "background" }),
       });
       pages.push(normalizeDailyInsightPage(page, answer, data));
     }
@@ -6566,11 +6700,11 @@ function shouldRetryDailyCopilotInsights(cached, today, nowMs = Date.now(), retr
   return !Number.isFinite(updatedAtMs) || nowMs - updatedAtMs >= retryMs;
 }
 
-async function fetchLiveDataEntries(urls) {
+async function fetchLiveDataEntries(urls, options = {}) {
   const entries = await Promise.all(Object.entries(urls).map(async ([key, url]) => {
     const isXml = key.endsWith("News");
     try {
-      return { key, value: isXml ? await requestText(url) : await requestMaybeOpenF1Json(url) };
+      return { key, value: isXml ? await requestText(url) : await requestMaybeOpenF1Json(url, 8500, { priority: options.priority }) };
     } catch (error) {
       return { key, error };
     }
@@ -6675,7 +6809,7 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
     }
   }
   if (!options.enrichmentPending) {
-    const openF1RaceWinners = await fetchMissingOpenF1RaceWinners(effectiveSchedule, driverResult.seasonSummary.season, fallbackData.drivers);
+    const openF1RaceWinners = await fetchMissingOpenF1RaceWinners(effectiveSchedule, driverResult.seasonSummary.season, fallbackData.drivers, { priority: options.priority });
     if (openF1RaceWinners.length) {
       raceWinners = raceWinners.concat(openF1RaceWinners);
       effectiveSchedule = applyScheduleWinners(effectiveSchedule, raceWinners);
@@ -6696,7 +6830,7 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
     weatherLoc = "Latest session";
   }
   if (options.includeWeekendWeatherFallback !== false && !hasWeatherRows(weatherRows)) {
-    const weekendWeatherRows = await fetchOpenF1WeekendWeather(nextRace);
+    const weekendWeatherRows = await fetchOpenF1WeekendWeather(nextRace, { priority: options.priority });
     if (hasWeatherRows(weekendWeatherRows)) {
       weatherRows = weekendWeatherRows;
       weatherLoc = nextRace.loc || weatherLoc;
@@ -6771,7 +6905,7 @@ function refreshLiveDataEnrichment(baseRaw, baseErrors, baseData) {
   if (liveDataEnrichmentRefresh) return liveDataEnrichmentRefresh;
   liveDataEnrichmentRefresh = (async () => {
     const [enrichment, recentDriverResults] = await Promise.all([
-      fetchLiveDataEntries(LIVE_TIMING_ENRICHMENT_URLS),
+      fetchLiveDataEntries(LIVE_TIMING_ENRICHMENT_URLS, { priority: "background" }),
       fetchRecentDriverResults(baseData.schedule, 5, baseData.seasonSummary?.season),
     ]);
     const raw = { ...baseRaw, ...enrichment.raw };
@@ -6779,6 +6913,7 @@ function refreshLiveDataEnrichment(baseRaw, baseErrors, baseData) {
     const data = await buildPitWallSnapshot(raw, baseErrors, {
       includeWeekendWeatherFallback: true,
       enrichmentPending: false,
+      priority: "background",
     });
     data.copilot = liveDataCache?.data?.copilot || baseData.copilot;
     if (liveDataCache?.data?.fetchedAt === baseData.fetchedAt) {
@@ -6834,7 +6969,11 @@ function writeLiveSnapshotDiskCache(data) {
 async function ensureRecentDriverForm(raw, data) {
   if (data.driverForm && Object.keys(data.driverForm).length) return;
   try {
-    const recentDriverResults = await fetchRecentDriverResults(data.schedule, 5, data.seasonSummary?.season);
+    const fallbackDrivers = data.drivers?.length ? data.drivers : readFallbackPitWallData().drivers;
+    let recentDriverResults = await fetchRecentDriverResults(data.schedule, 5, data.seasonSummary?.season);
+    if (!recentDriverResults) {
+      recentDriverResults = await fetchRecentOpenF1DriverResults(data.schedule, 5, data.seasonSummary?.season, fallbackDrivers);
+    }
     if (!recentDriverResults) return;
     raw.driverResults = recentDriverResults;
     const recentForm = parseDriverRecentForm(recentDriverResults);
@@ -6846,6 +6985,7 @@ async function ensureRecentDriverForm(raw, data) {
 }
 
 async function refreshLiveDataSnapshot(options = {}) {
+  const deferCopilot = Boolean(options.startup);
   const { raw, errors } = await fetchLiveDataEntries(LIVE_CORE_DATA_URLS);
   await fetchOfficialF1StandingsFallback(raw, errors);
   const data = await buildPitWallSnapshot(raw, errors, {
@@ -6853,9 +6993,25 @@ async function refreshLiveDataSnapshot(options = {}) {
     enrichmentPending: true,
   });
   await ensureRecentDriverForm(raw, data);
-  data.copilot = { daily: await getDailyCopilotInsights(data, { forceCopilotRefresh: Boolean(options.forceCopilotRefresh), forceCopilotPageId: options.forceCopilotPageId || "" }) };
+  if (deferCopilot) {
+    data.copilot = liveDataCache?.data?.copilot || null;
+  } else {
+    data.copilot = { daily: await getDailyCopilotInsights(data, { forceCopilotRefresh: Boolean(options.forceCopilotRefresh), forceCopilotPageId: options.forceCopilotPageId || "" }) };
+  }
   liveDataCache = { createdAt: Date.now(), data };
   writeLiveSnapshotDiskCache(data);
+  if (deferCopilot) {
+    getDailyCopilotInsights(data, { forceCopilotRefresh: Boolean(options.forceCopilotRefresh), forceCopilotPageId: options.forceCopilotPageId || "" })
+      .then((daily) => {
+        if (liveDataCache?.data?.fetchedAt === data.fetchedAt) {
+          liveDataCache.data.copilot = { daily };
+          writeLiveSnapshotDiskCache(liveDataCache.data);
+        }
+      })
+      .catch((error) => {
+        writePitWallDebugLog("live-data.startup-copilot-failed", { message: error?.message || "Startup Copilot refresh failed" });
+      });
+  }
   refreshLiveDataEnrichment(raw, errors, data);
   return data;
 }
@@ -6880,6 +7036,9 @@ async function getPitWallSnapshot(options = {}) {
       liveDataRefresh = refreshLiveDataSnapshot()
         .catch((error) => {
           writePitWallDebugLog("live-data.refresh-failed", { message: error?.message || "Live data refresh failed" });
+          if (liveDataCache?.data?.fetchedAt === data.fetchedAt) {
+            liveDataCache = { createdAt: Date.now(), data: { ...data, sourceLabel: "Live data (cached)", enrichmentPending: false } };
+          }
           return null;
         })
         .finally(() => { liveDataRefresh = null; });
@@ -9876,19 +10035,19 @@ function openF1AnalyticsError(error) {
   return friendly;
 }
 
-async function requestOpenF1Analytics(endpoint, params = {}) {
+async function requestOpenF1Analytics(endpoint, params = {}, options = {}) {
   try {
-    return await requestOpenF1Json(openF1AnalyticsUrl(endpoint, params), { timeout: 12000 });
+    return await requestOpenF1Json(openF1AnalyticsUrl(endpoint, params), { timeout: 12000, priority: options.priority });
   } catch (error) {
     throw openF1AnalyticsError(error);
   }
 }
 
-async function requestOpenF1AnalyticsWithRetry(endpoint, params = {}) {
+async function requestOpenF1AnalyticsWithRetry(endpoint, params = {}, options = {}) {
   let lastError = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await requestOpenF1Analytics(endpoint, params);
+      return await requestOpenF1Analytics(endpoint, params, options);
     } catch (error) {
       lastError = error;
       const rateLimited = error?.rateLimited || /HTTP 429\b|rate limit/i.test(error?.message || "");
@@ -9897,6 +10056,25 @@ async function requestOpenF1AnalyticsWithRetry(endpoint, params = {}) {
     }
   }
   throw lastError || new Error("OpenF1 request failed");
+}
+
+async function requestOpenF1AnalyticsBatch(requests = {}, options = {}) {
+  const optionalEndpoints = options.optionalEndpoints || new Set();
+  const entries = await Promise.all(Object.entries(requests).map(async ([key, [endpoint, params]]) => {
+    try {
+      const rows = await requestOpenF1AnalyticsWithRetry(endpoint, params, { priority: options.priority });
+      return { key, rows: Array.isArray(rows) ? rows : [] };
+    } catch (error) {
+      return { key, error };
+    }
+  }));
+  const raw = {};
+  const errors = [];
+  for (const entry of entries) {
+    raw[entry.key] = entry.error ? [] : entry.rows;
+    if (entry.error && !optionalEndpoints.has(entry.key)) errors.push(entry.error?.message || "OpenF1 request failed");
+  }
+  return { raw, errors };
 }
 
 function cleanSessionName(value) {
@@ -10331,7 +10509,7 @@ async function resolveAnalyticsSession(options = {}) {
   if (!meetingKey && finiteNumber(options.round)) {
     const season = String(options.season || new Date().getFullYear()).replace(/[^0-9]/g, "") || String(new Date().getFullYear());
     const round = finiteNumber(options.round);
-    const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { year: season }));
+    const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { year: season }), { priority: options.priority });
     const grandPrixMeetings = (meetings || [])
       .filter((meeting) => /grand prix/i.test(String(meeting?.meeting_name || "")))
       .filter((meeting) => season !== "2026" || !isCancelledF12026RaceName(meeting?.meeting_name || meeting?.official_name || ""))
@@ -10339,7 +10517,7 @@ async function resolveAnalyticsSession(options = {}) {
     meetingKey = finiteNumber(grandPrixMeetings[round - 1]?.meeting_key);
   }
   if (!meetingKey) throw new Error("Select a race weekend with OpenF1 meeting data.");
-  const sessions = await requestOpenF1Analytics("sessions", { meeting_key: meetingKey });
+  const sessions = await requestOpenF1Analytics("sessions", { meeting_key: meetingKey }, { priority: options.priority });
   const sessionNeedle = cleanSessionName(options.sessionKind || options.sessionName || "Race");
   const scored = (sessions || []).map((sessionItem) => {
     const name = cleanSessionName(sessionItem.session_name || sessionItem.session_type);
@@ -10365,20 +10543,12 @@ async function buildAnalyticsSessionData(sessionInfo, options = {}) {
     weather: ["weather", { session_key: sessionKey }],
   };
   const raw = {};
-  const errors = [];
-  let requestIndex = 0;
-  const requestEntries = Object.entries(requests);
-  for (const [key, [endpoint, params]] of requestEntries) {
-    try {
-      const rows = await requestOpenF1AnalyticsWithRetry(endpoint, params);
-      raw[key] = Array.isArray(rows) ? rows : [];
-    } catch (error) {
-      raw[key] = [];
-      if (!optionalEndpoints.has(key)) errors.push(error?.message || "OpenF1 request failed");
-    }
-    requestIndex += 1;
-    if (requestIndex < requestEntries.length) await wait(OPENF1_ANALYTICS_REQUEST_DELAY_MS);
-  }
+  const batch = await requestOpenF1AnalyticsBatch(requests, {
+    optionalEndpoints,
+    priority: options.priority,
+  });
+  Object.assign(raw, batch.raw);
+  const errors = batch.errors;
   const hasPublishedRows = ["laps", "position", "sessionResult", "stints"].some((key) => raw[key]?.length);
   if (!hasPublishedRows && !errors.length) {
     errors.push("OpenF1 has not published analytics rows for this session yet.");
@@ -10419,7 +10589,7 @@ async function buildAnalyticsSessionLeaderboardData(sessionInfo, options = {}) {
   const raw = { sessionResult: [], laps: [], stints: [], weather: [] };
   const errors = [];
   try {
-    const rows = await requestOpenF1AnalyticsWithRetry("sessionResult", { session_key: sessionKey });
+    const rows = await requestOpenF1AnalyticsWithRetry("sessionResult", { session_key: sessionKey }, { priority: options.priority });
     raw.sessionResult = Array.isArray(rows) ? rows : [];
   } catch (error) {
     errors.push(error?.message || "OpenF1 request failed");
@@ -10429,15 +10599,12 @@ async function buildAnalyticsSessionLeaderboardData(sessionInfo, options = {}) {
       laps: ["laps", { session_key: sessionKey }],
       stints: ["stints", { session_key: sessionKey }],
     };
-    await Promise.all(Object.entries(requests).map(async ([key, [endpoint, params]]) => {
-      try {
-        const rows = await requestOpenF1AnalyticsWithRetry(endpoint, params);
-        raw[key] = Array.isArray(rows) ? rows : [];
-      } catch (error) {
-        raw[key] = [];
-        if (key !== "stints") errors.push(error?.message || "OpenF1 request failed");
-      }
-    }));
+    const batch = await requestOpenF1AnalyticsBatch(requests, {
+      optionalEndpoints: new Set(["stints"]),
+      priority: options.priority,
+    });
+    Object.assign(raw, batch.raw);
+    errors.push(...batch.errors);
   }
   const hasPublishedRows = ["laps", "sessionResult", "stints"].some((key) => raw[key]?.length);
   if (!hasPublishedRows && !errors.length) {
@@ -10478,11 +10645,12 @@ function refreshAnalyticsSessionCache({ cacheKey, aliasKey, options = {}, sessio
   if (!refreshKeys.length || refreshKeys.some((key) => analyticsRefreshInFlight.has(key))) return;
   for (const key of refreshKeys) analyticsRefreshInFlight.set(key, true);
   Promise.resolve().then(async () => {
-    const resolvedSession = sessionInfo || await resolveAnalyticsSession(options);
+    const backgroundOptions = { ...options, priority: "background" };
+    const resolvedSession = sessionInfo || await resolveAnalyticsSession(backgroundOptions);
     const resolvedSessionKey = finiteNumber(resolvedSession?.session_key);
     if (!resolvedSessionKey) return;
     const resolvedCacheKey = String(resolvedSessionKey);
-    const data = await buildAnalyticsSessionData(resolvedSession, options);
+    const data = await buildAnalyticsSessionData(resolvedSession, backgroundOptions);
     const previousData = cachedData
       || analyticsSessionCache.get(resolvedCacheKey)?.data
       || analyticsSessionDiskEntry([resolvedCacheKey, aliasKey], { allowStale: true });

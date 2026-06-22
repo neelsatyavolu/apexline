@@ -196,6 +196,8 @@ assert.match(openF1ReplayProbe, /EMAIL[\s\S]*PASSWORD/, "OpenF1 replay probe sho
 assert.match(openF1ReplayProbe, /Authorization: `Bearer \$\{accessToken\}`/, "OpenF1 replay probe should use authenticated bearer requests");
 assert.match(openF1ReplayProbe, /requestTimes\.length < 60/, "OpenF1 replay probe should enforce the 60 requests per minute cap");
 assert.match(openF1ReplayProbe, /parseTiming\(drivers, positions, intervals/, "OpenF1 replay probe should use the same timing parser as the app");
+assert.match(openF1ReplayProbe, /openF1SectorTimes[\s\S]*parseTiming/, "OpenF1 replay probe should extract parser helpers used by parseTiming");
+assert.match(openF1ReplayProbe, /replayRowsTimeline[\s\S]*filterReplayRowsAt/, "OpenF1 replay probe should extract replay row timeline helpers used by filterReplayRowsAt");
 assert.match(packageScript, /const appPath = baseOut/, "macOS packaging should always rebuild dist/Apexline.app as the current app");
 assert.match(packageScript, /Snapshot \$\{snapshotPath\}/, "macOS packaging should also keep a timestamped snapshot path");
 assert.ok(packageJson.dependencies.react, "React should be a local dependency");
@@ -411,6 +413,7 @@ assert.match(liveRacingSource, /@container \(max-width: 380px\) \{[\s\S]*\.live_
 assert.match(liveRacingSource, /const fallbackCodes = timingRows\.map[\s\S]*D\.drivers\.map\(\(driver\) => driver\.code\)/, "Intelligent focus mode should keep onboard slots populated from the roster while timing warms");
 const liveBattleSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(liveRacingSource, "activeBattleCandidateScore")}
+  ${extractNamedFunction(liveRacingSource, "isRetiredTimingRow")}
   ${extractNamedFunction(liveRacingSource, "timingGapSeconds")}
   ${extractNamedFunction(liveRacingSource, "intelligentOnboardCodes")}
   ${extractNamedFunction(liveRacingSource, "buildActiveBattlePairs")}
@@ -433,8 +436,23 @@ const closeBattleFocus = liveBattleSandbox.intelligentOnboardCodes({
   sessionKind: "Race",
 });
 assert.deepEqual(JSON.parse(JSON.stringify(closeBattleFocus.slice(1, 3))), ["GAS", "NOR"], "Intelligent focus onboards should score a close lower-field fight above a looser higher-field pair");
+const closeBattleWithRetiredRows = closeBattleRows.map((row) => ["GAS", "NOR"].includes(row.code) ? { ...row, retired: true } : row);
+const closeBattleWithRetiredFocus = liveBattleSandbox.intelligentOnboardCodes({
+  timingRows: closeBattleWithRetiredRows,
+  selectedCode: "VER",
+  fallbackCodes: closeBattleRows.map((row) => row.code),
+  sessionKind: "Race",
+});
+assert.deepEqual(JSON.parse(JSON.stringify(closeBattleWithRetiredFocus.slice(1, 3))), ["HAM", "LEC"], "Intelligent battle onboards should ignore retired drivers when selecting close race fights");
 const rankedActiveBattles = liveBattleSandbox.buildActiveBattlePairs(closeBattleRows);
 assert.deepEqual(JSON.parse(JSON.stringify([rankedActiveBattles[0]?.a, rankedActiveBattles[0]?.b])), ["GAS", "NOR"], "Active battle pairs should rank by battle quality instead of position alone");
+const rankedActiveBattlesWithRetiredRows = liveBattleSandbox.buildActiveBattlePairs([
+  { pos: 1, code: "LEC", interval: "LEADER" },
+  { pos: 2, code: "HAM", interval: "+0.420", retired: true },
+  { pos: 3, code: "NOR", interval: "+6.980" },
+  { pos: 4, code: "PIA", interval: "+0.800" },
+]);
+assert.deepEqual(JSON.parse(JSON.stringify([rankedActiveBattlesWithRetiredRows[0]?.a, rankedActiveBattlesWithRetiredRows[0]?.b])), ["NOR", "PIA"], "Active battle pairs should ignore retired drivers before ranking close fights");
 assert.match(liveRacingSource, /Watch Party/, "Live Racing should expose a Watch Party control");
 assert.match(liveRacingSource, /party-tray/, "Live Racing should render a draggable non-modal party tray");
 assert.match(liveRacingSource, /partyTrayPosition/, "Live Racing should persist the draggable party tray position");
@@ -600,6 +618,35 @@ assert.deepEqual(
   ],
   "Renderer constructor standings merge should preserve seed logos and colors for teams absent from a previous sparse live table",
 );
+const mergeDataSandbox = vm.runInNewContext(`(() => {
+  const window = {
+    PW_DATA: {},
+    PW_BUILD_PROFILES: (data) => ({
+      driverProfiles: Object.fromEntries((data.drivers || []).map((driver) => [driver.code, { ...driver, form: data.driverForm?.[driver.code] || [] }])),
+      teamProfiles: [],
+      formRounds: data.formRounds || [],
+    }),
+  };
+  const EMPTY_DATA = { drivers: [], byCode: {}, timing: [], standings: [], constructors: [], driverProfiles: {}, teamProfiles: [], driverForm: {}, formRounds: [], schedule: [], sessions: [], news: [], insights: [], battlePairs: [], strategyContext: null, presets: [], copilot: null, race: {}, seasonSummary: {} };
+  const SEEDED_CONSTRUCTOR_ROWS = [];
+  ${extractNamedFunction(dataProviderSource, "buildByCode")}
+  ${extractNamedFunction(dataProviderSource, "mergeRowsByKey")}
+  ${extractNamedFunction(dataProviderSource, "constructorMetadataRows")}
+  ${extractNamedFunction(dataProviderSource, "mergeCopilotData")}
+  ${extractNamedFunction(dataProviderSource, "isCancelledF12026RaceName")}
+  ${extractNamedFunction(dataProviderSource, "normalizeScheduleRoundOrder")}
+  ${extractNamedFunction(dataProviderSource, "isF12026ScheduleData")}
+  ${extractNamedFunction(dataProviderSource, "normalizeScheduleData")}
+  ${extractNamedFunction(dataProviderSource, "mergeData")}
+  return { mergeData };
+})()`);
+const sparseRecentFormMerge = mergeDataSandbox.mergeData({
+  drivers: [{ code: "ANT", name: "Kimi Antonelli" }],
+  driverForm: { ANT: [4, 2] },
+  formRounds: [{ rnd: 1, gp: "Opening Grand Prix" }, { rnd: 2, gp: "Second Grand Prix" }],
+}, { driverForm: {}, formRounds: [] });
+assert.deepEqual(JSON.parse(JSON.stringify(sparseRecentFormMerge.driverForm.ANT || null)), [4, 2], "Renderer live-data merge should keep base recent form when a sparse refresh sends an empty driverForm");
+assert.deepEqual(JSON.parse(JSON.stringify(sparseRecentFormMerge.driverProfiles.ANT.form || null)), [4, 2], "Drivers tab profiles should keep recent form positions after a sparse refresh");
 
 const liveSyncTargetSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(liveRacingSource, "syncLiveVideoToTargetLatency")}
@@ -696,11 +743,38 @@ const driverResultsUrlLine = mainProcess.match(/const DRIVER_RESULTS_URL = [^\n]
 assert.equal(driverResultsUrlLine, "", "Recent form should not fetch the all-season race results page");
 assert.match(mainProcess, /function driverResultsUrl\(season, round\)[\s\S]*\/\$\{encodeURIComponent\(year\)\}\/\$\{encodeURIComponent\(String\(round\)\)\}\/results\.json\?limit=100/, "Recent form should fetch bounded per-race results for the snapshot season");
 const recentDriverResultsSource = extractNamedFunction(mainProcess, "fetchRecentDriverResults");
+const recentOpenF1DriverResultsSource = extractNamedFunction(mainProcess, "fetchRecentOpenF1DriverResults");
 assert.match(mainProcess, /const RECENT_DRIVER_RESULTS_CACHE_MS = 1000 \* 60 \* 30/, "Recent per-round driver results should use an explicit memory cache TTL");
 assert.match(mainProcess, /let recentDriverResultsCache = new Map\(\)/, "Recent per-round driver results should keep a memory cache between live-data refreshes");
 assert.match(recentDriverResultsSource, /function fetchRecentDriverResults\(schedule = \[\], maxRaces = 5, season = new Date\(\)\.getFullYear\(\)\)/, "Recent form should accept the live snapshot season instead of relying on Jolpica's current alias");
 assert.match(recentDriverResultsSource, /recentDriverResultsCache\.get\(cacheKey\)[\s\S]*Date\.now\(\) - cached\.createdAt < RECENT_DRIVER_RESULTS_CACHE_MS/, "Recent per-round driver results should reuse fresh cached race results");
 assert.match(recentDriverResultsSource, /recentDriverResultsCache\.set\(cacheKey, \{ createdAt: Date\.now\(\), race \}\)/, "Recent per-round driver results should cache successful race result pages");
+assert.match(recentOpenF1DriverResultsSource, /getAnalyticsSession\(\{[\s\S]*scope: "leaderboard"[\s\S]*openF1RaceResultToRecentFormRace/, "Recent form should fall back to the rich analytics race result path when Jolpica has no current-season rows");
+assert.match(mainProcess, /ensureRecentDriverForm[\s\S]*fetchRecentDriverResults[\s\S]*fetchRecentOpenF1DriverResults/, "First-paint recent form should try bounded Jolpica results and then the OpenF1 analytics fallback");
+const openF1RecentFormSandbox = vm.runInNewContext(`(() => {
+  ${[
+    "finiteNumber",
+    "fallbackDriverName",
+    "openF1RaceResultToRecentFormRace",
+    "parseDriverRecentForm",
+  ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+  return { openF1RaceResultToRecentFormRace, parseDriverRecentForm };
+})()`);
+const openF1RecentRace = openF1RecentFormSandbox.openF1RaceResultToRecentFormRace(
+  { rnd: 7, name: "Barcelona Grand Prix", loc: "Barcelona" },
+  [{ position: 1, driver_number: 44 }, { position: 2, driver_number: 12 }, { position: 3, number: 1, code: "NOR" }],
+  [{ code: "HAM", name: "Lewis Hamilton", num: 44 }, { code: "ANT", name: "Kimi Antonelli", num: 12 }, { code: "NOR", name: "Lando Norris", num: 1 }],
+);
+assert.deepEqual(JSON.parse(JSON.stringify(openF1RecentRace.Results.map((row) => ({ position: row.position, code: row.Driver.code })))), [
+  { position: "1", code: "HAM" },
+  { position: "2", code: "ANT" },
+  { position: "3", code: "NOR" },
+], "OpenF1 session results should be convertible into recent-form race results by app roster code");
+assert.deepEqual(JSON.parse(JSON.stringify(openF1RecentFormSandbox.parseDriverRecentForm({ MRData: { RaceTable: { Races: [openF1RecentRace] } } }).driverForm)), {
+  HAM: [1],
+  ANT: [2],
+  NOR: [3],
+}, "OpenF1-derived recent-form races should feed the existing driver form parser");
 const raceWinnerSandbox = vm.runInNewContext(`(() => {
   ${[
     "compactText",
@@ -2506,6 +2580,16 @@ const activeWeekendSchedule = [
 ];
 assert.equal(copilotWeekendSelection.currentRaceWeekend(activeWeekendSchedule).name, "Spanish Grand Prix", "Current weekend Copilot projections should use a race weekend once sessions have started");
 assert.equal(copilotWeekendSelection.nextRaceWeekend(activeWeekendSchedule).name, "Canadian Grand Prix", "Next weekend Copilot projections should skip the active current race weekend");
+const postRaceGapSchedule = [
+  { rnd: 8, name: "Spanish Grand Prix", status: "done", startsAt: "2026-06-14T13:00:00.000Z", sessions: [{ kind: "Race", status: "done" }] },
+  { rnd: 9, name: "Austrian Grand Prix", status: "upcoming", startsAt: "2026-06-28T13:00:00.000Z", sessions: [
+    { kind: "Practice 1", status: "upcoming", startsAt: "2026-06-26T11:30:00.000Z" },
+    { kind: "Race", status: "upcoming", startsAt: "2026-06-28T13:00:00.000Z" },
+  ] },
+  { rnd: 10, name: "British Grand Prix", status: "upcoming", startsAt: "2026-07-05T14:00:00.000Z", sessions: [{ kind: "Practice 1", status: "upcoming" }] },
+];
+assert.equal(copilotWeekendSelection.currentRaceWeekend(postRaceGapSchedule).name, "Austrian Grand Prix", "After a completed race, Current weekend Copilot projections should roll forward to the next race weekend");
+assert.equal(copilotWeekendSelection.nextRaceWeekend(postRaceGapSchedule).name, "British Grand Prix", "After a completed race, Next weekend Copilot projections should skip the rolled-forward current weekend");
 const copilotCacheTarget = vm.runInNewContext(`(() => {
   ${extractNamedFunction(mainProcess, "finiteNumber")}
   ${extractNamedFunction(mainProcess, "raceWeekendIsActive")}
@@ -2555,10 +2639,11 @@ assert.match(mainProcess, /api\.openf1\.org\/v1\/session_result/, "Session analy
 assert.match(mainProcess, /positiveDuration/, "Session analytics should ignore zero OpenF1 result durations so practice and qualifying use valid lap times");
 assert.match(mainProcess, /api\.openf1\.org\/v1\/stints/, "Session analytics should fetch OpenF1 tyre stint data");
 assert.match(mainProcess, /requestOpenF1AnalyticsWithRetry/, "Session analytics should retry OpenF1 429 responses instead of dropping most charts");
-assert.match(mainProcess, /const requestEntries = Object\.entries\(requests\)[\s\S]*for \(const \[key, \[endpoint, params\]\] of requestEntries\)/, "Session analytics should fetch OpenF1 endpoints serially to avoid burst rate limits");
-assert.doesNotMatch(mainProcess, /Promise\.allSettled\(Object\.entries\(requests\)\.map/, "Session analytics should not fan out all OpenF1 session requests in parallel");
-const analyticsDelay = Number(mainProcess.match(/OPENF1_ANALYTICS_REQUEST_DELAY_MS = ([0-9]+)/)?.[1] || 0);
-assert.ok(analyticsDelay >= 900, "Session analytics should pace OpenF1 endpoint requests conservatively enough for multi-session recap checks");
+assert.match(mainProcess, /OPENF1_MAX_CONCURRENT_REQUESTS/, "OpenF1 requests should allow limited concurrency instead of a one-at-a-time global queue");
+assert.match(mainProcess, /openF1ForegroundQueue[\s\S]*openF1BackgroundQueue[\s\S]*pickNextOpenF1Task/, "OpenF1 scheduler should prioritize foreground user loads over background refreshes");
+assert.match(mainProcess, /function requestOpenF1AnalyticsBatch[\s\S]*Promise\.all\(Object\.entries\(requests\)\.map/, "Session analytics should batch rich OpenF1 endpoints behind the shared rate limiter");
+assert.match(mainProcess, /buildAnalyticsSessionData[\s\S]*requestOpenF1AnalyticsBatch/, "Full session analytics should keep rich endpoints but load them through the faster batch helper");
+assert.match(mainProcess, /refreshAnalyticsSessionCache[\s\S]*priority:\s*"background"/, "Background analytics revalidation should not block foreground OpenF1 work");
 assert.match(mainProcess, /readAnalyticsSessionDiskCache/, "Session analytics should persist successful session data for OpenF1 cooldown fallback");
 assert.match(mainProcess, /writeAnalyticsSessionDiskCache/, "Session analytics should save session analytics cache entries after successful loads");
 assert.match(mainProcess, /analyticsAliasKey/, "Session analytics should key cached data by meeting and session kind before resolving a session key");
@@ -2576,7 +2661,7 @@ assert.match(mainProcess, /hasPublishedRows/, "Session analytics should explain 
 assert.match(mainProcess, /value === null \|\| value === undefined \|\| value === ""[\s\S]*return null/, "Session analytics should not coerce missing numeric values to zero");
 assert.match(mainProcess, /COPILOT_WEEKEND_SESSION_KINDS[\s\S]*Practice 1[\s\S]*Practice 2[\s\S]*Practice 3[\s\S]*Qualifying/, "Current weekend Copilot predictions should consider FP1-FP3 and qualifying");
 assert.match(mainProcess, /function buildWeekendSessionSummaries[\s\S]*getAnalyticsSession\(\{[\s\S]*sessionKind/, "Current weekend Copilot should reuse structured OpenF1 session analytics");
-assert.match(mainProcess, /weekendSessionSummaries:\s*await buildWeekendSessionSummaries\(data, pageId\)/, "Daily AI snapshots should include structured weekend session summaries when predicting the current race");
+assert.match(mainProcess, /weekendSessionSummaries:\s*await buildWeekendSessionSummaries\(data, pageId/, "Daily AI snapshots should include structured weekend session summaries when predicting the current race");
 assert.match(mainProcess, /pitwall:notify:schedule/, "Electron main should expose local reminder IPC");
 assert.match(mainProcess, /pitwall:notify:cancel/, "Electron main should expose local reminder cancellation IPC");
 assert.match(mainProcess, /pitwall:profile:get/, "Electron main should persist the user profile outside random localhost localStorage origins");
@@ -2611,7 +2696,7 @@ assert.doesNotMatch(liveCoreDataUrlsBlock, /f1api\.dev\/api\/current/, "Initial 
 assert.doesNotMatch(liveCoreDataUrlsBlock, /api\.jolpi\.ca\/ergast\/f1\/current/, "Initial live data snapshots should not wait on slow Jolpica current endpoints");
 assert.match(mainProcess, /requestOpenF1Json\(`https:\/\/api\.openf1\.org\/v1\/meetings\?year=\$\{year\}`\)[\s\S]*requestOpenF1Json\(`https:\/\/api\.openf1\.org\/v1\/sessions\?year=\$\{year\}`\)[\s\S]*parseOpenF1Schedule\(meetings, sessions\)/, "Weekend library should use OpenF1 schedule data without waiting on Jolpica");
 assert.match(mainProcess, /api\.openf1\.org\/v1\/weather\?session_key=latest/, "Live data should fetch current/latest track weather from OpenF1");
-assert.match(mainProcess, /fetchOpenF1WeekendWeather\(nextRace\)/, "Live data should fall back to selected-weekend OpenF1 weather when latest weather is unavailable");
+assert.match(mainProcess, /fetchOpenF1WeekendWeather\(nextRace/, "Live data should fall back to selected-weekend OpenF1 weather when latest weather is unavailable");
 assert.match(mainProcess, /standingsByNumber/, "OpenF1 timing parser should map driver numbers back to known driver codes");
 assert.doesNotMatch(mainProcess, /code:\s*driver\?\.name_acronym\s*\|\|\s*String\(row\.driver_number\)/, "OpenF1 timing rows should not fall back to raw driver numbers before checking standings metadata");
 assert.match(mainProcess, /motorsport\.com\/rss\/f1\/news/, "Live data should fetch current F1 news RSS");
@@ -2686,6 +2771,17 @@ assert.equal(
 assert.match(source["DataProvider.jsx"], /onRetry=\{\(\) => refreshData\(\{ forceRefresh: true, initial: true \}\)\}/, "Initial loading retry should still allow a forced live-data refresh");
 assert.match(source["DataProvider.jsx"], /initialDataReady[\s\S]*PitWallLoadingScreen[\s\S]*children/, "DataProvider should keep the app behind a loading screen until the initial live fetch resolves");
 assert.match(source["DataProvider.jsx"], /setData\(\(current\) => mergeData\(current, snapshot\)\)[\s\S]*return snapshot/, "DataProvider refreshData should return the loaded snapshot so screen-level refresh UI can wait for enrichment");
+const dataProviderStartupGateSandbox = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(source["DataProvider.jsx"], "shouldWaitForStartupNews")}
+  return { shouldWaitForStartupNews };
+})()`);
+assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: true }), false, "Startup gate should not wait on article enrichment when the snapshot is already fresh");
+assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: false }), false, "Startup gate should open once news enrichment has settled");
+assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: true, sourceLabel: "Live data (refreshing)" }), true, "Startup gate should wait for a cached snapshot while the fresh news refresh is still running");
+assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: true, sourceLabel: "Live data", news: [{ title: "Fresh F1 headline" }] }), false, "Startup gate should open once the fresh base news feed is loaded without waiting for article enrichment");
+assert.match(source["DataProvider.jsx"], /startup:\s*Boolean\(options\.initial\)/, "Initial snapshot requests should tell Electron to skip non-startup work on the critical path");
+assert.match(source["DataProvider.jsx"], /options\.initial[\s\S]*shouldWaitForStartupNews\(snapshot\)[\s\S]*return snapshot[\s\S]*setInitialDataReady\(true\)/, "DataProvider should keep startup loading visible only while cached startup news is refreshing");
+assert.doesNotMatch(source["DataProvider.jsx"], /STARTUP_NEWS_FORCE_AFTER_ATTEMPTS|refreshData\(\{ initial: true, forceRefresh \}\)/, "Startup news wait should poll the pending enrichment instead of force-refreshing and restarting it");
 const dataProviderRouteSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(source["DataProvider.jsx"], "shouldBypassInitialLiveDataGate")}
   return { shouldBypassInitialLiveDataGate };
@@ -2733,6 +2829,7 @@ const liveRacingSmartSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(source["LiveRacing.jsx"], "isQualifyingEliminationRow")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "timingDriverStatusState")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "activeBattleCandidateScore")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "isRetiredTimingRow")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "intelligentOnboardCodes")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "liveOnboardCodeForSlot")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "formatSessionClock")}
@@ -2932,6 +3029,7 @@ const liveCustomLayoutSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(source["LiveRacing.jsx"], "applyCustomDrag")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "snapCustomEdge")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "snapCustomTileGeometry")}
+  ${extractNamedFunction(source["LiveRacing.jsx"], "isRetiredTimingRow")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "resolveCustomOnboardCode")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "normalizeCustomTileSource")}
   ${extractNamedFunction(source["LiveRacing.jsx"], "customTileSourceKey")}
@@ -3051,6 +3149,8 @@ assert.equal(liveCustomLayoutSandbox.resolveCustomOnboardCode({ type: "smart-onb
 assert.equal(liveCustomLayoutSandbox.resolveCustomOnboardCode({ type: "smart-onboard", mode: "battle-secondary" }, nonRaceBattleContext), "PIA", "Non-race custom battle secondary should follow the second timing row instead of a favorite");
 assert.equal(liveCustomLayoutSandbox.resolveCustomOnboardCode({ type: "smart-onboard", mode: "battle-primary" }, { ...nonRaceBattleContext, timingRows: [{ code: "PIA", pos: 1 }, { code: "VER", pos: 2 }, { code: "NOR", pos: 3 }] }), "PIA", "Non-race custom battle primary should switch when timing P1 changes");
 assert.equal(liveCustomLayoutSandbox.resolveCustomOnboardCode({ type: "smart-onboard", mode: "battle-secondary" }, { ...nonRaceBattleContext, timingRows: [{ code: "PIA", pos: 1 }, { code: "VER", pos: 2 }, { code: "NOR", pos: 3 }] }), "VER", "Non-race custom battle secondary should switch when timing P2 changes");
+assert.equal(liveCustomLayoutSandbox.resolveCustomOnboardCode({ type: "smart-onboard", mode: "battle-primary" }, { ...nonRaceBattleContext, timingRows: [{ code: "PIA", pos: 1, retired: true }, { code: "VER", pos: 2 }, { code: "NOR", pos: 3 }] }), "VER", "Non-race custom battle primary should ignore retired timing leaders");
+assert.equal(liveCustomLayoutSandbox.resolveCustomOnboardCode({ type: "smart-onboard", mode: "battle-secondary" }, { ...nonRaceBattleContext, timingRows: [{ code: "PIA", pos: 1, retired: true }, { code: "VER", pos: 2 }, { code: "NOR", pos: 3 }] }), "NOR", "Non-race custom battle secondary should ignore retired timing leaders");
 assert.match(source["LiveRacing.jsx"], /label: "Battle"[\s\S]*sources: \[smartSource\("battle-primary"\), smartSource\("battle-secondary"\)\]/, "Custom Battle picker should add both dynamic timing-top-two battle sources");
 assert.equal(liveCustomLayoutSandbox.customLayoutIdFromPreset(liveCustomLayoutSandbox.customLayoutPresetId("cl-9")), "cl-9", "Custom preset ids should round-trip the layout id");
 assert.equal(liveCustomLayoutSandbox.customLayoutIdFromPreset("Intelligent"), "", "Built-in presets should not parse as custom layout ids");
@@ -4149,6 +4249,9 @@ assert.match(mainProcess, /bestLapDuration/, "Timing rows should include best la
 assert.match(mainProcess, /replayOpenF1Cache/, "Replay timing should cache full OpenF1 session data instead of polling every video bucket");
 assert.match(mainProcess, /getReplayOpenF1SessionData/, "Replay timing should reuse fetched OpenF1 replay session data");
 assert.match(mainProcess, /filterReplayRowsAt/, "Replay timing should filter cached OpenF1 rows by video clock locally");
+assert.match(mainProcess, /replayRowTimelineCache[\s\S]*function replayRowsTimeline[\s\S]*function filterReplayRowsAt/, "Replay timing should reuse a sorted OpenF1 row timeline instead of sorting every poll bucket");
+assert.match(mainProcess, /getReplayOpenF1SessionData[\s\S]*requestOpenF1JsonMap/, "OpenF1 replay fallback should fetch rich session tables concurrently behind the rate limiter");
+assert.match(mainProcess, /getReplayF1TimingSessionData[\s\S]*optionIdentity[\s\S]*resolveF1TimingArchiveBase[\s\S]*requestOpenF1Json/, "Formula 1 replay timing should try resolved archive identity before spending OpenF1 metadata requests");
 assert.doesNotMatch(mainProcess, /requestJson\(openF1ApiUrl\("intervals", \{ session_key: sessionKey, "date>="/, "Replay timing should not fail the snapshot on optional interval date-window fetches");
 assert.match(preload, /replayTiming:/, "Preload should expose replay timing snapshots to the renderer");
 assert.match(preload, /liveTiming: \(options = \{\}\)/, "Preload should expose fast live timing snapshots with latency options to the renderer");
@@ -4191,6 +4294,7 @@ const liveAiSandbox = vm.runInNewContext(`(() => {
   ${[
     "telemetryNumber",
     "timingGapSeconds",
+    "isRetiredTimingRow",
     "buildActiveBattlePairs",
     "buildActiveInsights",
     "buildActiveStrategyContext",
@@ -4304,7 +4408,7 @@ assert.match(mainProcess, /function scaleProjectedPointsToBudget/, "Projected ch
 assert.match(mainProcess, /page\.id === "next-weekend"[\s\S]*race winner[\s\S]*podium/, "Next weekend AI prompt should explicitly request race predictions");
 assert.match(mainProcess, /page\.id === "next-weekend"[\s\S]*Grand Prix race[\s\S]*full predicted race finishing order/, "Next weekend AI prompt should request a race finishing-order leaderboard");
 assert.doesNotMatch(mainProcess, /Treat snapshot\.nextUpcomingSession as the target|full predicted next upcoming session order/, "Next weekend AI prompt should not target FP1 or another next scheduled session for the leaderboard");
-assert.match(mainProcess, /pageId === "next-weekend"[\s\S]{0,80}await buildNextWeekendPerformanceContext\(data\)/, "Next weekend AI snapshots should include a cumulative performance context");
+assert.match(mainProcess, /pageId === "next-weekend"[\s\S]{0,120}await buildNextWeekendPerformanceContext\(data/, "Next weekend AI snapshots should include a cumulative performance context");
 assert.match(mainProcess, /function buildWeekendPerformanceContext[\s\S]*currentSeason[\s\S]*previousSeason[\s\S]*trackHistory/, "Weekend performance context should include current-season, previous-season, and target-track evidence");
 assert.match(mainProcess, /function buildCompletedRacePerformance[\s\S]*getAnalyticsSession/, "Next weekend performance context should reuse real completed OpenF1 race analytics");
 assert.match(mainProcess, /This week's F1 news[\s\S]*Every race this season's results[\s\S]*Past results at this track[\s\S]*Driver skill overall[\s\S]*The model decides how to weigh these sources/, "AI projection prompts should provide evidence sources without prescribing weights");
@@ -4480,6 +4584,9 @@ assert.match(mainProcess, /readLiveSnapshotDiskCache/, "Dashboard snapshot shoul
 assert.match(mainProcess, /forceRefresh[\s\S]*refreshLiveDataSnapshot/, "Dashboard snapshot IPC should support bypassing disk cache for the startup loading gate");
 assert.match(mainProcess, /writeLiveSnapshotDiskCache/, "Dashboard snapshot should save successful live data for the next app launch");
 assert.match(mainProcess, /refreshLiveDataSnapshot/, "Dashboard snapshot should refresh stale disk data in the background");
+assert.match(mainProcess, /refreshLiveDataEnrichment[\s\S]*priority:\s*"background"/, "Live-data enrichment should yield OpenF1 slots to foreground user actions");
+assert.match(mainProcess, /live-data\.refresh-failed[\s\S]*enrichmentPending:\s*false/, "Failed background live-data refresh should settle cached startup news pending so the loading screen can open");
+assert.match(mainProcess, /const deferCopilot = Boolean\(options\.startup\)[\s\S]*getDailyCopilotInsights\(data,[\s\S]*deferCopilot[\s\S]*return data/, "Startup snapshots should return the fresh news feed before daily Copilot generation finishes");
 assert.match(mainProcess, /fetchLiveDataEntries\(LIVE_CORE_DATA_URLS\)/, "Dashboard snapshot should fetch only core data on its critical path");
 assert.doesNotMatch(mainProcess, /getPitWallSnapshot[\s\S]{0,900}Object\.entries\(LIVE_DATA_URLS\)/, "Dashboard snapshot should not wait for every OpenF1 timing endpoint before rendering");
 assert.match(mainProcess, /buildStrategyContext/, "Electron main should summarize tyre, pit, timing, weather, and news context for AI");
@@ -4521,6 +4628,8 @@ assert.match(source["LiveRacing.jsx"], /chatThinking/, "Ask the engineer should 
 assert.match(source["LiveRacing.jsx"], /setChatThinking\(true\)[\s\S]*finally[\s\S]*setChatThinking\(false\)/, "Ask the engineer should show a thinking state only while the AI request is in flight");
 assert.match(source["LiveRacing.jsx"], /Engineer is thinking/, "Ask the engineer should render a visible thinking message while waiting for AI");
 assert.match(source["LiveRacing.jsx"], /msg--thinking/, "Ask the engineer thinking message should have a dedicated visual state");
+assert.match(source["LiveRacing.jsx"], /aiPopupOpenRef[\s\S]*React\.useRef\(aiPopupOpen\)[\s\S]*aiPopupOpenRef\.current = aiPopupOpen/, "Ask the engineer should track current AI popup visibility while an answer is in flight");
+assert.match(source["LiveRacing.jsx"], /const summary = answer\.summary \|\| "The configured AI provider returned no summary\."[\s\S]*if \(layout === "focus" && !aiPopupOpenRef\.current\) pushAiInsightToast\(\{[\s\S]*kind:\s*"engineer"[\s\S]*title:\s*"Engineer replied"[\s\S]*body:\s*summary/, "Ask the engineer should toast a completed response when the AI popup was closed before the answer arrived");
 assert.match(source["Analytics.jsx"], /pitwall\.history\.query/, "Analytics should query historical Jolpica data");
 assert.doesNotMatch(source["AppShell.jsx"] + source["Dashboard.jsx"] + source["Weekend.jsx"] + source["News.jsx"] + source["Schedule.jsx"] + source["Copilot.jsx"], /Alex Ramos|Ferrari gamble on undercut|Canadian Grand Prix|Circuit Gilles-Villeneuve|Morning, Alex/, "User-facing screens should not hardcode placeholder person, news, or race data");
 

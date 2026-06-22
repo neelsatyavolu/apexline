@@ -21,6 +21,7 @@ function extractNamedFunction(source, name) {
 }
 
 const timing = vm.runInNewContext(`(() => {
+  const replayRowTimelineCache = new WeakMap();
   ${[
     "finiteNumber",
     "latestBy",
@@ -38,11 +39,13 @@ const timing = vm.runInNewContext(`(() => {
     "latestCarDataByDriverNumber",
     "timingSegmentTone",
     "miniSectorSegments",
+    "openF1SectorTimes",
     "parseTiming",
     "latestLapsByDriverNumber",
     "normalizeOpenF1SessionKind",
     "scoreOpenF1ReplaySession",
     "replayRowDateMs",
+    "replayRowsTimeline",
     "filterReplayRowsAt",
   ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
   return { parseTiming, scoreOpenF1ReplaySession, filterReplayRowsAt };

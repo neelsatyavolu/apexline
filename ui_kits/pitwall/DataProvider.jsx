@@ -51,6 +51,7 @@
     "Loading F1 news",
     "Checking Apexline connections",
   ];
+  const STARTUP_NEWS_RETRY_MS = 1200;
   const SEEDED_CONSTRUCTOR_ROWS = (window.PW_DATA?.constructors || []).map((row) => ({ ...row }));
 
   function ensureLoadingStyles() {
@@ -350,7 +351,7 @@
       drivers: incoming?.drivers?.length ? mergeRowsByKey(base?.drivers, incoming.drivers, "code") : (base?.drivers || []),
       constructors: incoming?.constructors?.length ? mergeRowsByKey(constructorBaseRows, incoming.constructors, "abbr", { includeMissing: false }) : (base?.constructors || []),
       standings: incoming?.standings?.length ? incoming.standings : base?.standings || [],
-      driverForm: incoming?.driverForm || base?.driverForm || {},
+      driverForm: incoming?.driverForm && Object.keys(incoming.driverForm).length ? incoming.driverForm : base?.driverForm || {},
       formRounds: incoming?.formRounds?.length ? incoming.formRounds : base?.formRounds || [],
       timing: incoming?.timing || base?.timing || [],
       schedule: incoming?.schedule?.length ? incoming.schedule : base?.schedule || [],
@@ -384,6 +385,10 @@
     return Boolean(params.get("weekendRound") || params.get("weekendSession") || params.get("weekendMode") === "recap");
   }
 
+  function shouldWaitForStartupNews(snapshot) {
+    return Boolean(snapshot?.enrichmentPending && /refreshing/i.test(String(snapshot?.sourceLabel || "")));
+  }
+
   function DataProvider({ children }) {
     const [data, setData] = React.useState(() => mergeData(EMPTY_DATA, window.PW_DATA || {}));
     const [profile, setProfile] = React.useState(loadProfile);
@@ -408,11 +413,22 @@
       if (!window.pitwall?.data?.snapshot) return null;
       try {
         if (options.initial) setInitialLoadError("");
-        const snapshot = options.forceRefresh
-          ? await window.pitwall.data.snapshot({ forceRefresh: true, forceCopilotRefresh: Boolean(options.forceCopilotRefresh), forceCopilotPageId: options.forceCopilotPageId || "" })
-          : await window.pitwall.data.snapshot();
+        const snapshotOptions = {
+          startup: Boolean(options.initial),
+          ...(options.forceRefresh ? { forceRefresh: true } : {}),
+          ...(options.forceCopilotRefresh ? { forceCopilotRefresh: true } : {}),
+          ...(options.forceCopilotPageId ? { forceCopilotPageId: options.forceCopilotPageId } : {}),
+        };
+        const snapshot = await window.pitwall.data.snapshot(snapshotOptions);
         setData((current) => mergeData(current, snapshot));
-        if (options.initial) setInitialDataReady(true);
+        if (options.initial && shouldWaitForStartupNews(snapshot)) {
+          clearTimeout(enrichmentTimerRef.current);
+          enrichmentTimerRef.current = setTimeout(() => refreshData({ initial: true }), STARTUP_NEWS_RETRY_MS);
+          return snapshot;
+        }
+        if (options.initial) {
+          setInitialDataReady(true);
+        }
         if (snapshot?.enrichmentPending) {
           clearTimeout(enrichmentTimerRef.current);
           enrichmentTimerRef.current = setTimeout(refreshData, 2500);
@@ -420,7 +436,9 @@
         return snapshot;
       } catch {
         setData((current) => ({ ...current, source: "error", sourceLabel: "Live data unavailable" }));
-        if (options.initial) setInitialLoadError("Fresh live data is unavailable right now.");
+        if (options.initial) {
+          setInitialLoadError("Fresh live data is unavailable right now.");
+        }
         return null;
       }
     }

@@ -145,6 +145,8 @@
     .timing-tower__row[data-elimination="true"]:hover { background: linear-gradient(90deg, rgba(255,59,59,0.18), rgba(255,59,59,0.055)); }
     .timing-tower__row[data-elimination="true"] .timing-driver__pos { color: #ff9a9a; }
     .timing-tower__row[data-moving="true"] { position: relative; z-index: 3; will-change: transform; box-shadow: 0 10px 24px rgba(0,0,0,0.28), inset 3px 0 0 var(--accent); }
+    .timing-tower__row[data-finished="true"] { background-color: rgba(255,255,255,0.025); background-image: linear-gradient(45deg, rgba(255,255,255,0.075) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.075) 75%), linear-gradient(45deg, rgba(255,255,255,0.075) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.075) 75%); background-size: 18px 18px; background-position: 0 0, 9px 9px; box-shadow: inset 3px 0 0 rgba(255,255,255,0.55); }
+    .timing-tower__row[data-finished="true"]:hover { background-color: rgba(255,255,255,0.055); }
     .timing-driver { display: grid; grid-template-columns: 22px minmax(42px, auto); align-items: center; column-gap: 6px; min-width: 0; }
     .timing-driver__pos { width: auto; color: var(--text-tertiary); font-family: var(--font-mono); font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; }
     .timing-driver__code { display: inline-grid; place-items: center; min-width: 42px; height: 24px; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--driver-color, var(--accent)); color: #061017; font-family: var(--font-display); font-size: var(--text-sm); font-weight: 900; letter-spacing: 0.02em; transition-property: background-color, color; transition-duration: var(--dur-fast); transition-timing-function: var(--ease-standard); }
@@ -639,9 +641,9 @@
     .wpt-card__icon { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: var(--radius-sm); flex: none; align-self: start; background: var(--accent-quiet); color: var(--accent); }
     .wpt-card:not([data-ai]) { width: 300px; }
     .wpt-card[data-ai] { border-color: var(--accent-border); background: linear-gradient(180deg, color-mix(in srgb, var(--accent-soft) 90%, var(--surface-overlay)), color-mix(in srgb, var(--bg-base) 96%, transparent)); }
-    .wpt-card[data-ai] .wpt-card__name { font-family: var(--font-display); font-size: var(--text-md); font-weight: var(--fw-bold); letter-spacing: var(--tracking-tight); }
-    .wpt-card[data-ai] .wpt-card__msg { font-size: var(--text-sm); line-height: 1.45; }
-    .wpt-card[data-ai] .wpt-card__eyebrow { display: inline-flex; align-items: center; gap: 3px; font-size: var(--text-3xs); }
+    .wpt-card[data-ai] .wpt-card__name { font-family: var(--font-display); font-size: var(--text-lg); font-weight: var(--fw-black); line-height: 1.05; letter-spacing: 0; text-transform: uppercase; }
+    .wpt-card[data-ai] .wpt-card__msg { font-family: var(--font-mono); font-size: var(--text-xs); font-weight: var(--fw-medium); line-height: 1.5; letter-spacing: 0; color: color-mix(in srgb, var(--text-primary) 76%, var(--text-tertiary)); font-variant-numeric: tabular-nums; }
+    .wpt-card[data-ai] .wpt-card__eyebrow { display: inline-flex; align-items: center; gap: 3px; font-family: var(--font-mono); font-size: var(--text-3xs); }
 
     /* Battle toast */
     .toast { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); z-index: 40; display: flex; align-items: center; gap: var(--space-6); padding: var(--space-6) var(--space-7); border-radius: var(--radius-md); background: var(--surface-overlay); border: 1px solid var(--accent-border); box-shadow: var(--shadow-lg), var(--glow-accent); backdrop-filter: blur(var(--blur-md, 14px)); animation: pw-toast-in var(--dur-base) var(--ease-out); }
@@ -916,6 +918,17 @@
     return gapScore + positionScore;
   }
 
+  function isRetiredTimingRow(row = {}) {
+    const statusText = [
+      row.status,
+      row.state,
+      row.reason,
+      row.retired ? "RETIRED" : "",
+      row.last,
+    ].map((value) => String(value || "").trim().toUpperCase()).filter(Boolean).join(" ");
+    return /\b(DNF|RETIRED|RET|STOPPED|STOP)\b/.test(statusText);
+  }
+
   function intelligentOnboardCodes(options) {
     options = options || {};
     const timingRows = Array.isArray(options.timingRows) ? options.timingRows : [];
@@ -931,6 +944,12 @@
       });
       return picked;
     };
+    const retiredCodes = new Set(timingRows.filter(isRetiredTimingRow).map((row) => cleanCode(row.code)).filter(Boolean));
+    const activeCode = (value) => {
+      const code = cleanCode(value);
+      return code && !retiredCodes.has(code) ? code : "";
+    };
+    const activeFallbackCodes = fallbackCodes.map(activeCode).filter(Boolean);
     const intervalSeconds = (value) => {
       const text = String(value || "").trim();
       if (!text || text === "—" || /leader/i.test(text)) return null;
@@ -939,9 +958,9 @@
     };
     const ordered = timingRows
       .map((row) => ({ ...row, pos: Number(row.pos), code: cleanCode(row.code) }))
-      .filter((row) => row.code && Number.isFinite(row.pos))
+      .filter((row) => row.code && Number.isFinite(row.pos) && !isRetiredTimingRow(row))
       .sort((a, b) => a.pos - b.pos);
-    const base = unique([options.preferredCode, options.selectedCode, ...fallbackCodes, ...ordered.map((row) => row.code)]);
+    const base = unique([activeCode(options.preferredCode), activeCode(options.selectedCode), ...activeFallbackCodes, ...ordered.map((row) => row.code)]);
     const primary = base[0] || "";
     const fill = (smartCodes) => unique([primary, ...smartCodes, ...base]).slice(0, count);
     const session = sessionKind.toLowerCase();
@@ -1012,7 +1031,7 @@
   }
   function buildActiveBattlePairs(rows = []) {
     const ordered = rows
-      .filter((row) => row?.code)
+      .filter((row) => row?.code && !isRetiredTimingRow(row))
       .slice()
       .sort((a, b) => Number(a.pos || 99) - Number(b.pos || 99));
     const pairs = [];
@@ -1373,6 +1392,100 @@
   }
   function isQualifyingSessionKind(sessionKind) {
     return /qualifying|shootout/i.test(String(sessionKind || ""));
+  }
+  function isRaceSessionKind(sessionKind) {
+    const kind = String(sessionKind || "").toLowerCase();
+    if (/qualifying|shootout|practice/.test(kind)) return false;
+    return /\brace\b|sprint|grand\s*prix/.test(kind);
+  }
+  function raceFinishedFromState(options = {}) {
+    // The chequered flag only applies in races/sprints — never qualifying/practice.
+    if (!isRaceSessionKind(options.sessionKind)) return false;
+    // Primary, exact signal: the leader has completed every lap. leaderLap is the
+    // largest per-driver NumberOfLaps (laps COMPLETED), so it equals the race
+    // distance only once the leader crosses the line for the final time — not a
+    // lap early like the shared lap-count feed. This is what guards against
+    // marking lapped cars as finished while the race is still running.
+    const leaderLap = telemetryNumber(options.leaderLap);
+    const totalLaps = telemetryNumber(options.totalLaps);
+    if (leaderLap != null && totalLaps != null && totalLaps > 0) {
+      return leaderLap >= totalLaps;
+    }
+    // Fallback when per-driver lap data is unavailable (e.g. OpenF1): broadcast
+    // signals — the chequered race-control message or session status going final.
+    const messages = Array.isArray(options.raceControlMessages) ? options.raceControlMessages : [];
+    const chequered = messages.some((message) => /CHEQUERED|CHECKERED/.test(String(message?.text || message?.status || "").toUpperCase()));
+    if (chequered) return true;
+    const sessionStatus = String(options.sessionClock?.status || "").toUpperCase();
+    return /\b(FINISHED|FINALISED|FINALIZED|ENDS|ENDED|COMPLETE|COMPLETED)\b/.test(sessionStatus);
+  }
+  function timingFinishDelays(rows) {
+    // Seconds after the leader takes the flag that each car crosses the line.
+    // Lead-lap cars use their own numeric gap-to-leader. Lapped cars only show a
+    // lap count ("1 L"), but their interval-to-car-ahead stays numeric, so we
+    // accumulate intervals down the running order to reconstruct the real on-track
+    // time gap the laps display hides. A numeric gap re-anchors the running total
+    // (and heals the chain) so one missing interval doesn't poison cars below.
+    const delays = new Map();
+    const ordered = (Array.isArray(rows) ? rows : [])
+      .filter((row) => row?.code)
+      .slice()
+      .sort((a, b) => (telemetryNumber(a.pos) || 99) - (telemetryNumber(b.pos) || 99));
+    let cumulative = 0;
+    let chainBroken = false;
+    ordered.forEach((row, index) => {
+      const gap = timingGapSeconds(row.gap);
+      const interval = timingGapSeconds(row.interval);
+      if (index === 0) {
+        cumulative = gap != null && gap >= 0 ? gap : 0;
+      } else if (gap != null && gap >= 0) {
+        cumulative = gap;
+        chainBroken = false;
+      } else if (!chainBroken && interval != null) {
+        cumulative += interval;
+      } else {
+        chainBroken = true;
+      }
+      const delay = gap != null && gap >= 0 ? gap : (chainBroken ? null : cumulative);
+      delays.set(row.code, delay);
+    });
+    return delays;
+  }
+  function timingAnchorLaps(rows) {
+    // Each driver's completed-lap count (NumberOfLaps) at the moment the leader
+    // takes the flag. A car's row turns checkered the instant its lap count ticks
+    // past this — i.e. the exact frame it next crosses the start/finish line.
+    const laps = new Map();
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      if (!row?.code) return;
+      laps.set(row.code, telemetryNumber(row.sessionLap));
+    });
+    return laps;
+  }
+  function buildChequeredCodes(rows, finishElapsedSeconds, finishDelays, anchorLaps) {
+    // A row turns checkered when that driver crosses the line after the leader took
+    // the flag. Preferred signal: per-driver lap count — exact, since it ticks the
+    // moment the car crosses the line (the leader, at P1, flips immediately). When
+    // lap data is unavailable (e.g. OpenF1), fall back to a frozen gap-to-leader
+    // stagger. Retired/knocked-out drivers never flip.
+    const codes = new Set();
+    if (!(finishElapsedSeconds >= 0) || !Array.isArray(rows)) return codes;
+    rows.forEach((row) => {
+      if (!row?.code || isRetiredTimingRow(row) || row.knockedOut) return;
+      if (telemetryNumber(row.pos) === 1) { codes.add(row.code); return; }
+      const anchorLap = anchorLaps?.get(row.code);
+      const currentLap = telemetryNumber(row.sessionLap);
+      if (anchorLap != null && currentLap != null) {
+        if (currentLap > anchorLap) codes.add(row.code);
+        return;
+      }
+      const known = finishDelays?.get(row.code);
+      const delay = known != null && known >= 0
+        ? known
+        : Math.max(0, (telemetryNumber(row.pos) || 1) - 1) * 1.5;
+      if (finishElapsedSeconds >= delay) codes.add(row.code);
+    });
+    return codes;
   }
   function formatTelemetryGap(row, sessionKind = "") {
     const preferGap = isQualifyingSessionKind(sessionKind);
@@ -1741,33 +1854,40 @@
     const cleanCode = (value) => String(value || "").trim().toUpperCase();
     const byCode = context.byCode || {};
     const hasByCode = Boolean(Object.keys(byCode).length);
+    const timingRows = Array.isArray(context.timingRows) ? context.timingRows : [];
+    const retiredCodes = new Set(timingRows.filter(isRetiredTimingRow).map((row) => cleanCode(row.code)).filter(Boolean));
     const validCode = (value) => {
       const code = cleanCode(value);
       if (!code) return "";
       return !hasByCode || byCode[code] ? code : "";
     };
-    const unique = (codes) => {
+    const validActiveCode = (value) => {
+      const code = validCode(value);
+      return code && !retiredCodes.has(code) ? code : "";
+    };
+    const unique = (codes, resolver = validCode) => {
       const picked = [];
       codes.forEach((code) => {
-        const clean = validCode(code);
+        const clean = resolver(code);
         if (clean && !picked.includes(clean)) picked.push(clean);
       });
       return picked;
     };
     if (source.type === "onboard") return validCode(source.code);
     if (source.type !== "smart-onboard") return "";
-    const timingCodes = (context.timingRows || []).map((row) => row.code);
+    const activeTimingRows = timingRows.filter((row) => row?.code && !isRetiredTimingRow(row));
+    const timingCodes = activeTimingRows.map((row) => row.code);
     const standingCodes = (context.standings || []).map((row) => row.code);
     const driverCodes = (context.drivers || []).map((driver) => driver.code);
-    const fallbackCodes = unique([context.selectedCode, ...(context.fallbackCodes || []), ...timingCodes, ...standingCodes, ...driverCodes]);
-    const leader = validCode(context.timingRows?.[0]?.code) || validCode(context.standings?.[0]?.code) || validCode(context.drivers?.[0]?.code) || fallbackCodes[0] || "";
-    const favorites = unique(context.profile?.favoriteDrivers || []);
+    const fallbackCodes = unique([context.selectedCode, ...(context.fallbackCodes || []), ...timingCodes, ...standingCodes, ...driverCodes], validActiveCode);
+    const leader = validActiveCode(activeTimingRows[0]?.code) || validActiveCode(context.standings?.[0]?.code) || validActiveCode(context.drivers?.[0]?.code) || fallbackCodes[0] || "";
+    const favorites = unique(context.profile?.favoriteDrivers || [], validActiveCode);
     const sessionKind = String(context.sessionKind || "").toLowerCase();
     const nonRaceSession = sessionKind && !/race|sprint|grand prix/.test(sessionKind);
-    const topTimingCodes = unique((context.timingRows || [])
+    const topTimingCodes = unique(activeTimingRows
       .slice()
       .sort((a, b) => Number(a?.pos || 99) - Number(b?.pos || 99))
-      .map((row) => row?.code));
+      .map((row) => row?.code), validActiveCode);
     if (source.mode === "leader") return leader;
     if (source.mode === "favorite1") return favorites[0] || "";
     if (source.mode === "favorite2") return favorites[1] || "";
@@ -2015,7 +2135,7 @@
       </div>
     );
   }
-  function TimingTowerRow({ row, driver, columns, sectorCounts, overallBestLap, selected, moving, elimination, registerRow, onClick }) {
+  function TimingTowerRow({ row, driver, columns, sectorCounts, overallBestLap, selected, moving, finished, elimination, registerRow, onClick }) {
     const setRowRef = React.useCallback((node) => registerRow?.(row.code, node), [registerRow, row.code]);
     const statusState = timingDriverStatusState(row);
     // Broadcast colour code: purple = session-fastest lap, green = the driver's
@@ -2049,7 +2169,7 @@
       throttle: <span className="timing-cell">{formatPct(row.telemetry?.throttle)}</span>,
       brake: <span className="timing-cell">{formatPct(row.telemetry?.brake)}</span>,
     };
-    return <button ref={setRowRef} type="button" className="timing-tower__row" data-selected={selected} data-elimination={elimination ? "true" : "false"} data-inactive={statusState.inactive ? "true" : "false"} data-moving={moving ? "true" : "false"} style={timingGridStyle(columns, sectorCounts)} onClick={onClick}>{columns.map((id) => <span key={id}>{cells[id]}</span>)}</button>;
+    return <button ref={setRowRef} type="button" className="timing-tower__row" data-selected={selected} data-elimination={elimination ? "true" : "false"} data-inactive={statusState.inactive ? "true" : "false"} data-moving={moving ? "true" : "false"} data-finished={finished ? "true" : "false"} style={timingGridStyle(columns, sectorCounts)} onClick={onClick}>{columns.map((id) => <span key={id}>{cells[id]}</span>)}</button>;
   }
   function TimingTowerStatus({ tone = "loading", title, body }) {
     return (
@@ -3634,6 +3754,7 @@
     const partyToastTimers = React.useRef({});
     const [aiInsightToasts, setAiInsightToasts] = React.useState([]);
     const aiInsightToastTimers = React.useRef({});
+    const aiPopupOpenRef = React.useRef(aiPopupOpen);
     const [partyIdentity, setPartyIdentity] = React.useState(null);
     const [partyRoom, setPartyRoom] = React.useState(null);
     const [partyMembers, setPartyMembers] = React.useState([]);
@@ -3673,6 +3794,7 @@
     React.useEffect(() => { partyIdentityRef.current = partyIdentity; }, [partyIdentity]);
     React.useEffect(() => { partySyncRoleRef.current = partySyncRole; }, [partySyncRole]);
     React.useEffect(() => { partyLastSequenceRef.current = partyLastSequence; }, [partyLastSequence]);
+    React.useEffect(() => { aiPopupOpenRef.current = aiPopupOpen; }, [aiPopupOpen]);
     React.useEffect(() => () => {
       clearTimeout(customChromeTimerRef.current);
       clearTimeout(partyTypingStopTimerRef.current);
@@ -3704,9 +3826,17 @@
     }
     function pushAiInsightToast(card) {
       const id = `${card.capturedAtMs || ""}:${card.title}`;
-      setAiInsightToasts((list) => [...list.filter((toast) => toast.id !== id), { id, kind: card.kind, title: card.title, body: card.body }].slice(-2));
+      setAiInsightToasts((list) => [...list.filter((toast) => toast.id !== id), { id, kind: card.kind, title: card.title, body: card.body, eyebrow: card.eyebrow }].slice(-2));
       clearTimeout(aiInsightToastTimers.current[id]);
       aiInsightToastTimers.current[id] = setTimeout(() => dismissAiInsightToast(id), 8500);
+    }
+    function openAiPopup() {
+      aiPopupOpenRef.current = true;
+      setAiPopupOpen(true);
+    }
+    function closeAiPopup() {
+      aiPopupOpenRef.current = false;
+      setAiPopupOpen(false);
     }
     function openPartyTray() {
       setPartyTrayOpen(true);
@@ -3739,6 +3869,11 @@
     const autoAiBackoffRef = React.useRef({ failures: 0, untilMs: 0 });
     const autoAiLastRequestRef = React.useRef(0);
     const autoAiEventSignatureRef = React.useRef(null);
+    const raceFinishWallRef = React.useRef(0);
+    const raceFinishReplayRef = React.useRef(null);
+    const raceFinishDelaysRef = React.useRef(null);
+    const raceFinishLapRef = React.useRef(null);
+    const [, setFinishTick] = React.useState(0);
     const [replaySync, setReplaySync] = React.useState({ mode: "live", playing: true, masterTime: 0, duration: 0, masterKey: "WORLD" });
     const [replayTimingData, setReplayTimingData] = React.useState(null);
     const [liveTimingData, setLiveTimingData] = React.useState(null);
@@ -5001,18 +5136,26 @@
         return;
       }
       setChatThinking(true);
-	      try {
-	        const answer = await window.pitwall.ai.ask(aiRequestOptions({
-	          prompt: `${text}\n\nRespond as concise, readable Markdown text only. Do not include charts, graphics, cards, or visualization payloads.`,
-	          snapshot: activeAiSnapshot(),
-	          presentation: "markdown_text_only",
-	        }));
-	        setChatMessages((msgs) => [...msgs, { who: "ai", text: answer.summary || "The configured AI provider returned no summary." }]);
-	      } catch (error) {
-	        setChatMessages((msgs) => [...msgs, { who: "ai", text: error.message || "The configured AI provider did not return a response." }]);
-	      } finally {
-	        setChatThinking(false);
-	      }
+      try {
+        const answer = await window.pitwall.ai.ask(aiRequestOptions({
+          prompt: `${text}\n\nRespond as concise, readable Markdown text only. Do not include charts, graphics, cards, or visualization payloads.`,
+          snapshot: activeAiSnapshot(),
+          presentation: "markdown_text_only",
+        }));
+        const summary = answer.summary || "The configured AI provider returned no summary.";
+        setChatMessages((msgs) => [...msgs, { who: "ai", text: summary }]);
+        if (layout === "focus" && !aiPopupOpenRef.current) pushAiInsightToast({
+          capturedAtMs: Date.now(),
+          kind: "engineer",
+          title: "Engineer replied",
+          body: summary,
+          eyebrow: "Race Engineer",
+        });
+      } catch (error) {
+        setChatMessages((msgs) => [...msgs, { who: "ai", text: error.message || "The configured AI provider did not return a response." }]);
+      } finally {
+        setChatThinking(false);
+      }
     }
 
     function onboardCodes(count, fallback) {
@@ -5089,6 +5232,60 @@
     const activeRaceControlMessages = replaySync.mode === "replay"
       ? replayTimingData?.raceControlMessages
       : liveTimingData?.raceControlMessages;
+    // Chequered flag: once the leader takes the flag in a race, finishers' timing
+    // rows turn checkered one by one, staggered by each driver's gap-to-leader so
+    // a row only flips when that driver has had time to cross the line. We anchor
+    // the stagger to the moment the leader finished:
+    //  - live: wall-clock captured at first detection (monotonic).
+    //  - replay: the earliest scrub position where the finish is detected. Min-
+    //    capture means it can never anchor before the real crossing and converges
+    //    to it during normal forward playback; scrubbing back before the flag
+    //    clears it (detection is positional). Retired/KO drivers never flip.
+    // We FREEZE each driver's finish delay at the anchor moment: the moment the
+    // leader crosses, the gaps reflect the true finishing order, but right after
+    // the leader slows for the in-lap the trailing gaps collapse — so recomputing
+    // them every frame would flip cars far too early.
+    const leaderSessionLap = timingRows.reduce((max, row) => {
+      const lap = telemetryNumber(row?.sessionLap);
+      return lap != null && (max == null || lap > max) ? lap : max;
+    }, null);
+    const raceFinished = raceFinishedFromState({
+      sessionKind: activeSessionKind,
+      sessionClock,
+      leaderLap: leaderSessionLap,
+      totalLaps: timingLaps,
+      raceControlMessages: activeRaceControlMessages,
+    });
+    const replayElapsedNow = Math.max(0, Number(replaySync.masterTime || replayClockRef.current || 0));
+    if (raceFinished) {
+      if (replaySync.mode === "replay") {
+        const previous = raceFinishReplayRef.current;
+        if (previous == null || replayElapsedNow < previous) {
+          raceFinishReplayRef.current = replayElapsedNow;
+          raceFinishDelaysRef.current = timingFinishDelays(timingRows);
+          raceFinishLapRef.current = timingAnchorLaps(timingRows);
+        }
+      } else if (!raceFinishWallRef.current) {
+        raceFinishWallRef.current = Date.now();
+        raceFinishDelaysRef.current = timingFinishDelays(timingRows);
+        raceFinishLapRef.current = timingAnchorLaps(timingRows);
+      }
+    }
+    React.useEffect(() => {
+      if (!raceFinished || replaySync.mode === "replay") return undefined;
+      const id = setInterval(() => {
+        const startedAt = raceFinishWallRef.current;
+        if (startedAt && Date.now() - startedAt > 300000) return;
+        setFinishTick((tick) => tick + 1);
+      }, 1000);
+      return () => clearInterval(id);
+    }, [raceFinished, replaySync.mode]);
+    const finishElapsedSeconds = !raceFinished
+      ? -1
+      : replaySync.mode === "replay"
+        ? (raceFinishReplayRef.current == null ? 0 : replayElapsedNow - raceFinishReplayRef.current)
+        : (raceFinishWallRef.current ? (Date.now() - raceFinishWallRef.current) / 1000 : 0);
+    const chequeredCodes = buildChequeredCodes(timingRows, finishElapsedSeconds, raceFinishDelaysRef.current, raceFinishLapRef.current);
     const deterministicInsights = buildActiveInsights({
       timingRows,
       sourceLabel: timingSourceLabel,
@@ -5121,6 +5318,10 @@
       autoAiBackoffRef.current = { failures: 0, untilMs: 0 };
       autoAiLastRequestRef.current = 0;
       autoAiEventSignatureRef.current = null;
+      raceFinishWallRef.current = 0;
+      raceFinishReplayRef.current = null;
+      raceFinishDelaysRef.current = null;
+      raceFinishLapRef.current = null;
       setAutoAiInsights([]);
     }, [activeAiInsightScopeKey]);
     React.useEffect(() => {
@@ -5389,7 +5590,7 @@
       setExpandedPane(null);
     }, [autopairs, battlePair?.a, battlePair?.b, layout]);
     React.useEffect(() => {
-      if (layout !== "focus") setAiPopupOpen(false);
+      if (layout !== "focus") closeAiPopup();
       if (layout !== "custom") { setCustomPickerOpen(false); setCustomConfigOpen(false); }
     }, [layout]);
     const panelStyle = {
@@ -5579,7 +5780,7 @@
                     const d = D.byCode[t.code] || {};
                     return (
                       <TimingTowerRow key={t.code} row={t} driver={d} columns={towerColumns} sectorCounts={timingMiniSectorCounts} overallBestLap={overallBestLap}
-                        selected={selectedCode === t.code} moving={Boolean(movingRows[t.code])} elimination={showQualifyingElimination && isQualifyingEliminationRow(t, { qualifyingPhase, rowCount: timingRows.length })} registerRow={registerTimingRow}
+                        selected={selectedCode === t.code} moving={Boolean(movingRows[t.code])} finished={chequeredCodes.has(t.code)} elimination={showQualifyingElimination && isQualifyingEliminationRow(t, { qualifyingPhase, rowCount: timingRows.length })} registerRow={registerTimingRow}
                         onClick={() => { setSelected(t.code); setPreset("Intelligent"); setExpandedPane(null); }} />
                     );
                   }); })()}
@@ -5984,12 +6185,12 @@
       return (
         <div className="wp-toasts">
           {aiInsightToasts.map((toast) => (
-            <button type="button" className="wpt-card" data-ai="true" key={toast.id} onClick={() => { dismissAiInsightToast(toast.id); if (layout === "focus") setAiPopupOpen(true); }}>
-              <span className="wpt-card__icon" data-kind={toast.kind}><Icon name={toast.kind === "battle" ? "zap" : toast.kind === "strategy" ? "flag" : "chart"} size={16} /></span>
+            <button type="button" className="wpt-card" data-ai="true" key={toast.id} onClick={() => { dismissAiInsightToast(toast.id); if (layout === "focus") openAiPopup(); }}>
+              <span className="wpt-card__icon" data-kind={toast.kind}><Icon name={toast.kind === "engineer" ? "radio" : toast.kind === "battle" ? "zap" : toast.kind === "strategy" ? "flag" : "chart"} size={16} /></span>
               <span className="wpt-card__b">
                 <span className="wpt-card__top">
                   <span className="wpt-card__name">{toast.title}</span>
-                  <span className="wpt-card__eyebrow"><Icon name="sparkles" size={10} /> AI Insight</span>
+                  <span className="wpt-card__eyebrow"><Icon name="sparkles" size={10} /> {toast.eyebrow || "AI Insight"}</span>
                 </span>
                 <span className="wpt-card__msg">{toast.body}</span>
               </span>
@@ -6031,7 +6232,7 @@
                     <div className="insight__b">{ins.body}</div>
                     {ins.kind === "battle" && (
                       <div className="insight__actions">
-                        <Button size="sm" variant="primary" onClick={() => { setPreset("Battle Mode"); setSelected(ins.b || battleCodes[1]); setExpandedPane(null); setAiPopupOpen(false); }}>Load pair</Button>
+                        <Button size="sm" variant="primary" onClick={() => { setPreset("Battle Mode"); setSelected(ins.b || battleCodes[1]); setExpandedPane(null); closeAiPopup(); }}>Load pair</Button>
                         <Button size="sm" variant="ghost" onClick={() => setDismissedInsights((items) => [...items, i])}>Dismiss</Button>
                       </div>
                     )}
@@ -6258,7 +6459,7 @@
             )}
           </div>
           <div className="live__barright">
-            {layout === "focus" && <Button variant="secondary" size="sm" onClick={() => setAiPopupOpen(true)} iconLeft={<Icon name="sparkles" size={14} />}>AI</Button>}
+            {layout === "focus" && <Button variant="secondary" size="sm" onClick={openAiPopup} iconLeft={<Icon name="sparkles" size={14} />}>AI</Button>}
             <Button variant="primary" size="sm" onClick={openSessionLibrary} iconLeft={<Icon name="play" size={14} />}>Load past session</Button>
             <Button variant={partyTrayOpen ? "secondary" : "ghost"} size="sm" onClick={openPartyTray} iconLeft={<Icon name="radio" size={14} />}>Watch Party{partyUnread > 0 && <span className="wp-unread">{partyUnread > 99 ? "99+" : partyUnread}</span>}</Button>
             <span className="live__syncwrap">
@@ -6388,7 +6589,7 @@
           <div className="ai-popup" role="dialog" aria-modal="true">
             <div className="ai-popup__panel">
               <span className="ai-popup__close">
-                <IconButton variant="ghost" size="sm" label="Close AI popup" onClick={() => setAiPopupOpen(false)}><Icon name="close" size={14} /></IconButton>
+                <IconButton variant="ghost" size="sm" label="Close AI popup" onClick={closeAiPopup}><Icon name="close" size={14} /></IconButton>
               </span>
               {renderInsightsPane(true)}
             </div>

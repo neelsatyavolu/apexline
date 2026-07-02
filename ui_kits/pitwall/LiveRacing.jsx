@@ -802,7 +802,8 @@
   const PARTY_TRAY_STORAGE_KEY = "pw-party-tray-position";
   const DEFAULT_REPLAY_TIMING_OFFSET = -8;
   const DEFAULT_WORLD_SYNC_TARGET = 36;
-  const DEFAULT_NON_WORLD_SYNC_OFFSET = 4;
+  const LIVE_TIMING_STREAM_ALIGNMENT_DELAY_SECONDS = 4;
+  const DEFAULT_NON_WORLD_SYNC_OFFSET = 0;
   const SYNC_EPSILON = 0.075;
   const SHAKA_LIVE_SYNC_TOLERANCE_MIN = 3;
   const SHAKA_LIVE_SYNC_TOLERANCE_MAX = 8;
@@ -2376,11 +2377,15 @@
   function liveTimingRequestForMetrics(metrics, fallbackTarget) {
     const configured = Number(metrics?.targetLatency ?? fallbackTarget);
     const value = Number.isFinite(configured) ? configured : Number(fallbackTarget);
+    const adjustedValue = Number.isFinite(value) ? value + LIVE_TIMING_STREAM_ALIGNMENT_DELAY_SECONDS : value;
     const targetLatencySeconds = Number.isFinite(value)
-      ? Math.max(0, Math.min(90, Math.round(value * 10) / 10))
+      ? Math.max(0, Math.min(90, Math.round(adjustedValue * 10) / 10))
       : DEFAULT_WORLD_SYNC_TARGET;
     const targetUtcMs = validVideoUtcMs(metrics?.videoTimeUtcMs);
-    return targetUtcMs == null ? { targetLatencySeconds } : { targetLatencySeconds, targetUtcMs };
+    const alignedTargetUtcMs = targetUtcMs == null
+      ? null
+      : validVideoUtcMs(targetUtcMs - LIVE_TIMING_STREAM_ALIGNMENT_DELAY_SECONDS * 1000);
+    return alignedTargetUtcMs == null ? { targetLatencySeconds } : { targetLatencySeconds, targetUtcMs: alignedTargetUtcMs };
   }
   function liveSyncStatus(metrics, targetLatency) {
     const liveLatency = Number(metrics?.liveLatency);
@@ -2419,6 +2424,24 @@
     }
     video.currentTime = targetTime;
     video.playbackRate = 1;
+    return { synced: true, targetTime, drift };
+  }
+  function jumpLiveVideoToLiveEdge(video) {
+    if (!video) return { synced: false };
+    const shakaRange = video.__pitwallShakaPlayer?.seekRange?.();
+    const ranges = video.seekable;
+    const rangeIndex = ranges?.length ? ranges.length - 1 : -1;
+    const start = shakaRange && Number.isFinite(Number(shakaRange.start)) ? Number(shakaRange.start) : rangeIndex >= 0 ? Number(ranges.start(rangeIndex)) : NaN;
+    const end = shakaRange && Number.isFinite(Number(shakaRange.end)) ? Number(shakaRange.end) : rangeIndex >= 0 ? Number(ranges.end(rangeIndex)) : NaN;
+    const targetTime = end - 0.5;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(targetTime) || targetTime < start || targetTime > end) {
+      return { synced: false, waitingForRange: true };
+    }
+    const currentTime = Number(video.currentTime);
+    const drift = Number.isFinite(currentTime) ? currentTime - targetTime : null;
+    video.currentTime = targetTime;
+    video.playbackRate = 1;
+    video.play?.().catch?.(() => {});
     return { synced: true, targetTime, drift };
   }
   function raceLibraryId(race) {
@@ -3066,7 +3089,7 @@
     );
   }
 
-  function SyncMenu({ open, replayMode, replayTimingOffset, debugEnabled, liveMetrics, liveTarget, onReplayTimingAdjust, onReplayTimingReset, onSyncAll, onLiveSyncToTarget, onToggleDebug }) {
+  function SyncMenu({ open, replayMode, replayTimingOffset, debugEnabled, liveMetrics, liveTarget, onReplayTimingAdjust, onReplayTimingReset, onSyncAll, onLiveSyncToTarget, onJumpToLive, onToggleDebug }) {
     if (!open) return null;
     const timingLabel = `Timing ${replayTimingOffset > 0 ? "+" : ""}${replayTimingOffset}s`;
     const liveStatus = liveSyncStatus(liveMetrics, liveTarget);
@@ -3076,6 +3099,7 @@
           <div className="sync-menu__live" data-tone={liveStatus.tone}>
             <span className="sync-menu__livecopy"><b>{liveStatus.label}</b><span>{liveStatus.detail}</span></span>
             <span className="sync-menu__rate">{liveStatus.rate}</span>
+            <button className="sync-menu__btn sync-menu__btn--box" type="button" onClick={onJumpToLive}>Jump to live</button>
             <button className="sync-menu__btn sync-menu__btn--box" type="button" onClick={onLiveSyncToTarget}>Match target</button>
           </div>
         )}
@@ -4429,6 +4453,17 @@
       if (partyRoom && partySyncRoleRef.current === "host") publishHostSync();
     }
 
+    function jumpLivePlayersToLive(key = "WORLD") {
+      if (replaySync.mode === "replay") return;
+      const entries = key === "WORLD"
+        ? Object.entries(playerRefs.current)
+        : [[key, playerRefs.current[key]]];
+      entries.forEach(([, video]) => {
+        if (video) jumpLiveVideoToLiveEdge(video);
+      });
+      if (partyRoom && partySyncRoleRef.current === "host") publishHostSync();
+    }
+
     function syncSettingsForWorldTarget(settings, targetLatency) {
       const worldTarget = clampSyncLatency(settings?.worldTarget == null ? defaultSyncTarget("WORLD") : settings.worldTarget);
       const nextWorldTarget = clampSyncLatency(targetLatency);
@@ -4596,9 +4631,10 @@
           liveLatency: metrics.liveLatency == null ? null : Math.round(metrics.liveLatency * 10) / 10,
           playbackRate: Math.round((metrics.playbackRate || 1) * 100) / 100,
           delta: metrics.delta == null ? null : Math.round(metrics.delta * 10) / 10,
+          videoTimeUtcMs: validVideoUtcMs(metrics.videoTimeUtcMs),
         };
         const previous = current[key] || {};
-        if (previous.liveLatency === rounded.liveLatency && previous.playbackRate === rounded.playbackRate && previous.targetLatency === rounded.targetLatency) return current;
+        if (previous.liveLatency === rounded.liveLatency && previous.playbackRate === rounded.playbackRate && previous.targetLatency === rounded.targetLatency && previous.videoTimeUtcMs === rounded.videoTimeUtcMs) return current;
         return { ...current, [key]: rounded };
       });
     }
@@ -5308,6 +5344,9 @@
       activeSessionKind,
       resolvedF1TvContent?.contentId || "",
     ].join(":");
+    const aiInsightSessionLoaded = replaySync.mode === "replay"
+      ? Boolean(resolvedF1TvContent?.contentId || resolvedF1TvContent?.feeds?.length)
+      : Boolean(streamSources.WORLD || resolvedF1TvContent?.feeds?.some((feed) => feed?.feedId === "WORLD" || feed?.kind === "world"));
     React.useEffect(() => {
       latestAiSnapshotRef.current = activeAiSnapshot();
     });
@@ -5325,9 +5364,10 @@
       setAutoAiInsights([]);
     }, [activeAiInsightScopeKey]);
     React.useEffect(() => {
-      if (!connection.aiConfigured || !window.pitwall?.ai?.ask) {
+      if (!connection.aiConfigured || !window.pitwall?.ai?.ask || !aiInsightSessionLoaded) {
         aiInsightHistoryRef.current = [];
         setAutoAiInsights([]);
+        setAiInsightToasts([]);
         return undefined;
       }
       let cancelled = false;
@@ -5387,7 +5427,7 @@
         clearInterval(timer);
         clearInterval(eventTimer);
       };
-    }, [connection.aiConfigured, activeAiInsightScopeKey]);
+    }, [connection.aiConfigured, activeAiInsightScopeKey, aiInsightSessionLoaded]);
     const sessionClockLabel = sessionClockDisplayLabel(sessionClock, {
       mode: replaySync.mode,
       timingData: replaySync.mode === "replay" ? replayTimingData : liveTimingData,
@@ -6475,6 +6515,7 @@
                 onReplayTimingReset={resetReplayTimingOffset}
                 onSyncAll={() => syncReplayPlayers(replaySync.masterTime)}
                 onLiveSyncToTarget={() => syncLivePlayersToTarget("WORLD")}
+                onJumpToLive={() => jumpLivePlayersToLive("WORLD")}
                 onToggleDebug={() => setSyncSettings((settings) => ({ ...settings, debug: !settings.debug }))}
               />
             </span>

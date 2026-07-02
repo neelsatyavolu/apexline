@@ -225,11 +225,13 @@ const F1_TIMING_BASE_URL = "https://livetiming.formula1.com";
 const F1_TIMING_SIGNALR_URL = "wss://livetiming.formula1.com/signalrcore";
 const F1_TIMING_NEGOTIATE_URL = "https://livetiming.formula1.com/signalrcore/negotiate";
 const F1_TIMING_LIVE_STALE_MS = 1000 * 25;
+const F1_TIMING_LIVE_CONNECT_RETRY_MS = 8000;
+const F1_TIMING_LIVE_CLOSE_RETRY_MS = 5000;
 const F1_TIMING_SIGNALR_TOPICS = [
   "Heartbeat", "AudioStreams", "DriverList", "ExtrapolatedClock",
   "RaceControlMessages", "SessionInfo", "SessionStatus", "TeamRadio",
   "TimingAppData", "TimingStats", "TrackStatus", "WeatherData",
-  "Position.z", "CarData.z", "ContentStreams", "SessionData",
+  "Position.z", "CarData.z", "Position", "CarData", "ContentStreams", "SessionData",
   "TimingData", "TopThree", "RcmSeries", "LapCount",
 ];
 const OPENF1_ANALYTICS_ENDPOINTS = {
@@ -3633,6 +3635,19 @@ function f1TimingSeconds(value) {
   return match ? Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) : 0;
 }
 
+function preserveDeletedF1TimingLine(line) {
+  if (!line || typeof line !== "object" || Array.isArray(line)) return false;
+  const statusText = [
+    line.Status,
+    line.status,
+    line.Reason,
+    line.reason,
+    line.Retired ? "RETIRED" : "",
+    line.Stopped ? "STOP" : "",
+  ].map((value) => String(value || "").trim().toUpperCase()).filter(Boolean).join(" ");
+  return /\b(DNF|RETIRED|RET|STOPPED|STOP)\b/.test(statusText);
+}
+
 function decodeF1TimingZPayload(payload) {
   if (payload && typeof payload === "object") return payload;
   const encoded = String(payload || "").replace(/^"|"$/g, "");
@@ -3735,7 +3750,28 @@ function f1TimingRequestJsonStreamEntries(targetUrl, options = {}) {
   });
 }
 
-function mergeF1TimingDelta(target, source, key = "") {
+function f1TimingBlankTimingValue(path, field, previous, value) {
+  const names = (path || []).map((item) => String(item));
+  const parent = names.at(-1) || "";
+  const fieldName = String(field || "");
+  const timingField = fieldName === "LastLapTime"
+    || fieldName === "BestLapTime"
+    || (["Value", "value", "Time", "time"].includes(fieldName) && (
+      parent === "LastLapTime"
+        || parent === "BestLapTime"
+        || names.includes("BestSectors")
+    ));
+  if (!timingField) return false;
+  const textValue = (item) => {
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      return String(item.Value ?? item.value ?? item.Time ?? item.time ?? "");
+    }
+    return String(item ?? "");
+  };
+  return !textValue(value).trim() && Boolean(textValue(previous).trim());
+}
+
+function mergeF1TimingDelta(target, source, key = "", path = []) {
   if (!source || typeof source !== "object") return source;
   if (Array.isArray(source)) {
     if (key === "Stints" && Array.isArray(target)) {
@@ -3743,7 +3779,7 @@ function mergeF1TimingDelta(target, source, key = "") {
         if (index >= source.length) return target[index];
         const value = source[index];
         return value && typeof value === "object" && !Array.isArray(value)
-          ? mergeF1TimingDelta(target[index], value, key)
+          ? mergeF1TimingDelta(target[index], value, key, path.concat(String(index)))
           : value;
       }).filter((value) => value !== undefined);
     }
@@ -3751,12 +3787,17 @@ function mergeF1TimingDelta(target, source, key = "") {
   }
   const next = target && typeof target === "object" && !Array.isArray(target) ? { ...target } : {};
   const deleted = Array.isArray(source._deleted) ? new Set(source._deleted) : new Set();
-  for (const key of deleted) delete next[key];
-  for (const [key, value] of Object.entries(source)) {
-    if (key === "_deleted") continue;
-    if (key === "Compound" && !String(value || "").trim() && String(next[key] || "").trim()) continue;
-    next[key] = value && typeof value === "object"
-      ? mergeF1TimingDelta(next[key], value, key)
+  const preserveInactiveLines = key === "Lines";
+  for (const deletedKey of deleted) {
+    if (preserveInactiveLines && preserveDeletedF1TimingLine(next[deletedKey])) continue;
+    delete next[deletedKey];
+  }
+  for (const [field, value] of Object.entries(source)) {
+    if (field === "_deleted") continue;
+    if (field === "Compound" && !String(value || "").trim() && String(next[field] || "").trim()) continue;
+    if (f1TimingBlankTimingValue(path, field, next[field], value)) continue;
+    next[field] = value && typeof value === "object"
+      ? mergeF1TimingDelta(next[field], value, field, path.concat(field))
       : value;
   }
   return next;
@@ -4033,7 +4074,16 @@ function fillF1TimingQualifyingDeltas(rows) {
 
 function f1TimingSegments(sector) {
   const raw = sector?.Segments || [];
-  const values = Array.isArray(raw) ? raw : Object.values(raw);
+  const values = Array.isArray(raw) ? raw : (() => {
+    const indexed = Object.entries(raw || {})
+      .map(([key, value]) => [Number(key), value])
+      .filter(([index]) => Number.isInteger(index) && index >= 0)
+      .sort((a, b) => a[0] - b[0]);
+    if (!indexed.length) return Object.values(raw || {});
+    const expanded = Array(indexed.at(-1)[0] + 1).fill(null);
+    indexed.forEach(([index, value]) => { expanded[index] = value; });
+    return expanded;
+  })();
   const tones = values.map((segment) => timingSegmentTone(segment?.Status ?? segment?.status ?? segment));
   while (tones.at(-1) === "off") tones.pop();
   return tones;
@@ -4043,12 +4093,23 @@ function f1TimingSegmentProgress(segments) {
   return Array.isArray(segments) ? segments.filter((tone) => tone && tone !== "off").length : 0;
 }
 
+function f1TimingSegmentExtent(segments) {
+  if (!Array.isArray(segments)) return 0;
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    if (segments[index] && segments[index] !== "off") return index + 1;
+  }
+  return 0;
+}
+
 function f1TimingMergeSectorSegments(previous, next) {
   const previousSegments = Array.isArray(previous) ? previous : [];
   const nextSegments = Array.isArray(next) ? next : [];
-  return f1TimingSegmentProgress(nextSegments) < f1TimingSegmentProgress(previousSegments)
-    ? previousSegments
-    : nextSegments;
+  const merged = Array.from({ length: Math.max(previousSegments.length, nextSegments.length) }, (_, index) => {
+    const nextTone = nextSegments[index] || "off";
+    return nextTone !== "off" ? nextTone : previousSegments[index] || "off";
+  });
+  while (merged.at(-1) === "off") merged.pop();
+  return merged;
 }
 
 function f1TimingLineSessionLap(line) {
@@ -4075,11 +4136,11 @@ function f1TimingSectorHistoryAt(entries, targetSeconds) {
       const touched = sectorKeys
         .map(([sectorIndex, sectorKey], index) => (
           Object.prototype.hasOwnProperty.call(deltaSectors, sectorIndex)
-            ? { index, sectorKey, progress: f1TimingSegmentProgress(f1TimingSegments(deltaSectors[sectorIndex])) }
+            ? { index, sectorKey, progress: f1TimingSegmentExtent(f1TimingSegments(deltaSectors[sectorIndex])) }
             : null
         ))
         .filter(Boolean);
-      const previousProgress = sectorKeys.map(([, sectorKey]) => f1TimingSegmentProgress(previous?.sectors?.[sectorKey]));
+      const previousProgress = sectorKeys.map(([, sectorKey]) => f1TimingSegmentExtent(previous?.sectors?.[sectorKey]));
       const rollsOverSectorPhase = sameLap && touched.some((item) => (
         item.progress > 0
           && previousProgress[item.index] > item.progress
@@ -4087,17 +4148,32 @@ function f1TimingSectorHistoryAt(entries, targetSeconds) {
           && !touched.some((other) => other.index > item.index && other.progress > 0)
       ));
       const previousSectors = sameLap && !rollsOverSectorPhase ? previous.sectors : {};
+      const effectiveLap = rollsOverSectorPhase && previous?.lap != null && (lap == null || lap <= previous.lap)
+        ? previous.lap + 1
+        : lap;
+      const previousSectorTimes = sameLap && !rollsOverSectorPhase ? previous.sectorTimes : {};
       const sectorSegments = (sectorIndex, sectorKey) => (
         Object.prototype.hasOwnProperty.call(deltaSectors, sectorIndex)
           ? f1TimingMergeSectorSegments(previousSectors?.[sectorKey], f1TimingSegments(deltaSectors[sectorIndex]))
           : sameLap ? previousSectors?.[sectorKey] || [] : []
       );
+      const sectorTime = (sectorIndex, sectorKey) => {
+        if (Object.prototype.hasOwnProperty.call(deltaSectors, sectorIndex)) {
+          return f1TimingSectorTime(deltaSectors[sectorIndex]) ?? previousSectorTimes?.[sectorKey] ?? null;
+        }
+        return sameLap ? previousSectorTimes?.[sectorKey] ?? null : null;
+      };
       history.set(number, {
-        lap,
+        lap: effectiveLap,
         sectors: {
           s1: sectorSegments("0", "s1"),
           s2: sectorSegments("1", "s2"),
           s3: sectorSegments("2", "s3"),
+        },
+        sectorTimes: {
+          s1: sectorTime("0", "s1"),
+          s2: sectorTime("1", "s2"),
+          s3: sectorTime("2", "s3"),
         },
       });
     }
@@ -4594,16 +4670,24 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
     const compound = stintCompound && stintCompound !== "unknown" ? stintCompound : knownCompounds.get(number) || "";
     const lastSeconds = f1TimingLapSeconds(line?.LastLapTime);
     const bestSeconds = f1TimingLapSeconds(line?.BestLapTime);
-    const sessionLap = f1TimingLineSessionLap(line);
+    const sourceSessionLap = f1TimingLineSessionLap(line);
     const pos = finiteNumber(line?.Position) ?? finiteNumber(line?.Line) ?? finiteNumber(driver.Line) ?? 99;
     const gapValue = f1TimingValue(line?.GapToLeader);
     const intervalValue = f1TimingValue(line?.IntervalToPositionAhead);
     const sectorHistory = sectorHistoryByNumber?.get(number);
+    const sessionLap = sectorHistory?.lap != null && (sourceSessionLap == null || sectorHistory.lap > sourceSessionLap)
+      ? sectorHistory.lap
+      : sourceSessionLap;
     const sectors = f1TimingPrunePrematureSectorSegments({
       s1: f1TimingPreservedSegments(line, "0", sectorHistory, "s1"),
       s2: f1TimingPreservedSegments(line, "1", sectorHistory, "s2"),
       s3: f1TimingPreservedSegments(line, "2", sectorHistory, "s3"),
     });
+    const sectorTimes = sectorHistory?.sectorTimes || {
+      s1: f1TimingSectorTime(line?.Sectors?.["0"]),
+      s2: f1TimingSectorTime(line?.Sectors?.["1"]),
+      s3: f1TimingSectorTime(line?.Sectors?.["2"]),
+    };
     return {
       pos,
       code: String(driver?.Tla || line?.Tla || numberText).toUpperCase(),
@@ -4630,11 +4714,7 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
         tyreAgeAtStart: finiteNumber(item?.StartLaps),
       })),
       sectors,
-      sectorTimes: {
-        s1: f1TimingSectorTime(line?.Sectors?.["0"]),
-        s2: f1TimingSectorTime(line?.Sectors?.["1"]),
-        s3: f1TimingSectorTime(line?.Sectors?.["2"]),
-      },
+      sectorTimes,
       bestSectorTimes: {
         s1: f1TimingSectorTime(line?.BestSectors?.["0"]),
         s2: f1TimingSectorTime(line?.BestSectors?.["1"]),
@@ -5115,10 +5195,22 @@ function f1TimingLivePayload(topic, payload) {
   return topic.endsWith(".z") ? decodeF1TimingZPayload(payload) : payload;
 }
 
-function applyF1TimingLiveFeed(topic, payload) {
+function f1TimingLiveDataWithFeedTime(topic, data, feedUtc) {
+  const utc = typeof feedUtc === "string" && Number.isFinite(Date.parse(feedUtc)) ? feedUtc : "";
+  if (!utc || !data || typeof data !== "object") return data;
+  if (!["CarData.z", "CarData"].includes(String(topic)) || !Array.isArray(data.Entries)) return data;
+  return {
+    ...data,
+    Entries: data.Entries.map((entry) => (
+      entry && typeof entry === "object" && !entry.Utc ? { ...entry, Utc: utc } : entry
+    )),
+  };
+}
+
+function applyF1TimingLiveFeed(topic, payload, feedUtc = "") {
   if (!f1LiveTimingState || !topic) return;
   try {
-    const data = f1TimingLivePayload(String(topic), payload);
+    const data = f1TimingLiveDataWithFeedTime(String(topic), f1TimingLivePayload(String(topic), payload), feedUtc);
     if (!data || typeof data !== "object") return;
     const rows = boundedF1TimingLiveEntries(String(topic));
     rows.push({ time: "", seconds: Date.now() / 1000, data });
@@ -5133,8 +5225,16 @@ function applyF1TimingSignalRMessage(message) {
   if (!message || typeof message !== "object") return;
   if (message.type === 1 && String(message.target || "").toLowerCase() === "feed") {
     const args = message.arguments || message.A || [];
-    if (args.length >= 2) applyF1TimingLiveFeed(args[0], args[1]);
+    if (args.length >= 2) applyF1TimingLiveFeed(args[0], args[1], args[2]);
     return;
+  }
+  if (Array.isArray(message.M)) {
+    for (const hubMessage of message.M) {
+      if (!hubMessage || typeof hubMessage !== "object") continue;
+      if (String(hubMessage.M || "").toLowerCase() !== "feed") continue;
+      const args = hubMessage.A || [];
+      if (args.length >= 2) applyF1TimingLiveFeed(args[0], args[1], args[2]);
+    }
   }
   const result = message.result || message.R;
   if (result && typeof result === "object") {
@@ -5142,24 +5242,58 @@ function applyF1TimingSignalRMessage(message) {
   }
 }
 
+function f1TimingLiveTopicDiagnostics(entriesByTopic = {}) {
+  const topicCounts = {};
+  for (const [topic, entries] of Object.entries(entriesByTopic || {})) {
+    const count = Array.isArray(entries) ? entries.length : 0;
+    if (count) topicCounts[topic] = count;
+  }
+  const carDataRows = []
+    .concat(Array.isArray(entriesByTopic["CarData.z"]) ? entriesByTopic["CarData.z"] : [])
+    .concat(Array.isArray(entriesByTopic.CarData) ? entriesByTopic.CarData : []);
+  const latestCarData = carDataRows.at(-1)?.data || {};
+  const carDataEntries = Array.isArray(latestCarData.Entries) ? latestCarData.Entries : [];
+  const firstEntry = carDataEntries.find(Boolean) || {};
+  const firstCar = Object.values(firstEntry.Cars || {}).find(Boolean) || {};
+  const latestSessionInfo = (Array.isArray(entriesByTopic.SessionInfo) ? entriesByTopic.SessionInfo : []).at(-1)?.data || {};
+  const meeting = latestSessionInfo.Meeting || latestSessionInfo.meeting || {};
+  return {
+    topicCounts,
+    carDataMessages: carDataRows.length,
+    carDataInnerEntries: carDataEntries.length,
+    carDataHasUtc: carDataEntries.some((entry) => Number.isFinite(Date.parse(entry?.Utc || ""))),
+    carDataFirstEntryKeys: Object.keys(firstEntry).slice(0, 8),
+    carDataFirstChannelKeys: Object.keys(firstCar.Channels || {}).slice(0, 12),
+    sessionInfo: {
+      year: finiteNumber(meeting.Year ?? latestSessionInfo.Year),
+      meetingName: String(meeting.Name || meeting.OfficialName || latestSessionInfo.MeetingName || "").slice(0, 80),
+      location: String(meeting.Location || latestSessionInfo.Location || "").slice(0, 80),
+      sessionName: String(latestSessionInfo.Name || latestSessionInfo.SessionName || "").slice(0, 80),
+      startDate: String(latestSessionInfo.StartDate || latestSessionInfo.StartTime || "").slice(0, 40),
+      gmtOffset: String(latestSessionInfo.GmtOffset || "").slice(0, 20),
+    },
+  };
+}
+
 async function ensureF1TimingLiveClient() {
   if (f1LiveTimingClient?.connecting || f1LiveTimingClient?.connected) return;
   const now = Date.now();
   if (f1LiveTimingClient?.nextAttemptAt && now < f1LiveTimingClient.nextAttemptAt) return;
-  f1LiveTimingClient = { connecting: true, connected: false, nextAttemptAt: now + 30000 };
+  f1LiveTimingClient = { connecting: true, connected: false, nextAttemptAt: now + F1_TIMING_LIVE_CONNECT_RETRY_MS };
   f1LiveTimingState = f1LiveTimingState || { entriesByTopic: {}, lastMessageAt: 0, lastTopic: "", lastError: "" };
   try {
     const signalRCookie = await requestF1TimingSignalRCookie();
     const negotiate = await requestF1TimingJsonPost(F1_TIMING_NEGOTIATE_URL, 10000, signalRCookie ? { Cookie: signalRCookie } : {});
     const connectionId = String(negotiate?.connectionId || negotiate?.connectionToken || "");
     if (!connectionId) throw new Error("Formula 1 live timing did not return a SignalR connection id.");
-    const subscriptionToken = String(await getF1TvPlaybackToken() || "").trim();
+    const subscriptionToken = String(await getF1TvSubscriptionToken() || "").trim();
+    f1LiveTimingClient.authTokenAttached = Boolean(subscriptionToken);
+    f1LiveTimingClient.signalRCookieAttached = Boolean(signalRCookie);
     const liveUrl = new URL(F1_TIMING_SIGNALR_URL);
     liveUrl.searchParams.set("id", connectionId);
-    if (subscriptionToken) liveUrl.searchParams.set("access_token", subscriptionToken);
+    if (subscriptionToken) liveUrl.searchParams.set("authToken", subscriptionToken);
     const wsHeaders = {};
     if (signalRCookie) wsHeaders.Cookie = signalRCookie;
-    if (subscriptionToken) wsHeaders.Authorization = `Bearer ${subscriptionToken}`;
     const ws = createF1TimingWebSocket(liveUrl.href, wsHeaders);
     f1LiveTimingClient.socket = ws;
     ws.onopen = () => {
@@ -5182,13 +5316,13 @@ async function ensureF1TimingLiveClient() {
     ws.onclose = () => {
       f1LiveTimingClient.connected = false;
       f1LiveTimingClient.connecting = false;
-      f1LiveTimingClient.nextAttemptAt = Date.now() + 10000;
+      f1LiveTimingClient.nextAttemptAt = Date.now() + F1_TIMING_LIVE_CLOSE_RETRY_MS;
     };
   } catch (error) {
     f1LiveTimingClient = {
       connected: false,
       connecting: false,
-      nextAttemptAt: Date.now() + 30000,
+      nextAttemptAt: Date.now() + F1_TIMING_LIVE_CONNECT_RETRY_MS,
       error: error?.message || "Formula 1 live timing unavailable",
     };
   }
@@ -5210,8 +5344,12 @@ function getF1LiveTimingSnapshot(options = {}) {
     raceControlEntries: entriesByTopic.RaceControlMessages || [],
     lapCountEntries: entriesByTopic.LapCount || [],
     weatherEntries: entriesByTopic.WeatherData || [],
-    carDataEntries: entriesByTopic["CarData.z"] || [],
-    positionEntries: entriesByTopic["Position.z"] || [],
+    carDataEntries: []
+      .concat(entriesByTopic["CarData.z"] || [])
+      .concat(entriesByTopic.CarData || []),
+    positionEntries: []
+      .concat(entriesByTopic["Position.z"] || [])
+      .concat(entriesByTopic.Position || []),
   };
   const rawTargetUtcMs = options.targetUtcMs ?? options.targetUtc;
   const parsedTargetUtcMs = typeof rawTargetUtcMs === "string" ? Date.parse(rawTargetUtcMs) : Number(rawTargetUtcMs);
@@ -5265,7 +5403,14 @@ function getF1LiveTimingSnapshot(options = {}) {
     sessionClock: parsed.sessionClock,
     raceControlMessages: parsed.raceControlMessages,
     errors: [],
-    diagnostics: { ...(parsed.diagnostics || {}), targetLatencySeconds, targetUtcMs },
+    diagnostics: {
+      ...(parsed.diagnostics || {}),
+      ...f1TimingLiveTopicDiagnostics(entriesByTopic),
+      authTokenAttached: Boolean(f1LiveTimingClient?.authTokenAttached),
+      signalRCookieAttached: Boolean(f1LiveTimingClient?.signalRCookieAttached),
+      targetLatencySeconds,
+      targetUtcMs,
+    },
     message: "",
   };
 }
@@ -5563,9 +5708,12 @@ async function getReplayTimingSnapshot(options = {}) {
 
 async function getLiveTimingSnapshot(options = {}) {
   const targetLatencySeconds = Math.max(0, Math.min(90, Number(options.targetLatencySeconds || 0)));
+  const rawTargetUtcMs = options.targetUtcMs ?? options.targetUtc;
+  const parsedTargetUtcMs = typeof rawTargetUtcMs === "string" ? Date.parse(rawTargetUtcMs) : Number(rawTargetUtcMs);
+  const targetUtcMs = Number.isFinite(parsedTargetUtcMs) ? parsedTargetUtcMs : undefined;
   const requestedSource = String(options.source || options.provider || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
   const f1Only = requestedSource === "f1" || requestedSource === "formula1";
-  const f1Timing = getF1LiveTimingSnapshot({ targetLatencySeconds });
+  const f1Timing = getF1LiveTimingSnapshot({ targetLatencySeconds, targetUtcMs });
   if (f1Timing?.timing?.length) return f1Timing;
   if (f1Only) {
     return {
@@ -5575,7 +5723,7 @@ async function getLiveTimingSnapshot(options = {}) {
       timing: [],
       weather: {},
       errors: f1LiveTimingState?.lastError ? [f1LiveTimingState.lastError] : [],
-      message: f1LiveTimingState?.lastMessageAt ? "Formula 1 live timing has no current rows." : "Formula 1 live timing is still connecting.",
+      message: f1LiveTimingState?.lastMessageAt ? "Formula 1 live timing is still warming up." : "Formula 1 live timing is still connecting.",
     };
   }
   const cacheKey = `openf1:${Math.round(targetLatencySeconds)}`;
@@ -5605,7 +5753,7 @@ async function getLiveTimingSnapshot(options = {}) {
     timing,
     weather,
     errors,
-    message: timing.length ? "" : "OpenF1 has no current live timing rows.",
+    message: timing.length ? "" : "Live timing is still warming up.",
   };
   liveTimingCache = { key: cacheKey, createdAt: Date.now(), data };
   return data;
@@ -5623,17 +5771,56 @@ function liveTimingSectorProgress(row = {}) {
 function liveTimingDiagnosticSample(snapshot = {}, startedAt = Date.now()) {
   const rows = Array.isArray(snapshot.timing) ? snapshot.timing : [];
   const lap = Number(snapshot.sessionClock?.lapCount?.lap || 0) || null;
+  const rowHasSectorTime = (row) => ["s1", "s2", "s3"].some((key) => finiteNumber(row.sectorTimes?.[key]) != null);
+  const rowHasCompleteSectorTimes = (row) => ["s1", "s2", "s3"].every((key) => finiteNumber(row.sectorTimes?.[key]) != null);
+  const rowHasBestSectorTime = (row) => ["s1", "s2", "s3"].some((key) => finiteNumber(row.bestSectorTimes?.[key]) != null);
   return {
     t: Math.round((Date.now() - startedAt) / 100) / 10,
     ok: Boolean(snapshot.ok),
     sourceLabel: String(snapshot.sourceLabel || ""),
     lap,
     rowCount: rows.length,
+    diagnostics: {
+      telemetryRows: finiteNumber(snapshot.diagnostics?.telemetryRows),
+      carDataEntries: finiteNumber(snapshot.diagnostics?.carDataEntries),
+      carDataMessages: finiteNumber(snapshot.diagnostics?.carDataMessages),
+      carDataInnerEntries: finiteNumber(snapshot.diagnostics?.carDataInnerEntries),
+      carDataHasUtc: Boolean(snapshot.diagnostics?.carDataHasUtc),
+      carDataFirstEntryKeys: Array.isArray(snapshot.diagnostics?.carDataFirstEntryKeys) ? snapshot.diagnostics.carDataFirstEntryKeys : [],
+      carDataFirstChannelKeys: Array.isArray(snapshot.diagnostics?.carDataFirstChannelKeys) ? snapshot.diagnostics.carDataFirstChannelKeys : [],
+      sessionInfo: snapshot.diagnostics?.sessionInfo || {},
+      authTokenAttached: Boolean(snapshot.diagnostics?.authTokenAttached),
+      signalRCookieAttached: Boolean(snapshot.diagnostics?.signalRCookieAttached),
+      lastLapRows: finiteNumber(snapshot.diagnostics?.lastLapRows) ?? rows.filter((row) => finiteNumber(row.lastLapDuration) != null).length,
+      bestLapRows: finiteNumber(snapshot.diagnostics?.bestLapRows) ?? rows.filter((row) => finiteNumber(row.bestLapDuration) != null).length,
+      sectorTimeRows: finiteNumber(snapshot.diagnostics?.sectorTimeRows) ?? rows.filter(rowHasSectorTime).length,
+      completeSectorTimeRows: finiteNumber(snapshot.diagnostics?.completeSectorTimeRows) ?? rows.filter(rowHasCompleteSectorTimes).length,
+      bestSectorTimeRows: finiteNumber(snapshot.diagnostics?.bestSectorTimeRows) ?? rows.filter(rowHasBestSectorTime).length,
+      topicCounts: snapshot.diagnostics?.topicCounts || {},
+    },
     top: rows.slice(0, 5).map((row) => ({
       code: String(row.code || ""),
       pos: Number(row.pos || 0) || null,
       lap: Number(row.sessionLap || lap || 0) || null,
+      last: String(row.last || ""),
+      best: String(row.best || ""),
+      lastLapDuration: finiteNumber(row.lastLapDuration),
+      bestLapDuration: finiteNumber(row.bestLapDuration),
+      sectorTimes: {
+        s1: finiteNumber(row.sectorTimes?.s1),
+        s2: finiteNumber(row.sectorTimes?.s2),
+        s3: finiteNumber(row.sectorTimes?.s3),
+      },
+      bestSectorTimes: {
+        s1: finiteNumber(row.bestSectorTimes?.s1),
+        s2: finiteNumber(row.bestSectorTimes?.s2),
+        s3: finiteNumber(row.bestSectorTimes?.s3),
+      },
       progress: liveTimingSectorProgress(row),
+      telemetry: {
+        speed: finiteNumber(row.telemetry?.speed),
+        gear: finiteNumber(row.telemetry?.gear),
+      },
     })),
   };
 }
@@ -5673,6 +5860,11 @@ async function runLiveTimingDiagnosticAndQuit() {
   const sampleSeconds = Math.max(5, Math.min(120, Number(process.env.PITWALL_LIVE_TIMING_SAMPLE_SECONDS || 25) || 25));
   const sampleIntervalMs = Math.max(250, Math.min(5000, Number(process.env.PITWALL_LIVE_TIMING_SAMPLE_INTERVAL_MS || 1000) || 1000));
   const connectTimeoutMs = Math.max(1000, Math.min(30000, Number(process.env.PITWALL_LIVE_TIMING_CONNECT_TIMEOUT_MS || 12000) || 12000));
+  const authProbeTimeoutMs = Math.max(0, Math.min(10000, Number(process.env.PITWALL_LIVE_TIMING_AUTH_PROBE_MS || 2500) || 0));
+  const authStatus = authProbeTimeoutMs
+    ? await probeF1TvStoredAuth({ timeoutMs: authProbeTimeoutMs }).catch(() => getF1TvStatus().catch(() => ({})))
+    : await getF1TvStatus().catch(() => ({}));
+  const subscriptionTokenReady = Boolean(await getF1TvSubscriptionToken().catch(() => ""));
   const startedAt = Date.now();
   const samples = [];
   let firstSnapshot = null;
@@ -5697,6 +5889,16 @@ async function runLiveTimingDiagnosticAndQuit() {
     sampleSeconds,
     sampleIntervalMs,
     sampleCount: samples.length,
+    authStatus: {
+      authenticated: Boolean(authStatus.authenticated),
+      playbackTokenReady: Boolean(authStatus.playbackTokenReady),
+      subscriptionTokenReady,
+      browserSession: Boolean(authStatus.browserSession),
+      cookieCount: authStatus.cookieCount || 0,
+      authCookieNames: authStatus.authCookieNames || [],
+      storageAuthKeyCount: (authStatus.storageAuthKeys || []).length,
+      userDataPath: authStatus.userDataPath || PITWALL_USER_DATA,
+    },
     rowCounts: samples.map((sample) => sample.rowCount),
     laps: samples.map((sample) => sample.lap),
     issues,
@@ -5707,6 +5909,7 @@ async function runLiveTimingDiagnosticAndQuit() {
     ok,
     targetLatencySeconds,
     sampleCount: samples.length,
+    authStatus: result.authStatus,
     laps: result.laps,
     issues,
     message: result.message,
@@ -7244,6 +7447,41 @@ function isLikelyAuthCookie(cookie) {
 function f1TvEntitlementTokenFromCookies(cookies = []) {
   const cookie = cookies.find((item) => String(item.name || "").toLowerCase() === "entitlement_token");
   return String(cookie && cookie.value || "").trim();
+}
+
+function decodeF1TvJwtPayload(token) {
+  const parts = String(token || "").trim().split(".");
+  if (parts.length < 2) return {};
+  try {
+    return JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function isF1TvSubscriptionToken(token) {
+  const payload = decodeF1TvJwtPayload(token);
+  return Boolean(payload && typeof payload === "object" && (payload.SessionId || payload.sessionId));
+}
+
+function f1TvSubscriptionTokenFromLoginSessionCookie(cookies = []) {
+  const cookie = cookies.find((item) => String(item.name || "").toLowerCase() === "login-session");
+  if (!cookie?.value) return "";
+  try {
+    return String(JSON.parse(decodeURIComponent(cookie.value))?.data?.subscriptionToken || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+async function getF1TvStoredSubscriptionToken() {
+  const token = String(await getSecret("f1tv-token") || "").trim();
+  return isF1TvSubscriptionToken(token) ? token : "";
+}
+
+async function getF1TvSubscriptionToken(cookies = null) {
+  const f1TvCookies = cookies || await getF1TvCookies();
+  return f1TvSubscriptionTokenFromLoginSessionCookie(f1TvCookies) || await getF1TvStoredSubscriptionToken();
 }
 
 function f1TvPlaybackTokenFromBrowserAuthState(browserAuthState = {}) {

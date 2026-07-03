@@ -3756,9 +3756,11 @@ function f1TimingBlankTimingValue(path, field, previous, value) {
   const fieldName = String(field || "");
   const timingField = fieldName === "LastLapTime"
     || fieldName === "BestLapTime"
+    || fieldName === "PersonalBestLapTime"
     || (["Value", "value", "Time", "time"].includes(fieldName) && (
       parent === "LastLapTime"
         || parent === "BestLapTime"
+        || parent === "PersonalBestLapTime"
         || names.includes("BestSectors")
     ));
   if (!timingField) return false;
@@ -4101,9 +4103,17 @@ function f1TimingSegmentExtent(segments) {
   return 0;
 }
 
+function f1TimingTrimLeadingOffSegments(segments) {
+  const values = Array.isArray(segments) ? segments : [];
+  const firstActive = values.findIndex((tone) => tone && tone !== "off");
+  if (firstActive <= 0) return values;
+  return values.slice(firstActive);
+}
+
 function f1TimingMergeSectorSegments(previous, next) {
   const previousSegments = Array.isArray(previous) ? previous : [];
   const nextSegments = Array.isArray(next) ? next : [];
+  if (!previousSegments.length) return f1TimingTrimLeadingOffSegments(nextSegments);
   const merged = Array.from({ length: Math.max(previousSegments.length, nextSegments.length) }, (_, index) => {
     const nextTone = nextSegments[index] || "off";
     return nextTone !== "off" ? nextTone : previousSegments[index] || "off";
@@ -4141,12 +4151,12 @@ function f1TimingSectorHistoryAt(entries, targetSeconds) {
         ))
         .filter(Boolean);
       const previousProgress = sectorKeys.map(([, sectorKey]) => f1TimingSegmentExtent(previous?.sectors?.[sectorKey]));
-      const rollsOverSectorPhase = sameLap && touched.some((item) => (
-        item.progress > 0
-          && previousProgress[item.index] > item.progress
-          && previousProgress.slice(item.index + 1).some((progress) => progress > 0)
-          && !touched.some((other) => other.index > item.index && other.progress > 0)
-      ));
+      const rollsOverSectorPhase = sameLap && touched.some((item) => {
+        const hasLaterProgress = previousProgress.slice(item.index + 1).some((progress) => progress > 0);
+        const hasLaterUpdate = touched.some((other) => other.index > item.index && other.progress > 0);
+        const restartedEarlierSector = previousProgress[item.index] > item.progress || previousProgress[item.index] === 0;
+        return item.progress > 0 && restartedEarlierSector && hasLaterProgress && !hasLaterUpdate;
+      });
       const previousSectors = sameLap && !rollsOverSectorPhase ? previous.sectors : {};
       const effectiveLap = rollsOverSectorPhase && previous?.lap != null && (lap == null || lap <= previous.lap)
         ? previous.lap + 1
@@ -4648,6 +4658,7 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
   const driverState = f1TimingStateAt(sessionData.driverListEntries, targetSeconds);
   const timingState = f1TimingStateAt(sessionData.timingEntries, targetSeconds);
   const appState = f1TimingStateAt(sessionData.timingAppEntries, targetSeconds);
+  const statsState = f1TimingStateAt(sessionData.timingStatsEntries || [], targetSeconds);
   const weatherState = f1TimingStateAt(sessionData.weatherEntries, targetSeconds);
   const sessionClock = parseF1TimingSessionClock(sessionData, targetSeconds);
   const raceControlMessages = parseF1TimingRaceControlMessages(sessionData.raceControlEntries, targetSeconds);
@@ -4661,15 +4672,18 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
   const sectorHistoryByNumber = options.preserveSectorProgress ? f1TimingSectorHistoryAt(sessionData.timingEntries, targetSeconds) : null;
   const lines = timingState?.Lines || {};
   const appLines = appState?.Lines || {};
+  const statsLines = statsState?.Lines || {};
   const rows = Object.entries(lines).map(([numberText, line]) => {
     const number = Number(line?.RacingNumber || numberText);
     const driver = driverState?.[numberText] || driverState?.[String(number)] || {};
     const appLine = appLines?.[numberText] || appLines?.[String(number)] || {};
+    const statsLine = statsLines?.[numberText] || statsLines?.[String(number)] || {};
     const stint = f1TimingLatestStint(appLine);
     const stintCompound = normalizeCompound(stint?.Compound);
     const compound = stintCompound && stintCompound !== "unknown" ? stintCompound : knownCompounds.get(number) || "";
     const lastSeconds = f1TimingLapSeconds(line?.LastLapTime);
-    const bestSeconds = f1TimingLapSeconds(line?.BestLapTime);
+    const statsBestSeconds = f1TimingLapSeconds(statsLine?.PersonalBestLapTime);
+    const bestSeconds = f1TimingLapSeconds(line?.BestLapTime) ?? statsBestSeconds;
     const sourceSessionLap = f1TimingLineSessionLap(line);
     const pos = finiteNumber(line?.Position) ?? finiteNumber(line?.Line) ?? finiteNumber(driver.Line) ?? 99;
     const gapValue = f1TimingValue(line?.GapToLeader);
@@ -4688,16 +4702,17 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
       s2: f1TimingSectorTime(line?.Sectors?.["1"]),
       s3: f1TimingSectorTime(line?.Sectors?.["2"]),
     };
+    const hasPitOutSector = ["s1", "s2", "s3"].some((key) => Array.isArray(sectors[key]) && sectors[key].includes("blue"));
     return {
       pos,
       code: String(driver?.Tla || line?.Tla || numberText).toUpperCase(),
       number,
       last: lastSeconds != null ? formatLapDuration(lastSeconds) : f1TimingValue(line?.LastLapTime),
-      best: bestSeconds != null ? formatLapDuration(bestSeconds) : f1TimingValue(line?.BestLapTime),
+      best: bestSeconds != null ? formatLapDuration(bestSeconds) : f1TimingValue(line?.BestLapTime) || f1TimingValue(statsLine?.PersonalBestLapTime),
       lastLapDuration: lastSeconds,
       bestLapDuration: bestSeconds,
       sessionLap,
-      state: line?.KnockedOut ? "KO" : line?.Retired ? "RETIRED" : line?.PitOut ? "PIT OUT" : line?.InPit ? "IN PIT" : line?.Stopped ? "STOP" : null,
+      state: line?.KnockedOut ? "KO" : line?.Retired ? "RETIRED" : line?.PitOut || hasPitOutSector ? "PIT OUT" : line?.InPit ? "IN PIT" : line?.Stopped ? "STOP" : null,
       retired: Boolean(line?.Retired),
       knockedOut: Boolean(line?.KnockedOut),
       gap: gapValue || (pos === 1 ? "LEADER" : "—"),
@@ -4734,6 +4749,7 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
     timingLines: timingRows.length,
     timingEntries: sessionData.timingEntries?.length || 0,
     timingAppEntries: sessionData.timingAppEntries?.length || 0,
+    timingStatsEntries: sessionData.timingStatsEntries?.length || 0,
     clockEntries: sessionData.clockEntries?.length || 0,
     sessionDataEntries: sessionData.sessionDataEntries?.length || 0,
     sessionStatusEntries: sessionData.sessionStatusEntries?.length || 0,
@@ -5275,6 +5291,27 @@ function f1TimingLiveTopicDiagnostics(entriesByTopic = {}) {
   };
 }
 
+function f1LiveTimingCatchUpRemainingSeconds(entriesByTopic = {}, options = {}) {
+  const timingEntries = Array.isArray(entriesByTopic.TimingData) ? entriesByTopic.TimingData : [];
+  let firstTimingSeconds = null;
+  for (const entry of timingEntries) {
+    const seconds = finiteNumber(entry?.seconds);
+    if (seconds == null) continue;
+    if (firstTimingSeconds == null || seconds < firstTimingSeconds) firstTimingSeconds = seconds;
+  }
+  if (firstTimingSeconds == null) return null;
+  const rawTargetUtcMs = options.targetUtcMs ?? options.targetUtc;
+  const parsedTargetUtcMs = typeof rawTargetUtcMs === "string" ? Date.parse(rawTargetUtcMs) : Number(rawTargetUtcMs);
+  const targetUtcMs = Number.isFinite(parsedTargetUtcMs) ? parsedTargetUtcMs : null;
+  const targetLatencySeconds = Math.max(0, Math.min(90, Number(options.targetLatencySeconds || 0)));
+  const targetSeconds = targetUtcMs != null
+    ? f1TimingArchiveSecondsForUtc({ clockEntries: entriesByTopic.ExtrapolatedClock || [] }, targetUtcMs)
+    : Date.now() / 1000 - targetLatencySeconds;
+  const remainingSeconds = firstTimingSeconds - targetSeconds;
+  if (!Number.isFinite(remainingSeconds) || remainingSeconds <= 0) return null;
+  return Math.round(remainingSeconds * 10) / 10;
+}
+
 async function ensureF1TimingLiveClient() {
   if (f1LiveTimingClient?.connecting || f1LiveTimingClient?.connected) return;
   const now = Date.now();
@@ -5337,6 +5374,7 @@ function getF1LiveTimingSnapshot(options = {}) {
     driverListEntries: entriesByTopic.DriverList || [],
     timingEntries: entriesByTopic.TimingData || [],
     timingAppEntries: entriesByTopic.TimingAppData || [],
+    timingStatsEntries: entriesByTopic.TimingStats || [],
     clockEntries: entriesByTopic.ExtrapolatedClock || [],
     sessionDataEntries: entriesByTopic.SessionData || [],
     sessionStatusEntries: entriesByTopic.SessionStatus || [],
@@ -5715,6 +5753,20 @@ async function getLiveTimingSnapshot(options = {}) {
   const f1Only = requestedSource === "f1" || requestedSource === "formula1";
   const f1Timing = getF1LiveTimingSnapshot({ targetLatencySeconds, targetUtcMs });
   if (f1Timing?.timing?.length) return f1Timing;
+  if (f1Only && f1LiveTimingState?.lastMessageAt) {
+    const catchUpRemainingSeconds = f1LiveTimingCatchUpRemainingSeconds(f1LiveTimingState.entriesByTopic || {}, { targetLatencySeconds, targetUtcMs });
+    return {
+      ok: true,
+      catchingUp: true,
+      catchUpRemainingSeconds,
+      sourceLabel: "Formula 1 live timing catching up",
+      fetchedAt: new Date().toISOString(),
+      timing: [],
+      weather: {},
+      errors: f1LiveTimingState?.lastError ? [f1LiveTimingState.lastError] : [],
+      message: "Formula 1 live timing is catching up to the video buffer.",
+    };
+  }
   if (f1Only) {
     return {
       ok: false,

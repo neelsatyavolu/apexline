@@ -802,7 +802,7 @@
   const PARTY_TRAY_STORAGE_KEY = "pw-party-tray-position";
   const DEFAULT_REPLAY_TIMING_OFFSET = -8;
   const DEFAULT_WORLD_SYNC_TARGET = 36;
-  const LIVE_TIMING_STREAM_ALIGNMENT_DELAY_SECONDS = 4;
+  const LIVE_TIMING_STREAM_ALIGNMENT_DELAY_SECONDS = 4.6;
   const DEFAULT_NON_WORLD_SYNC_OFFSET = 0;
   const SYNC_EPSILON = 0.075;
   const SHAKA_LIVE_SYNC_TOLERANCE_MIN = 3;
@@ -1651,6 +1651,17 @@
     const archiveSeconds = Number(feed?.videoStartArchiveSeconds);
     return Number.isFinite(archiveSeconds) ? archiveSeconds : null;
   }
+  function hasDirectTimelineStart(feed) {
+    if (replayTimelineStartSeconds(feed) == null) return false;
+    return !String(feed?.videoStartSource || "").includes(":fallback");
+  }
+  function liveSyncTargetOffset(masterFeed, targetFeed) {
+    if (!hasDirectTimelineStart(masterFeed) || !hasDirectTimelineStart(targetFeed)) return 0;
+    const masterStart = replayTimelineStartSeconds(masterFeed);
+    const targetStart = replayTimelineStartSeconds(targetFeed);
+    const offset = targetStart - masterStart;
+    return Number.isFinite(offset) ? Math.round(offset * 10) / 10 : 0;
+  }
   function replayTargetMediaTime(masterTime, masterFeed, targetFeed) {
     const fallbackTime = Math.max(0, Number(masterTime || 0));
     const masterStart = replayTimelineStartSeconds(masterFeed);
@@ -2382,10 +2393,7 @@
       ? Math.max(0, Math.min(90, Math.round(adjustedValue * 10) / 10))
       : DEFAULT_WORLD_SYNC_TARGET;
     const targetUtcMs = validVideoUtcMs(metrics?.videoTimeUtcMs);
-    const alignedTargetUtcMs = targetUtcMs == null
-      ? null
-      : validVideoUtcMs(targetUtcMs - LIVE_TIMING_STREAM_ALIGNMENT_DELAY_SECONDS * 1000);
-    return alignedTargetUtcMs == null ? { targetLatencySeconds } : { targetLatencySeconds, targetUtcMs: alignedTargetUtcMs };
+    return targetUtcMs == null ? { targetLatencySeconds } : { targetLatencySeconds, targetUtcMs };
   }
   function liveSyncStatus(metrics, targetLatency) {
     const liveLatency = Number(metrics?.liveLatency);
@@ -3204,6 +3212,23 @@
     return hours ? `${hours}:${match[2]}:${match[3]}` : `${Number(match[2])}:${match[3]}`;
   }
 
+  function liveTimingCatchUpRemainingForDisplay(timingData, nowMs = Date.now()) {
+    const remaining = Number(timingData?.catchUpRemainingSeconds);
+    if (!Number.isFinite(remaining) || remaining <= 0) return null;
+    const fetchedAt = Date.parse(timingData?.fetchedAt || "");
+    const elapsed = Number.isFinite(fetchedAt) ? Math.max(0, (Number(nowMs) - fetchedAt) / 1000) : 0;
+    const value = remaining - elapsed;
+    return value > 0 ? Math.round(value * 10) / 10 : null;
+  }
+
+  function formatLiveTimingCatchUpRemaining(value) {
+    if (value == null || value === "") return "";
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds <= 0) return "";
+    if (seconds >= 10) return `${Math.round(seconds)}s`;
+    return `${Math.max(0.1, Math.round(seconds * 10) / 10)}s`;
+  }
+
   function sessionClockSeconds(value) {
     const text = String(value || "").trim();
     const parts = text.split(":").map(Number);
@@ -3882,7 +3907,7 @@
     const replayTimingInFlightRef = React.useRef(false);
     const liveTimingRequestRef = React.useRef(0);
     const liveTimingInFlightRef = React.useRef(false);
-    const liveTimingSyncRef = React.useRef({ targetLatencySeconds: DEFAULT_WORLD_SYNC_TARGET });
+    const liveTimingSyncRef = React.useRef(liveTimingRequestForMetrics(null, DEFAULT_WORLD_SYNC_TARGET));
     const partyDragRef = React.useRef(null);
     const intelligentCodesRef = React.useRef([]);
     const debugAutoF1TvLoaded = React.useRef(false);
@@ -4479,7 +4504,10 @@
       const worldTarget = clampSyncLatency(settings?.worldTarget == null ? defaultSyncTarget("WORLD") : settings.worldTarget);
       if (syncKey === "WORLD") return worldTarget;
       const value = settings?.targets?.[syncKey];
-      return clampSyncLatency(value == null ? defaultSyncTarget(syncKey, worldTarget) : value);
+      const worldFeed = resolvedFeedForKey("WORLD") || streamSources.WORLD || {};
+      const targetFeed = resolvedFeedForKey(syncKey, syncKey) || streamSources[syncKey] || {};
+      const targetOffset = liveSyncTargetOffset(worldFeed, targetFeed);
+      return clampSyncLatency((value == null ? defaultSyncTarget(syncKey, worldTarget) : value) + targetOffset);
     }
 
     function adjustSyncTarget(key, delta) {
@@ -5225,11 +5253,18 @@
     noteBestSectors(timingRows, `${replaySync.mode}|${activeRaceName}|${activeSessionKind}`);
     const sessionClock = replaySync.mode === "replay" ? replayTimingData?.sessionClock : liveTimingData?.sessionClock;
     const activeTimingData = replaySync.mode === "replay" ? replayTimingData : liveTimingData;
-    const timingUnavailable = !timingHasRealRows && activeTimingData?.ok === false;
+    const timingCatchingUp = Boolean(activeTimingData?.catchingUp);
+    const timingCatchUpRemaining = timingCatchingUp ? liveTimingCatchUpRemainingForDisplay(activeTimingData, clockTick) : null;
+    const timingCatchUpRemainingLabel = formatLiveTimingCatchUpRemaining(timingCatchUpRemaining);
+    const timingCatchUpTitle = timingCatchUpRemainingLabel ? `Catching up with live - ${timingCatchUpRemainingLabel}` : "Catching up with live";
+    const timingCatchUpMessage = activeTimingData?.message || "Formula 1 live timing is catching up to the video buffer.";
+    const timingUnavailable = !timingHasRealRows && activeTimingData?.ok === false && !timingCatchingUp;
     const timingLoading = !timingHasRealRows && !timingUnavailable && !pendingF1TvSelection;
     const timingStatusBody = timingUnavailable
       ? (activeTimingData?.message || activeTimingData?.sourceLabel || "Timing is unavailable.")
-      : (replaySync.mode === "replay" ? "Replay timing is syncing with the selected session." : "Live timing is warming up for the current feed.");
+      : timingCatchingUp
+        ? (timingCatchUpRemainingLabel ? `${timingCatchUpMessage} ${timingCatchUpRemainingLabel} remaining.` : timingCatchUpMessage)
+        : (replaySync.mode === "replay" ? "Replay timing is syncing with the selected session." : "Live timing is warming up for the current feed.");
     const qualifyingPhase = qualifyingPhaseFromSession({ sessionKind: activeSessionKind, sessionClock, rowCount: timingRows.length });
     const focusCodes = intelligentOnboardCodes({
       timingRows,
@@ -5811,7 +5846,7 @@
           {!compact && timingConfigOpen && <TimingColumnMenu columns={timingColumns} onToggle={toggleTimingColumn} />}
           <div className="live__timingscroll">
             {timingLoading || timingUnavailable ? (
-              <TimingTowerStatus tone={timingUnavailable ? "error" : "loading"} title={timingUnavailable ? "Timing unavailable" : "Loading timing"} body={timingStatusBody} />
+              <TimingTowerStatus tone={timingUnavailable ? "error" : "loading"} title={timingUnavailable ? "Timing unavailable" : timingCatchingUp ? timingCatchUpTitle : "Loading timing"} body={timingStatusBody} />
             ) : (
               <>
                 <div className="timing-tower">

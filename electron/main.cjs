@@ -7817,6 +7817,7 @@ function openF1TvLogin(event, options = {}) {
 
 function openF1TvLoginWindow(event, credentials, options = {}) {
   const parent = event?.sender ? BrowserWindow.fromWebContents(event.sender) : null;
+  const automatedCredentialLogin = Boolean(credentials.email && credentials.password && options.mode === "credentials");
 
   return new Promise((resolve) => {
     let settled = false;
@@ -7829,11 +7830,15 @@ function openF1TvLoginWindow(event, credentials, options = {}) {
       height: 820,
       minWidth: 820,
       minHeight: 640,
+      show: !automatedCredentialLogin,
+      skipTaskbar: automatedCredentialLogin,
       title: "F1 TV Login",
       parent: parent && !parent.isDestroyed() ? parent : undefined,
       modal: false,
       backgroundColor: "#111111",
       webPreferences: {
+        offscreen: automatedCredentialLogin,
+        backgroundThrottling: !automatedCredentialLogin,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -7851,7 +7856,25 @@ function openF1TvLoginWindow(event, credentials, options = {}) {
     }
 
     loginWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
-      if (isF1TvUrl(targetUrl)) return { action: "allow" };
+      if (isF1TvUrl(targetUrl)) {
+        return {
+          action: "allow",
+          overrideBrowserWindowOptions: {
+            show: !automatedCredentialLogin,
+            skipTaskbar: automatedCredentialLogin,
+            parent: parent && !parent.isDestroyed() ? parent : undefined,
+            modal: false,
+            backgroundColor: "#111111",
+            webPreferences: {
+              offscreen: automatedCredentialLogin,
+              backgroundThrottling: !automatedCredentialLogin,
+              contextIsolation: true,
+              nodeIntegration: false,
+              sandbox: true,
+            },
+          },
+        };
+      }
       shell.openExternal(targetUrl);
       return { action: "deny" };
     });

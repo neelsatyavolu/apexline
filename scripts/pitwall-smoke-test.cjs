@@ -2640,6 +2640,12 @@ assert.match(mainProcess, /correlationid/, "F1 TV playback requests should inclu
 assert.match(mainProcess, /sessionid/, "F1 TV playback requests should include the official session id header shape");
 assert.match(mainProcess, /f1TvEntitlementTokenFromCookies/, "F1 TV status should treat the entitlement-token cookie as playback-ready auth");
 assert.match(mainProcess, /f1TvPlaybackHeaders/, "F1 TV resolver should build volatile playback headers for clean player requests");
+const f1TvLoginWindowSource = mainProcess.match(/function openF1TvLoginWindow[\s\S]*?\n}\n\nfunction f1TvStreamLabel/)?.[0] || "";
+assert.match(f1TvLoginWindowSource, /automatedCredentialLogin/, "F1 TV credential fallback should classify automated browser sign-in separately from manual login");
+assert.match(f1TvLoginWindowSource, /show:\s*!automatedCredentialLogin/, "F1 TV credential fallback should keep the automated login browser hidden");
+assert.match(f1TvLoginWindowSource, /offscreen:\s*automatedCredentialLogin/, "Hidden F1 TV credential login should render offscreen in the background");
+assert.match(f1TvLoginWindowSource, /backgroundThrottling:\s*!automatedCredentialLogin/, "Hidden F1 TV credential login should keep automation timers active");
+assert.match(f1TvLoginWindowSource, /overrideBrowserWindowOptions[\s\S]*show:\s*!automatedCredentialLogin/, "F1 TV credential login child windows should inherit the hidden background mode");
 assert.match(mainProcess, /headers:\s*\{[\s\S]*playbackHeaders/, "F1 TV direct-resolved streams should carry playback headers in memory");
 const f1TvPlaybackMode = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "f1TvPlaybackMode")})`);
 assert.equal(f1TvPlaybackMode({ sessionKind: "Race", sessionStatus: "live" }), "live", "F1 TV resolver should treat a current Race session as live playback");
@@ -3710,6 +3716,9 @@ assert.match(source["Weekend.jsx"], /computedGapValue/, "Weekend recap should co
 assert.match(source["Weekend.jsx"], /Time[\s\S]*Gap[\s\S]*Interval[\s\S]*Laps/, "Weekend recap leaderboard should show time, gap, interval, and laps columns");
 assert.match(source["Weekend.jsx"], /resultRows\.length\s*\?\s*\(\s*<div className="wk-recap-scroll">/, "Weekend recap should hide leaderboard table chrome when no selected-session results are available");
 assert.match(source["Weekend.jsx"], /wk-recap-table/, "Weekend recap should render a dedicated session leaderboard table");
+assert.match(source["Weekend.jsx"], /\.wk__cols \{[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(280px, 360px\);/, "Weekend recap should keep the rail on screen by allowing the leaderboard column to shrink");
+assert.match(source["Weekend.jsx"], /\.wk, \.wk > \*, \.wk__cols > \*, \.wk__rail \{[^}]*min-width: 0;/, "Weekend recap containers should allow child scrollers to shrink in windowed layouts");
+assert.match(source["Weekend.jsx"], /\.wk-recap-scroll \{[^}]*min-width: 0;[^}]*max-width: 100%;[^}]*overflow-x: auto;/, "Weekend recap table overflow should stay inside the leaderboard card");
 assert.match(source["Weekend.jsx"], /wk-recap-loading/, "Weekend recap should replace stale leaderboard rows with a full loading progress surface");
 assert.match(source["Weekend.jsx"], /leaderboardCacheRef[\s\S]*cachedAnalytics[\s\S]*leaderboardLoading[\s\S]*!selectedAnalytics/, "Weekend recap should render cached leaderboard data immediately instead of flickering the loading surface");
 assert.match(source["Weekend.jsx"], /pitwall\.analytics\.library/, "Weekend recap should resolve missing OpenF1 meeting keys before loading selected session results");

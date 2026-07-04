@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld("pitwall", {
   data: {
     snapshot: (options = {}) => ipcRenderer.invoke("pitwall:data:snapshot", options),
     liveTiming: (options = {}) => ipcRenderer.invoke("pitwall:data:liveTiming", options),
+    liveTimingResync: () => ipcRenderer.invoke("pitwall:data:liveTimingResync"),
     replayTiming: (options = {}) => ipcRenderer.invoke("pitwall:data:replayTiming", options),
     replayTimingAvailability: (options = {}) => ipcRenderer.invoke("pitwall:data:replayTimingAvailability", options),
     trackMapReplayTiming: (options = {}) => ipcRenderer.invoke("pitwall:data:trackMapReplayTiming", options),

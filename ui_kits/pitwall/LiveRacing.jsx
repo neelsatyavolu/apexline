@@ -2017,6 +2017,18 @@
       return counts;
     }, {});
   }
+  function preserveTimingSectorCounts(currentCounts = {}, previousCounts = {}) {
+    return TIMING_SECTOR_COLUMNS.reduce((counts, id) => {
+      const current = Number(currentCounts?.[id]);
+      const previous = Number(previousCounts?.[id]);
+      counts[id] = Math.max(
+        MINI_SECTOR_FALLBACK_COUNT,
+        Number.isFinite(current) ? current : 0,
+        Number.isFinite(previous) ? previous : 0
+      );
+      return counts;
+    }, {});
+  }
   function timingGridStyle(columns, sectorCounts = {}) {
     const widths = columns.map((id) => {
       if (TIMING_SECTOR_COLUMNS.includes(id)) return miniSectorColumnWidth(sectorCounts[id]);
@@ -2392,8 +2404,20 @@
     const targetLatencySeconds = Number.isFinite(value)
       ? Math.max(0, Math.min(90, Math.round(adjustedValue * 10) / 10))
       : DEFAULT_WORLD_SYNC_TARGET;
+    // The UTC target is the raw playhead; the main process subtracts the
+    // measured feed latency (MultiViewer's trackTime = playhead - r).
     const targetUtcMs = validVideoUtcMs(metrics?.videoTimeUtcMs);
-    return targetUtcMs == null ? { targetLatencySeconds } : { targetLatencySeconds, targetUtcMs };
+    if (targetUtcMs == null) return { targetLatencySeconds };
+    const videoTimeAtMs = Number.isFinite(Number(metrics?.videoTimeAtMs)) ? Number(metrics.videoTimeAtMs) : null;
+    return videoTimeAtMs == null ? { targetLatencySeconds, targetUtcMs } : { targetLatencySeconds, targetUtcMs, videoTimeAtMs };
+  }
+  function liveTimingTargetUtcNow(timingSync, nowMs) {
+    const targetUtcMs = Number(timingSync?.targetUtcMs);
+    if (!Number.isFinite(targetUtcMs)) return null;
+    const measuredAtMs = Number(timingSync?.videoTimeAtMs);
+    if (!Number.isFinite(measuredAtMs)) return targetUtcMs;
+    const elapsedMs = Math.max(0, Math.min(3000, Number(nowMs) - measuredAtMs));
+    return targetUtcMs + elapsedMs;
   }
   function liveSyncStatus(metrics, targetLatency) {
     const liveLatency = Number(metrics?.liveLatency);
@@ -2911,6 +2935,7 @@
           playbackRate: video.playbackRate || 1,
           delta: Number.isFinite(decision.delta) ? decision.delta : null,
           videoTimeUtcMs: liveVideoPlayheadUtcMs(video, player, null),
+          videoTimeAtMs: Date.now(),
         });
       };
       async function load() {
@@ -3097,7 +3122,7 @@
     );
   }
 
-  function SyncMenu({ open, replayMode, replayTimingOffset, debugEnabled, liveMetrics, liveTarget, onReplayTimingAdjust, onReplayTimingReset, onSyncAll, onLiveSyncToTarget, onJumpToLive, onToggleDebug }) {
+  function SyncMenu({ open, replayMode, replayTimingOffset, debugEnabled, liveMetrics, liveTarget, onReplayTimingAdjust, onReplayTimingReset, onSyncAll, onLiveSyncToTarget, onJumpToLive, onResyncTiming, onToggleDebug }) {
     if (!open) return null;
     const timingLabel = `Timing ${replayTimingOffset > 0 ? "+" : ""}${replayTimingOffset}s`;
     const liveStatus = liveSyncStatus(liveMetrics, liveTarget);
@@ -3109,6 +3134,7 @@
             <span className="sync-menu__rate">{liveStatus.rate}</span>
             <button className="sync-menu__btn sync-menu__btn--box" type="button" onClick={onJumpToLive}>Jump to live</button>
             <button className="sync-menu__btn sync-menu__btn--box" type="button" onClick={onLiveSyncToTarget}>Match target</button>
+            <button className="sync-menu__btn sync-menu__btn--box" type="button" onClick={onResyncTiming}>Resync timing</button>
           </div>
         )}
         {replayMode === "replay" && (
@@ -3160,6 +3186,7 @@
           playbackRate: video.playbackRate || 1,
           delta: Number.isFinite(delta) ? delta : null,
           videoTimeUtcMs: liveVideoPlayheadUtcMs(video, null, hls),
+          videoTimeAtMs: Date.now(),
         });
       };
       if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -3250,16 +3277,34 @@
     void context.clockTick;
     const baseSeconds = sessionClockSeconds(clock?.remaining);
     if (baseSeconds == null) return formatSessionClock(clock?.remaining);
-    let delta = 0;
     if (context.mode === "replay") {
+      let delta = 0;
       const currentElapsed = Number(context.replayTime || 0) + Number(context.replayTimingOffset || 0);
       const snapshotElapsed = Number(context.timingData?.elapsedSeconds);
       if (Number.isFinite(currentElapsed) && Number.isFinite(snapshotElapsed)) delta = currentElapsed - snapshotElapsed;
-    } else if (clock?.extrapolating && context.timingData?.fetchedAt) {
-      const fetchedAt = Date.parse(context.timingData.fetchedAt);
-      if (Number.isFinite(fetchedAt)) delta = (Date.now() - fetchedAt) / 1000;
+      return formatSessionClockSeconds(baseSeconds - Math.max(0, delta));
     }
-    return formatSessionClockSeconds(baseSeconds - Math.max(0, delta));
+    const anchorRef = context.clockAnchorRef;
+    if (!clock?.extrapolating) {
+      if (anchorRef) anchorRef.current = null;
+      return formatSessionClock(clock?.remaining);
+    }
+    const nowMs = Number(context.nowMs ?? Date.now());
+    if (!anchorRef) {
+      const fetchedAt = Date.parse(context.timingData?.fetchedAt || "");
+      const delta = Number.isFinite(fetchedAt) ? Math.max(0, (nowMs - fetchedAt) / 1000) : 0;
+      return formatSessionClockSeconds(baseSeconds - delta);
+    }
+    // Snapshot remaining values follow the video playhead, which only refreshes
+    // every 750ms and can rubber-band; ticking from a wall-clock anchor keeps the
+    // countdown steady, re-anchoring only beyond normal snapshot jitter.
+    const anchor = anchorRef.current;
+    const predicted = anchor ? anchor.remainingSeconds - (nowMs - anchor.wallMs) / 1000 : null;
+    if (predicted == null || Math.abs(baseSeconds - predicted) > 2) {
+      anchorRef.current = { remainingSeconds: baseSeconds, wallMs: nowMs };
+      return formatSessionClockSeconds(baseSeconds);
+    }
+    return formatSessionClockSeconds(predicted);
   }
 
   function sessionClockDisplayLabel(clock, context = {}) {
@@ -3613,7 +3658,7 @@
   function OnboardPane({ feed, code, focus, telemetry, channel, streamUrl, audioActive, audioVolume, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand,
     visible = true, style, zone, driverOptions = [], onDriverChange,
     replaySync, onReplayToggle, onReplaySeek, replayLapAt, onSurfaceToggle, onPlayerReady, syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset,
-    timingRows = [], sessionKind = "", videoQuality, lockAspect = false, onLockAspectToggle, feedTickerOn = false, onToggleFeedTicker, playbackLocked = false }) {
+    timingRows = [], sectorCounts = null, sessionKind = "", videoQuality, lockAspect = false, onLockAspectToggle, feedTickerOn = false, onToggleFeedTicker, playbackLocked = false }) {
     const [telemetryOn, setTelemetryOn] = React.useState(Boolean(telemetry));
     const [localLockAspect, setLocalLockAspect] = React.useState(false);
     const [streamReady, setStreamReady] = React.useState(false);
@@ -3625,7 +3670,7 @@
     const d = D.byCode[code] || {};
     const driverImage = d.remoteImage || d.image;
     const telemetryData = telemetryForCode(timingRows, code, sessionKind);
-    const sectorSlots = timingSectorCounts(timingRows);
+    const sectorSlots = sectorCounts || timingSectorCounts(timingRows);
     const streaming = Boolean(descriptor);
     return (
       <div className="pane" data-focus={focus} data-expanded={expanded} data-visible={String(visible)} data-zone={zone}
@@ -3908,6 +3953,8 @@
     const liveTimingRequestRef = React.useRef(0);
     const liveTimingInFlightRef = React.useRef(false);
     const liveTimingSyncRef = React.useRef(liveTimingRequestForMetrics(null, DEFAULT_WORLD_SYNC_TARGET));
+    const sessionClockAnchorRef = React.useRef(null);
+    const timingMiniSectorCountsByKeyRef = React.useRef({});
     const partyDragRef = React.useRef(null);
     const intelligentCodesRef = React.useRef([]);
     const debugAutoF1TvLoaded = React.useRef(false);
@@ -4478,6 +4525,12 @@
       if (partyRoom && partySyncRoleRef.current === "host") publishHostSync();
     }
 
+    async function resyncLiveTiming() {
+      sessionClockAnchorRef.current = null;
+      try {
+        await window.pitwall?.data?.liveTimingResync?.();
+      } catch {}
+    }
     function jumpLivePlayersToLive(key = "WORLD") {
       if (replaySync.mode === "replay") return;
       const entries = key === "WORLD"
@@ -4994,6 +5047,7 @@
           raceName: race?.name || debugF1TvRace || "",
           sessionKind,
           meetingKey: race?.meetingKey || debugF1TvMeetingKey || "",
+          directContentId: Boolean(session.contentId),
           detailInput: Boolean(detailUrl),
         });
         const hasF1TvSession = await preflightF1TvSession();
@@ -5002,6 +5056,7 @@
         setStreamStatus("Resolving clean F1 TV stream metadata...");
         const resolved = await window.pitwall.f1tv.resolveContent({
           detailUrl,
+          contentId: session.contentId || "",
           season: f1TvSeason,
           raceName: race?.name || debugF1TvRace || "",
           sessionKind,
@@ -5235,7 +5290,6 @@
 
     const timingRows = activeTimingRows();
     const timingHasRealRows = hasRealTimingRows(timingRows);
-    const timingMiniSectorCounts = React.useMemo(() => timingSectorCounts(timingRows), [timingRows]);
     const { registerTimingRow, movingRows } = useTimingRowMotion(timingRows);
     const selectedCode = selected || timingRows[0]?.code || D.standings[0]?.code || D.drivers[0]?.code || "";
     const preferredCode = (profile.favoriteDrivers || []).find((code) => D.byCode[code]) || "";
@@ -5250,8 +5304,15 @@
     const activeSessionKind = replaySync.mode === "replay"
       ? (replayTimingData?.sessionKind || f1TvSessionKind)
       : liveSessionKind;
-    noteBestSectors(timingRows, `${replaySync.mode}|${activeRaceName}|${activeSessionKind}`);
     const sessionClock = replaySync.mode === "replay" ? replayTimingData?.sessionClock : liveTimingData?.sessionClock;
+    const timingMiniSectorCountKey = `${replaySync.mode}|${activeRaceName}|${activeSessionKind}`;
+    const observedTimingMiniSectorCounts = React.useMemo(() => timingSectorCounts(timingRows), [timingRows]);
+    const timingMiniSectorCounts = React.useMemo(() => {
+      const counts = preserveTimingSectorCounts(observedTimingMiniSectorCounts, timingMiniSectorCountsByKeyRef.current[timingMiniSectorCountKey]);
+      timingMiniSectorCountsByKeyRef.current[timingMiniSectorCountKey] = counts;
+      return counts;
+    }, [observedTimingMiniSectorCounts, timingMiniSectorCountKey]);
+    noteBestSectors(timingRows, `${replaySync.mode}|${activeRaceName}|${activeSessionKind}|${sessionClock?.qualifyingPart || ""}`);
     const activeTimingData = replaySync.mode === "replay" ? replayTimingData : liveTimingData;
     const timingCatchingUp = Boolean(activeTimingData?.catchingUp);
     const timingCatchUpRemaining = timingCatchingUp ? liveTimingCatchUpRemainingForDisplay(activeTimingData, clockTick) : null;
@@ -5469,6 +5530,7 @@
       replayTime: replaySync.masterTime,
       replayTimingOffset,
       clockTick,
+      clockAnchorRef: sessionClockAnchorRef,
       sessionKind: activeSessionKind,
     });
     function resolvedOnboardFeedForCode(code) {
@@ -5553,7 +5615,7 @@
         liveTimingInFlightRef.current = true;
         try {
           const timingSync = liveTimingSyncRef.current || { targetLatencySeconds: syncTargetFor("WORLD") };
-          const data = await window.pitwall.data.liveTiming({ source: "f1", targetUtcMs: timingSync.targetUtcMs, targetLatencySeconds: timingSync.targetLatencySeconds });
+          const data = await window.pitwall.data.liveTiming({ source: "f1", targetUtcMs: liveTimingTargetUtcNow(timingSync, Date.now()), targetLatencySeconds: timingSync.targetLatencySeconds });
           if (cancelled || requestId !== liveTimingRequestRef.current) return;
           setLiveTimingData(data || null);
           logPitWallDebug("live.timing", {
@@ -5917,6 +5979,7 @@
           onSyncAdjust={adjustSyncTarget}
           onSyncReset={resetSyncTarget}
           timingRows={timingRows}
+          sectorCounts={timingMiniSectorCounts}
           sessionKind={activeSessionKind}
           videoQuality={videoQuality}
           broadcastTickerRows={panelSizes.broadcastTickerRows}
@@ -6551,6 +6614,7 @@
                 onSyncAll={() => syncReplayPlayers(replaySync.masterTime)}
                 onLiveSyncToTarget={() => syncLivePlayersToTarget("WORLD")}
                 onJumpToLive={() => jumpLivePlayersToLive("WORLD")}
+                onResyncTiming={resyncLiveTiming}
                 onToggleDebug={() => setSyncSettings((settings) => ({ ...settings, debug: !settings.debug }))}
               />
             </span>

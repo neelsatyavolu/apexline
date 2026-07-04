@@ -390,7 +390,9 @@
     }
 
     function f1TvLoginMessage(status) {
+      if (status.subscriptionActive === false) return "F1 TV is signed in, but the subscription is not active for playback. Activate it, then sign in again.";
       if (status.authenticated) return "F1 TV playback token connected.";
+      if (/subscription is not active|inactive|entitlement|rights/i.test(String(status.credentialError || ""))) return `F1 TV subscription is not active: ${status.credentialError}`;
       if (status.credentialError) return `F1 TV email/password sign-in did not return a playback token: ${status.credentialError}`;
       if (status.browserSession) return "Browser signed in. The playback token is still missing, so use email/password sign-in for streams.";
       return "Sign-in window closed before a playback token was detected.";

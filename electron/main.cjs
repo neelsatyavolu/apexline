@@ -106,6 +106,8 @@ const F1TV_LOGIN_URL = "https://account.formula1.com/#/en/login?redirect=https%3
 const F1TV_AUTH_URL = "https://api.formula1.com/v2/account/subscriber/authenticate/by-password";
 const F1TV_AUTH_API_KEY = "fCUCjWrKPu9ylJwRAv8BpGLEgiAuThx7";
 const F1TV_HOSTS = new Set(["f1tv.formula1.com", "account.formula1.com", "formula1.com", "www.formula1.com"]);
+const F1TV_LOGIN_TOKEN_GRACE_MS = 12000;
+const F1TV_LOGIN_AUTOMATION_TIMEOUT_MS = 45000;
 const F1TV_SEASON_PAGE_IDS = {
   "2022": "4319",
   "2023": "6603",
@@ -661,6 +663,9 @@ async function authenticateF1TvCredentials(email, password) {
   const subscriptionToken = String(json?.data?.subscriptionToken || json?.subscriptionToken || "").trim();
   if (!subscriptionToken) {
     const status = json?.data?.subscriptionStatus || json?.message || "No subscription token returned.";
+    if (/inactive|expired|subscription|entitlement|rights/i.test(String(status || ""))) {
+      throw new Error(`F1 TV subscription is not active: ${status}`);
+    }
     throw new Error(`F1 TV did not return a playback token: ${status}`);
   }
   await setSecret("f1tv-email", login);
@@ -3822,6 +3827,19 @@ function f1TimingStateAt(entries, targetSeconds) {
   return state;
 }
 
+function f1TimingStateBetween(entries, startSeconds, targetSeconds) {
+  const start = finiteNumber(startSeconds);
+  if (!Array.isArray(entries) || !entries.length || start == null) return {};
+  let state = {};
+  for (const entry of entries) {
+    const seconds = finiteNumber(entry?.seconds) ?? 0;
+    if (seconds < start) continue;
+    if (seconds > targetSeconds) break;
+    state = mergeF1TimingDelta(state, entry.data);
+  }
+  return state;
+}
+
 function f1TimingLatestEntryAt(entries, targetSeconds) {
   let latest = null;
   for (const entry of entries || []) {
@@ -3832,6 +3850,8 @@ function f1TimingLatestEntryAt(entries, targetSeconds) {
 }
 
 function f1TimingArchiveStartUtcMs(sessionData) {
+  const explicitStartUtcMs = finiteNumber(sessionData?.archiveStartUtcMs);
+  if (explicitStartUtcMs != null) return explicitStartUtcMs;
   for (const entry of sessionData?.clockEntries || []) {
     const utcMs = Date.parse(entry?.data?.Utc || "");
     const seconds = finiteNumber(entry?.seconds);
@@ -4016,6 +4036,60 @@ function f1TimingQualifyingPart(sessionData, targetSeconds) {
   return startedCount ? `Q${Math.min(startedCount, 3)}` : "";
 }
 
+function f1TimingQualifyingPartStartSeconds(sessionData, targetSeconds) {
+  const targetValue = finiteNumber(targetSeconds);
+  const targetUtcMs = f1TimingTargetUtcMs(sessionData, targetSeconds);
+  const eventSeconds = (item, fallbackSeconds) => {
+    const utcMs = Date.parse(item?.Utc || item?.Timestamp || item?.Date || "");
+    if (Number.isFinite(utcMs) && Number.isFinite(targetUtcMs) && utcMs > targetUtcMs) return null;
+    const seconds = Number.isFinite(utcMs) ? f1TimingArchiveSecondsForUtc(sessionData, utcMs) : finiteNumber(fallbackSeconds);
+    return finiteNumber(seconds);
+  };
+  const explicitEvents = [];
+  for (const entry of sessionData?.sessionDataEntries || []) {
+    const seconds = finiteNumber(entry?.seconds) ?? 0;
+    if (targetValue != null && seconds > targetValue) continue;
+    const rawSeries = entry?.data?.Series || entry?.data?.series || [];
+    const seriesValues = Array.isArray(rawSeries) ? rawSeries : Object.values(rawSeries);
+    [entry?.data, ...seriesValues].filter(Boolean).forEach((item) => {
+      const part = finiteNumber(item?.QualifyingPart ?? item?.qualifyingPart);
+      if (part == null || part < 1 || part > 3) return;
+      const startSeconds = eventSeconds(item, seconds);
+      if (startSeconds != null && (targetValue == null || startSeconds <= targetValue)) explicitEvents.push({ part, startSeconds });
+    });
+  }
+  if (explicitEvents.length) return explicitEvents.sort((a, b) => a.startSeconds - b.startSeconds).at(-1).startSeconds;
+
+  const statusText = (item) => String(item?.SessionStatus || item?.Status || item?.Started || "");
+  const events = [];
+  for (const entry of sessionData?.sessionStatusEntries || []) {
+    const seconds = finiteNumber(entry?.seconds) ?? 0;
+    if (targetValue != null && seconds > targetValue) continue;
+    const series = entry?.data?.StatusSeries;
+    const values = Array.isArray(series) ? series : series && typeof series === "object" ? Object.values(series) : [entry?.data];
+    values.filter(Boolean).forEach((item) => {
+      const status = statusText(item);
+      const startSeconds = eventSeconds(item, seconds);
+      if (status && startSeconds != null && (targetValue == null || startSeconds <= targetValue)) events.push({ status, startSeconds });
+    });
+  }
+  events.sort((a, b) => a.startSeconds - b.startSeconds);
+  let startedCount = 0;
+  let wasStarted = false;
+  let previousStopWasFinished = false;
+  let latestStart = null;
+  for (const event of events) {
+    const isStarted = event.status === "Started";
+    if (isStarted && !wasStarted && (startedCount === 0 || previousStopWasFinished)) {
+      startedCount += 1;
+      latestStart = event.startSeconds;
+    }
+    wasStarted = isStarted;
+    previousStopWasFinished = isStarted ? false : /Finished|Finalised|Ends/i.test(event.status);
+  }
+  return latestStart;
+}
+
 function f1TimingValue(value) {
   if (value == null) return "";
   if (typeof value === "object") return String(value.Value ?? value.value ?? "");
@@ -4126,10 +4200,12 @@ function f1TimingLineSessionLap(line) {
   return finiteNumber(line?.NumberOfLaps) ?? finiteNumber(line?.NumberOfLap) ?? finiteNumber(line?.LapNumber);
 }
 
-function f1TimingSectorHistoryAt(entries, targetSeconds) {
+function f1TimingSectorHistoryAt(entries, targetSeconds, options = {}) {
+  const startSeconds = finiteNumber(options.startSeconds);
   const history = new Map();
   let state = {};
   for (const entry of entries || []) {
+    if (startSeconds != null && entry.seconds < startSeconds) continue;
     if (entry.seconds > targetSeconds) break;
     state = mergeF1TimingDelta(state, entry.data);
     const lines = state?.Lines || {};
@@ -4142,6 +4218,18 @@ function f1TimingSectorHistoryAt(entries, targetSeconds) {
       const previous = history.get(number);
       const sameLap = previous && (lap == null || previous.lap == null || previous.lap === lap);
       const deltaSectors = deltaLine?.Sectors || {};
+      const deltaHasPitOutSector = Object.values(deltaSectors).some((sector) => f1TimingSegments(sector).includes("blue"));
+      const deltaHasSectorContent = Object.values(deltaSectors).some((sector) => (
+        f1TimingSegmentExtent(f1TimingSegments(sector)) > 0 || f1TimingSectorTime(sector) != null
+      ));
+      if (deltaLine?.InPit && !deltaHasPitOutSector && !deltaHasSectorContent) {
+        history.set(number, {
+          lap: lap ?? previous?.lap ?? null,
+          sectors: { s1: [], s2: [], s3: [] },
+          sectorTimes: { s1: null, s2: null, s3: null },
+        });
+        continue;
+      }
       const sectorKeys = [["0", "s1"], ["1", "s2"], ["2", "s3"]];
       const touched = sectorKeys
         .map(([sectorIndex, sectorKey], index) => (
@@ -4645,6 +4733,23 @@ function parseF1TimingRaceControlMessages(entries, targetSeconds) {
   return messages.slice(-30);
 }
 
+// F1 timing TimingData lines carry an atomic Status bitfield (same decoding
+// MultiViewer uses): 4=Stopped, 8=Retired, 16=InPit, 32=PitOut, 128=KnockedOut,
+// 256=Cutoff. Unlike the InPit/PitOut booleans it is never left stale by
+// partial patches, so it wins whenever the feed provides it.
+function f1TimingDriverStatusFlags(status) {
+  const value = finiteNumber(status);
+  if (value == null) return null;
+  return {
+    stopped: Boolean(value & 4),
+    retired: Boolean(value & 8),
+    inPit: Boolean(value & 16),
+    pitOut: Boolean(value & 32),
+    knockedOut: Boolean(value & 128),
+    cutoff: Boolean(value & 256),
+  };
+}
+
 function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
   options = options || {};
   const targetElapsedSeconds = Math.max(0, Number(elapsedSeconds || 0));
@@ -4661,6 +4766,20 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
   const statsState = f1TimingStateAt(sessionData.timingStatsEntries || [], targetSeconds);
   const weatherState = f1TimingStateAt(sessionData.weatherEntries, targetSeconds);
   const sessionClock = parseF1TimingSessionClock(sessionData, targetSeconds);
+  const sessionInfoState = f1TimingStateAt(sessionData.sessionInfoEntries || [], targetSeconds);
+  const sessionKindText = [
+    sessionData.selectedSession?.session_name,
+    sessionData.selectedSession?.session_type,
+    sessionInfoState?.Name,
+    sessionInfoState?.Type,
+    sessionInfoState?.SessionName,
+    sessionInfoState?.SessionType,
+  ].filter(Boolean).join(" ");
+  const useLiveLineOrder = Boolean(f1TimingExplicitQualifyingPart(sessionData, targetSeconds) || /qualifying|shootout/i.test(sessionKindText));
+  const qualifyingPartStartSeconds = useLiveLineOrder ? f1TimingQualifyingPartStartSeconds(sessionData, targetSeconds) : null;
+  const resetQualifyingTiming = qualifyingPartStartSeconds != null && qualifyingPartStartSeconds > 0 && qualifyingPartStartSeconds <= targetSeconds;
+  const phaseTimingState = resetQualifyingTiming ? f1TimingStateBetween(sessionData.timingEntries, qualifyingPartStartSeconds, targetSeconds) : null;
+  const phaseStatsState = resetQualifyingTiming ? f1TimingStateBetween(sessionData.timingStatsEntries || [], qualifyingPartStartSeconds, targetSeconds) : null;
   const raceControlMessages = parseF1TimingRaceControlMessages(sessionData.raceControlEntries, targetSeconds);
   const telemetryRows = f1TimingTelemetryRowsAt(sessionData, targetSeconds);
   const telemetryByNumber = latestCarDataByDriverNumber(telemetryRows);
@@ -4669,52 +4788,74 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
     { x: row.x, y: row.y, z: row.z, status: row.status },
   ]));
   const knownCompounds = f1TimingKnownCompoundsByNumber(sessionData.timingAppEntries, targetSeconds);
-  const sectorHistoryByNumber = options.preserveSectorProgress ? f1TimingSectorHistoryAt(sessionData.timingEntries, targetSeconds) : null;
+  const sectorHistoryByNumber = options.preserveSectorProgress
+    ? f1TimingSectorHistoryAt(sessionData.timingEntries, targetSeconds, { startSeconds: resetQualifyingTiming ? qualifyingPartStartSeconds : null })
+    : null;
   const lines = timingState?.Lines || {};
   const appLines = appState?.Lines || {};
   const statsLines = statsState?.Lines || {};
+  const phaseLines = phaseTimingState?.Lines || {};
+  const phaseStatsLines = phaseStatsState?.Lines || {};
   const rows = Object.entries(lines).map(([numberText, line]) => {
     const number = Number(line?.RacingNumber || numberText);
     const driver = driverState?.[numberText] || driverState?.[String(number)] || {};
     const appLine = appLines?.[numberText] || appLines?.[String(number)] || {};
     const statsLine = statsLines?.[numberText] || statsLines?.[String(number)] || {};
+    const timingLine = resetQualifyingTiming ? (phaseLines?.[numberText] || phaseLines?.[String(number)] || {}) : line;
+    const timingStatsLine = resetQualifyingTiming ? (phaseStatsLines?.[numberText] || phaseStatsLines?.[String(number)] || {}) : statsLine;
     const stint = f1TimingLatestStint(appLine);
     const stintCompound = normalizeCompound(stint?.Compound);
     const compound = stintCompound && stintCompound !== "unknown" ? stintCompound : knownCompounds.get(number) || "";
-    const lastSeconds = f1TimingLapSeconds(line?.LastLapTime);
-    const statsBestSeconds = f1TimingLapSeconds(statsLine?.PersonalBestLapTime);
-    const bestSeconds = f1TimingLapSeconds(line?.BestLapTime) ?? statsBestSeconds;
+    const lastSeconds = f1TimingLapSeconds(timingLine?.LastLapTime);
+    const statsBestSeconds = f1TimingLapSeconds(timingStatsLine?.PersonalBestLapTime);
+    const bestSeconds = f1TimingLapSeconds(timingLine?.BestLapTime) ?? statsBestSeconds;
     const sourceSessionLap = f1TimingLineSessionLap(line);
-    const pos = finiteNumber(line?.Position) ?? finiteNumber(line?.Line) ?? finiteNumber(driver.Line) ?? 99;
-    const gapValue = f1TimingValue(line?.GapToLeader);
-    const intervalValue = f1TimingValue(line?.IntervalToPositionAhead);
+    const pos = useLiveLineOrder
+      ? finiteNumber(line?.Line) ?? finiteNumber(line?.Position) ?? finiteNumber(driver.Line) ?? 99
+      : finiteNumber(line?.Position) ?? finiteNumber(line?.Line) ?? finiteNumber(driver.Line) ?? 99;
+    const gapValue = f1TimingValue(timingLine?.GapToLeader);
+    const intervalValue = f1TimingValue(timingLine?.IntervalToPositionAhead);
     const sectorHistory = sectorHistoryByNumber?.get(number);
     const sessionLap = sectorHistory?.lap != null && (sourceSessionLap == null || sectorHistory.lap > sourceSessionLap)
       ? sectorHistory.lap
       : sourceSessionLap;
     const sectors = f1TimingPrunePrematureSectorSegments({
-      s1: f1TimingPreservedSegments(line, "0", sectorHistory, "s1"),
-      s2: f1TimingPreservedSegments(line, "1", sectorHistory, "s2"),
-      s3: f1TimingPreservedSegments(line, "2", sectorHistory, "s3"),
+      s1: f1TimingPreservedSegments(timingLine, "0", sectorHistory, "s1"),
+      s2: f1TimingPreservedSegments(timingLine, "1", sectorHistory, "s2"),
+      s3: f1TimingPreservedSegments(timingLine, "2", sectorHistory, "s3"),
     });
     const sectorTimes = sectorHistory?.sectorTimes || {
-      s1: f1TimingSectorTime(line?.Sectors?.["0"]),
-      s2: f1TimingSectorTime(line?.Sectors?.["1"]),
-      s3: f1TimingSectorTime(line?.Sectors?.["2"]),
+      s1: f1TimingSectorTime(timingLine?.Sectors?.["0"]),
+      s2: f1TimingSectorTime(timingLine?.Sectors?.["1"]),
+      s3: f1TimingSectorTime(timingLine?.Sectors?.["2"]),
     };
-    const hasPitOutSector = ["s1", "s2", "s3"].some((key) => Array.isArray(sectors[key]) && sectors[key].includes("blue"));
+    // Out-laps start with blue pit-exit segments in S1; blue segments at the
+    // tail of S3 are pit ENTRY on an in-lap and must not read as pit out.
+    const hasPitOutSector = Array.isArray(sectors.s1) && sectors.s1.includes("blue");
+    const statusFlags = f1TimingDriverStatusFlags(line?.Status);
+    const inPit = statusFlags ? statusFlags.inPit : Boolean(line?.InPit);
+    const pitOut = statusFlags ? statusFlags.pitOut : Boolean(line?.PitOut);
+    const knockedOut = Boolean(line?.KnockedOut || statusFlags?.knockedOut);
+    const retired = Boolean(line?.Retired || statusFlags?.retired);
+    const stopped = Boolean(line?.Stopped || statusFlags?.stopped);
     return {
       pos,
       code: String(driver?.Tla || line?.Tla || numberText).toUpperCase(),
       number,
-      last: lastSeconds != null ? formatLapDuration(lastSeconds) : f1TimingValue(line?.LastLapTime),
-      best: bestSeconds != null ? formatLapDuration(bestSeconds) : f1TimingValue(line?.BestLapTime) || f1TimingValue(statsLine?.PersonalBestLapTime),
+      last: lastSeconds != null ? formatLapDuration(lastSeconds) : f1TimingValue(timingLine?.LastLapTime),
+      best: bestSeconds != null ? formatLapDuration(bestSeconds) : f1TimingValue(timingLine?.BestLapTime) || f1TimingValue(timingStatsLine?.PersonalBestLapTime),
       lastLapDuration: lastSeconds,
       bestLapDuration: bestSeconds,
       sessionLap,
-      state: line?.KnockedOut ? "KO" : line?.Retired ? "RETIRED" : line?.PitOut || hasPitOutSector ? "PIT OUT" : line?.InPit ? "IN PIT" : line?.Stopped ? "STOP" : null,
-      retired: Boolean(line?.Retired),
-      knockedOut: Boolean(line?.KnockedOut),
+      state: knockedOut ? "KO"
+        : retired ? "RETIRED"
+        : statusFlags ? (inPit ? "IN PIT" : pitOut ? "PIT OUT" : stopped ? "STOP" : null)
+        : inPit && !hasPitOutSector ? "IN PIT"
+        : pitOut || hasPitOutSector ? "PIT OUT"
+        : inPit ? "IN PIT"
+        : stopped ? "STOP" : null,
+      retired,
+      knockedOut,
       gap: gapValue || (pos === 1 ? "LEADER" : "—"),
       interval: intervalValue || "—",
       trend: "flat",
@@ -4731,9 +4872,9 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
       sectors,
       sectorTimes,
       bestSectorTimes: {
-        s1: f1TimingSectorTime(line?.BestSectors?.["0"]),
-        s2: f1TimingSectorTime(line?.BestSectors?.["1"]),
-        s3: f1TimingSectorTime(line?.BestSectors?.["2"]),
+        s1: f1TimingSectorTime(timingLine?.BestSectors?.["0"]),
+        s2: f1TimingSectorTime(timingLine?.BestSectors?.["1"]),
+        s3: f1TimingSectorTime(timingLine?.BestSectors?.["2"]),
       },
       telemetry: telemetryByNumber.get(number) || {},
       trackPosition: positionByNumber.get(number) || null,
@@ -4751,6 +4892,7 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
     timingAppEntries: sessionData.timingAppEntries?.length || 0,
     timingStatsEntries: sessionData.timingStatsEntries?.length || 0,
     clockEntries: sessionData.clockEntries?.length || 0,
+    sessionInfoEntries: sessionData.sessionInfoEntries?.length || 0,
     sessionDataEntries: sessionData.sessionDataEntries?.length || 0,
     sessionStatusEntries: sessionData.sessionStatusEntries?.length || 0,
     trackStatusEntries: sessionData.trackStatusEntries?.length || 0,
@@ -5223,14 +5365,56 @@ function f1TimingLiveDataWithFeedTime(topic, data, feedUtc) {
   };
 }
 
+const F1_TIMING_LIVE_FEED_LATENCY_MAX_SECONDS = 15;
+const F1_TIMING_LIVE_FEED_LATENCY_SAMPLE_LIMIT = 48;
+// Empirical F1 TV offset between the stream's program-date playhead and the
+// picture on screen; the measured feed latency can exceed it but never shrinks
+// the alignment below this floor.
+const F1_TIMING_LIVE_STREAM_ALIGNMENT_SECONDS = 4.6;
+
+function f1LiveTimingFeedLatencySeconds(samples) {
+  const values = (Array.isArray(samples) ? samples : [])
+    .map((value) => finiteNumber(value))
+    .filter((value) => value != null && value >= 0)
+    .sort((a, b) => a - b);
+  if (!values.length) return 0;
+  const median = values[Math.floor(values.length / 2)];
+  return Math.max(0, Math.min(F1_TIMING_LIVE_FEED_LATENCY_MAX_SECONDS, median));
+}
+
+function f1LiveTimingEntrySeconds(feedUtcMs, nowMs, feedLatencySeconds) {
+  const feedMs = finiteNumber(feedUtcMs);
+  if (feedMs != null) return feedMs / 1000;
+  const latency = Math.max(0, Math.min(F1_TIMING_LIVE_FEED_LATENCY_MAX_SECONDS, finiteNumber(feedLatencySeconds) ?? 0));
+  return Number(nowMs) / 1000 - latency;
+}
+
 function applyF1TimingLiveFeed(topic, payload, feedUtc = "") {
   if (!f1LiveTimingState || !topic) return;
   try {
     const data = f1TimingLiveDataWithFeedTime(String(topic), f1TimingLivePayload(String(topic), payload), feedUtc);
     if (!data || typeof data !== "object") return;
+    const nowMs = Date.now();
+    const feedUtcMs = Date.parse(String(feedUtc || ""));
+    if (Number.isFinite(feedUtcMs) && String(topic) !== "Heartbeat") {
+      const latencySample = (nowMs - feedUtcMs) / 1000;
+      // Deltas beyond any plausible transport latency are clock skew, not latency.
+      if (latencySample >= 0 && latencySample < 30) {
+        const samples = f1LiveTimingState.feedLatencySamples = f1LiveTimingState.feedLatencySamples || [];
+        samples.push(latencySample);
+        if (samples.length > F1_TIMING_LIVE_FEED_LATENCY_SAMPLE_LIMIT) samples.splice(0, samples.length - F1_TIMING_LIVE_FEED_LATENCY_SAMPLE_LIMIT);
+      }
+    }
     const rows = boundedF1TimingLiveEntries(String(topic));
-    rows.push({ time: "", seconds: Date.now() / 1000, data });
-    f1LiveTimingState.lastMessageAt = Date.now();
+    // Entries live on the feed-UTC timeline so video program-date targets map
+    // onto them directly; the max() keeps stamps monotonic when a subscribe
+    // snapshot (arrival-stamped) precedes feed-stamped deltas.
+    const seconds = Math.max(
+      f1LiveTimingEntrySeconds(feedUtcMs, nowMs, f1LiveTimingFeedLatencySeconds(f1LiveTimingState.feedLatencySamples)),
+      finiteNumber(rows.at(-1)?.seconds) ?? -Infinity
+    );
+    rows.push({ time: "", seconds, data });
+    f1LiveTimingState.lastMessageAt = nowMs;
     f1LiveTimingState.lastTopic = String(topic);
   } catch (error) {
     f1LiveTimingState.lastError = "Formula 1 live timing payload could not be parsed.";
@@ -5305,11 +5489,27 @@ function f1LiveTimingCatchUpRemainingSeconds(entriesByTopic = {}, options = {}) 
   const targetUtcMs = Number.isFinite(parsedTargetUtcMs) ? parsedTargetUtcMs : null;
   const targetLatencySeconds = Math.max(0, Math.min(90, Number(options.targetLatencySeconds || 0)));
   const targetSeconds = targetUtcMs != null
-    ? f1TimingArchiveSecondsForUtc({ clockEntries: entriesByTopic.ExtrapolatedClock || [] }, targetUtcMs)
+    ? f1TimingArchiveSecondsForUtc({ clockEntries: entriesByTopic.ExtrapolatedClock || [], archiveStartUtcMs: 0 }, targetUtcMs) - Math.max(f1LiveTimingFeedLatencySeconds(f1LiveTimingState?.feedLatencySamples), F1_TIMING_LIVE_STREAM_ALIGNMENT_SECONDS)
     : Date.now() / 1000 - targetLatencySeconds;
   const remainingSeconds = firstTimingSeconds - targetSeconds;
   if (!Number.isFinite(remainingSeconds) || remainingSeconds <= 0) return null;
   return Math.round(remainingSeconds * 10) / 10;
+}
+
+function resyncF1LiveTiming() {
+  if (f1LiveTimingState) f1LiveTimingState.feedLatencySamples = [];
+  const socket = f1LiveTimingClient?.socket;
+  if (socket) {
+    try {
+      socket.onclose = null;
+      socket.onmessage = null;
+      socket.onerror = null;
+      socket.close();
+    } catch {}
+  }
+  f1LiveTimingClient = null;
+  ensureF1TimingLiveClient().catch(() => {});
+  return { ok: true };
 }
 
 async function ensureF1TimingLiveClient() {
@@ -5376,6 +5576,8 @@ function getF1LiveTimingSnapshot(options = {}) {
     timingAppEntries: entriesByTopic.TimingAppData || [],
     timingStatsEntries: entriesByTopic.TimingStats || [],
     clockEntries: entriesByTopic.ExtrapolatedClock || [],
+    archiveStartUtcMs: 0,
+    sessionInfoEntries: entriesByTopic.SessionInfo || [],
     sessionDataEntries: entriesByTopic.SessionData || [],
     sessionStatusEntries: entriesByTopic.SessionStatus || [],
     trackStatusEntries: entriesByTopic.TrackStatus || [],
@@ -5392,8 +5594,10 @@ function getF1LiveTimingSnapshot(options = {}) {
   const rawTargetUtcMs = options.targetUtcMs ?? options.targetUtc;
   const parsedTargetUtcMs = typeof rawTargetUtcMs === "string" ? Date.parse(rawTargetUtcMs) : Number(rawTargetUtcMs);
   const targetUtcMs = Number.isFinite(parsedTargetUtcMs) ? parsedTargetUtcMs : null;
+  const feedLatencySeconds = f1LiveTimingFeedLatencySeconds(f1LiveTimingState?.feedLatencySamples);
+  const streamAlignmentSeconds = Math.max(feedLatencySeconds, F1_TIMING_LIVE_STREAM_ALIGNMENT_SECONDS);
   const targetSeconds = targetUtcMs != null
-    ? f1TimingArchiveSecondsForUtc(sessionData, targetUtcMs)
+    ? f1TimingArchiveSecondsForUtc(sessionData, targetUtcMs) - streamAlignmentSeconds
     : Date.now() / 1000 - targetLatencySeconds;
   const hasTimingTarget = (targetUtcMs != null && Number.isFinite(targetSeconds)) || Boolean(targetLatencySeconds);
   let parsed = parseF1TimingArchiveRows(sessionData, hasTimingTarget ? targetSeconds : Number.MAX_SAFE_INTEGER, { preserveSectorProgress: true });
@@ -5448,6 +5652,8 @@ function getF1LiveTimingSnapshot(options = {}) {
       signalRCookieAttached: Boolean(f1LiveTimingClient?.signalRCookieAttached),
       targetLatencySeconds,
       targetUtcMs,
+      feedLatencySeconds,
+      streamAlignmentSeconds,
     },
     message: "",
   };
@@ -7672,9 +7878,11 @@ function mergeF1TvStatus(cookies, browserAuthState = {}, subscriptionToken = "")
   const browserSignedIn = Boolean(browserAuthState.signedInSignal && !browserAuthState.loginSignal);
   const tokenReady = Boolean(String(playbackToken || "").trim());
   const browserSession = authCookies.length > 0 || storageAuthKeys.length > 0 || browserCookieNames.length > 0 || browserSignedIn;
+  const subscriptionActive = tokenReady ? true : browserSession ? false : null;
   return {
     authenticated: tokenReady,
     playbackTokenReady: tokenReady,
+    subscriptionActive,
     browserSession,
     cookieCount: cookies.length,
     authCookieNames: Array.from(new Set([...authCookies.map((cookie) => cookie.name), ...browserCookieNames])).sort(),
@@ -7820,19 +8028,21 @@ function openF1TvLoginWindow(event, credentials, options = {}) {
   const automatedCredentialLogin = Boolean(credentials.email && credentials.password && options.mode === "credentials");
 
   return new Promise((resolve) => {
+    const automationStartedAt = Date.now();
     let settled = false;
     let pollTimer = null;
     let credentialTimer = null;
     let credentialAttempts = 0;
     let lastStatus = null;
+    let browserSessionDetectedAt = 0;
     const loginWindow = new BrowserWindow({
       width: 1040,
       height: 820,
       minWidth: 820,
       minHeight: 640,
+      title: "F1 TV Login",
       show: !automatedCredentialLogin,
       skipTaskbar: automatedCredentialLogin,
-      title: "F1 TV Login",
       parent: parent && !parent.isDestroyed() ? parent : undefined,
       modal: false,
       backgroundColor: "#111111",
@@ -7909,7 +8119,11 @@ function openF1TvLoginWindow(event, credentials, options = {}) {
       const browserAuthState = loginWindow.isDestroyed() ? {} : await readF1TvAuthStateFromWebContents(loginWindow.webContents);
       const status = await getF1TvStatusWithBrowserState(browserAuthState).catch(() => ({ authenticated: false }));
       lastStatus = status;
-      if ((status.authenticated || status.browserSession) && !loginWindow.isDestroyed()) {
+      const now = Date.now();
+      if (automatedCredentialLogin && status.browserSession && !browserSessionDetectedAt) browserSessionDetectedAt = now;
+      const browserSessionGraceExpired = Boolean(automatedCredentialLogin && browserSessionDetectedAt && now - browserSessionDetectedAt >= F1TV_LOGIN_TOKEN_GRACE_MS);
+      const automationTimedOut = Boolean(automatedCredentialLogin && now - automationStartedAt >= F1TV_LOGIN_AUTOMATION_TIMEOUT_MS);
+      if ((status.authenticated || (!automatedCredentialLogin && status.browserSession) || browserSessionGraceExpired || automationTimedOut) && !loginWindow.isDestroyed()) {
         loginWindow.close();
       }
     }, 1000);
@@ -8627,6 +8841,17 @@ function f1TvPlaybackMode(options = {}) {
   return /live/i.test(String(options.sessionKind || "")) ? "live" : "replay";
 }
 
+function f1TvSubscriptionIssueFromAttempts(attempts = []) {
+  const text = attempts.map((attempt) => [
+    attempt.resultCode,
+    attempt.message,
+    attempt.errorDescription,
+    attempt.error,
+  ].filter(Boolean).join(" ")).join(" ");
+  if (!/Rights are locked|ACN_2001|subscription|entitlement/i.test(text)) return "";
+  return "F1 TV subscription is not active for this content. Confirm your F1 TV subscription is active, then reconnect F1 TV in Settings.";
+}
+
 function f1TvContentIdFromUrl(targetUrl) {
   const match = String(targetUrl || "").match(/\/detail\/([0-9]+)/i);
   return match ? match[1] : "";
@@ -8780,6 +9005,8 @@ async function resolveF1TvContent(_event, options = {}) {
       : { ...feed, ...streamStatusFields };
   });
 
+  const subscriptionIssueMessage = feeds.length ? "" : f1TvSubscriptionIssueFromAttempts(capture.playEndpointAttempts);
+  const authStatus = subscriptionIssueMessage ? { ...status, subscriptionActive: false } : status;
   const result = {
     ok: feeds.length > 0,
     contentId: resolvedContentId || f1TvContentIdFromUrl(targetUrl) || String(options.contentId || ""),
@@ -8795,14 +9022,15 @@ async function resolveF1TvContent(_event, options = {}) {
     requestSamples: capture.requestSamples.slice(0, 25),
     playEndpointAttempts: capture.playEndpointAttempts.slice(0, 12),
     contentCandidates: capture.contentCandidates.slice(0, 12),
-    authStatus: status,
+    authStatus,
     message: feeds.length
       ? `Resolved ${feeds.length} F1 TV stream${feeds.length === 1 ? "" : "s"}.`
-      : status.authenticated
+      : subscriptionIssueMessage
+        || (status.authenticated
         ? "No playable stream was discovered for the selected F1 TV result. Try pasting the exact F1 TV detail URL."
         : status.browserSession
           ? "F1 TV browser cookies exist, but the playback token is missing. Sign in with email and password in Settings, then retry."
-        : "F1 TV is not connected in this Apexline app profile. MultiViewer login is separate. Connect F1 TV, then load the session again.",
+        : "F1 TV is not connected in this Apexline app profile. MultiViewer login is separate. Connect F1 TV, then load the session again."),
   };
   writePitWallDebugLog("f1tv.resolve.result", {
     ok: result.ok,
@@ -8814,6 +9042,7 @@ async function resolveF1TvContent(_event, options = {}) {
     videoStartSource: manifestTiming.videoStartSource || "",
     playAttemptCount: capture.playEndpointAttempts.length,
     playbackTokenReady: Boolean(status.playbackTokenReady),
+    subscriptionActive: authStatus.subscriptionActive,
     licenseHost: licenseDebug.host,
     licensePathHint: licenseDebug.pathHint,
   });
@@ -8837,6 +9066,7 @@ function sanitizeF1TvDiagnosticResult(result = {}) {
     authStatus: {
       authenticated: Boolean(result.authStatus?.authenticated),
       playbackTokenReady: Boolean(result.authStatus?.playbackTokenReady),
+      subscriptionActive: result.authStatus?.subscriptionActive === false ? false : result.authStatus?.subscriptionActive === true ? true : null,
       browserSession: Boolean(result.authStatus?.browserSession),
       cookieCount: result.authStatus?.cookieCount || 0,
       authCookieNames: result.authStatus?.authCookieNames || [],
@@ -11150,6 +11380,7 @@ ipcMain.handle("pitwall:f1tv:logout", async () => {
 });
 ipcMain.handle("pitwall:data:snapshot", (_event, options = {}) => getPitWallSnapshot(options));
 ipcMain.handle("pitwall:data:liveTiming", (_event, options = {}) => getLiveTimingSnapshot(options));
+ipcMain.handle("pitwall:data:liveTimingResync", () => resyncF1LiveTiming());
 ipcMain.handle("pitwall:data:replayTiming", (_event, options = {}) => getReplayTimingSnapshot(options));
 ipcMain.handle("pitwall:data:replayTimingAvailability", (_event, options = {}) => getReplayTimingAvailability(options));
 ipcMain.handle("pitwall:data:trackMapReplayTiming", (_event, options = {}) => getTrackMapReplayTimingSnapshot(options));

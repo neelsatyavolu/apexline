@@ -10,7 +10,8 @@
   const PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
   const AI_MODEL_OPTIONS = [
     { value: "codex:gpt-5.4-mini", label: "GPT-5.4 mini" },
-    { value: "grok:grok-4.3", label: "Grok 4.3" },
+    { value: "grok:grok-4.5", label: "Grok 4.5" },
+    { value: "grok:grok-4.3", label: "Grok 4.3 (deprecated)" },
     { value: "local", label: "Local MLX" },
   ];
   const VIDEO_QUALITY_OPTIONS = [

@@ -142,8 +142,11 @@ const CODEX_MODELS = [
   { id: "gpt-5.4-mini", label: "GPT-5.4 mini", tier: "" },
 ];
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
-const GROK_MODELS = [{ id: "grok-4.3", label: "Grok 4.3", tier: "" }];
-const DEFAULT_GROK_MODEL = "grok-4.3";
+const GROK_MODELS = [
+  { id: "grok-4.5", label: "Grok 4.5", tier: "" },
+  { id: "grok-4.3", label: "Grok 4.3", tier: "deprecated" },
+];
+const DEFAULT_GROK_MODEL = "grok-4.5";
 const MAX_CAPTURED_STREAMS = 48;
 const NEWS_SOURCES = [
   {
@@ -10531,7 +10534,7 @@ async function askGrok(options = {}) {
     temperature: 0.4,
     max_tokens: 1200,
   };
-  if (model === "grok-4.3") body.reasoning = { effort: "high" };
+  if (model === "grok-4.5" || model === "grok-4.3") body.reasoning = { effort: "high" };
   const raw = await requestJsonPost(GROK_CHAT_COMPLETIONS_URL, body, { Authorization: `Bearer ${tokens.accessToken}` }, AI_PROVIDER_TIMEOUT_MS);
   return normalizeAiResult("grok", grokText(raw), raw, options.task);
 }
@@ -10978,6 +10981,24 @@ function analyticsSessionHasPublishedRows(data = {}) {
   return ["laps", "position", "sessionResult", "stints"].some((key) => finiteNumber(counts[key]) > 0);
 }
 
+function analyticsLeaderboardRequiresOfficialResult(sessionInfo = {}, options = {}) {
+  const label = cleanSessionName([
+    options.sessionKind,
+    options.sessionName,
+    sessionInfo.session_name,
+    sessionInfo.session_type,
+  ].filter(Boolean).join(" "));
+  if (!label || /practice/.test(label)) return false;
+  return /\brace\b|\bsprint\b|qualifying|shootout/.test(label);
+}
+
+function analyticsSessionSatisfiesLeaderboardRequest(data = {}, sessionInfo = {}, options = {}) {
+  if (analyticsSessionIsImmutable(data)) return Array.isArray(data?.drivers) && data.drivers.length > 0;
+  if (!analyticsSessionHasPublishedRows(data)) return false;
+  if (!analyticsLeaderboardRequiresOfficialResult(sessionInfo, options)) return true;
+  return finiteNumber(data?.counts?.sessionResult) > 0;
+}
+
 function analyticsAliasKey(options = {}) {
   const season = String(options.season || new Date().getFullYear()).replace(/[^0-9]/g, "") || String(new Date().getFullYear());
   const meetingKey = finiteNumber(options.meetingKey) || "";
@@ -11131,13 +11152,23 @@ async function buildAnalyticsSessionLeaderboardData(sessionInfo, options = {}) {
   if (!sessionKey) throw new Error("OpenF1 did not return a session key for this selection.");
   const raw = { sessionResult: [], laps: [], stints: [], weather: [] };
   const errors = [];
+  const requiresOfficialResult = analyticsLeaderboardRequiresOfficialResult(sessionInfo, options);
+  let triedTimingFallback = false;
   try {
     const rows = await requestOpenF1AnalyticsWithRetry("sessionResult", { session_key: sessionKey }, { priority: options.priority });
     raw.sessionResult = Array.isArray(rows) ? rows : [];
   } catch (error) {
     errors.push(error?.message || "OpenF1 request failed");
   }
-  if (!raw.sessionResult?.length) {
+  if (!raw.sessionResult?.length && requiresOfficialResult) {
+    triedTimingFallback = true;
+    try {
+      return await buildF1TimingAnalyticsSessionData(sessionInfo, options);
+    } catch (error) {
+      errors.push(`Formula 1 timing fallback unavailable: ${error?.message || "unknown error"}`);
+    }
+  }
+  if (!raw.sessionResult?.length && !requiresOfficialResult) {
     const requests = {
       laps: ["laps", { session_key: sessionKey }],
       stints: ["stints", { session_key: sessionKey }],
@@ -11173,7 +11204,7 @@ async function buildAnalyticsSessionLeaderboardData(sessionInfo, options = {}) {
     drivers: summarizeAnalyticsDrivers(raw, fallback.drivers),
     counts: Object.fromEntries(Object.entries(raw).map(([key, rows]) => [key, rows.length])),
   };
-  if (!hasPublishedRows) {
+  if (!hasPublishedRows && !triedTimingFallback) {
     try {
       return await buildF1TimingAnalyticsSessionData(sessionInfo, options);
     } catch (error) {
@@ -11213,14 +11244,17 @@ function refreshAnalyticsSessionCache({ cacheKey, aliasKey, options = {}, sessio
 async function getAnalyticsSession(options = {}) {
   const leaderboardScope = options.scope === "leaderboard";
   const aliasKey = analyticsAliasKey(options);
+  const cachedDataUsable = (data, sessionInfo = {}) => leaderboardScope
+    ? analyticsSessionSatisfiesLeaderboardRequest(data, sessionInfo, options)
+    : analyticsSessionHasPublishedRows(data);
   const aliasDiskEntry = analyticsSessionDiskEntry([aliasKey], { withMeta: true });
-  if (aliasDiskEntry?.data && analyticsSessionHasPublishedRows(aliasDiskEntry.data)) {
+  if (aliasDiskEntry?.data && cachedDataUsable(aliasDiskEntry.data)) {
     const shouldRefresh = shouldRevalidateAnalyticsCache(aliasDiskEntry.createdAt, aliasDiskEntry.data);
     if (shouldRefresh) refreshAnalyticsSessionCache({ aliasKey, options, cachedData: aliasDiskEntry.data });
     return cachedAnalyticsSessionData(aliasDiskEntry.data, "disk", aliasDiskEntry.createdAt, shouldRefresh);
   }
   const staleAliasEntry = analyticsSessionDiskEntry([aliasKey], { allowStale: true, withMeta: true });
-  if (staleAliasEntry?.data && analyticsSessionHasPublishedRows(staleAliasEntry.data)) {
+  if (staleAliasEntry?.data && cachedDataUsable(staleAliasEntry.data)) {
     const shouldRefresh = shouldRevalidateAnalyticsCache(staleAliasEntry.createdAt, staleAliasEntry.data);
     if (shouldRefresh) refreshAnalyticsSessionCache({ aliasKey, options, cachedData: staleAliasEntry.data });
     return cachedAnalyticsSessionData(staleAliasEntry.data, "disk", staleAliasEntry.createdAt, shouldRefresh);
@@ -11230,7 +11264,7 @@ async function getAnalyticsSession(options = {}) {
     sessionInfo = await resolveAnalyticsSession(options);
   } catch (error) {
     const diskData = analyticsSessionDiskEntry([aliasKey]);
-    if (diskData && /rate limit|HTTP 429/i.test(error?.message || "")) return diskData;
+    if (diskData && cachedDataUsable(diskData) && /rate limit|HTTP 429/i.test(error?.message || "")) return diskData;
     throw error;
   }
   const sessionKey = finiteNumber(sessionInfo?.session_key);
@@ -11239,11 +11273,11 @@ async function getAnalyticsSession(options = {}) {
   if (leaderboardScope) {
     const scopedCacheKey = `leaderboard:${cacheKey}`;
     const scopedCached = analyticsSessionCache.get(scopedCacheKey);
-    if (scopedCached && Date.now() - scopedCached.createdAt < ANALYTICS_CACHE_MS && analyticsSessionHasPublishedRows(scopedCached.data)) {
+    if (scopedCached && Date.now() - scopedCached.createdAt < ANALYTICS_CACHE_MS && cachedDataUsable(scopedCached.data, sessionInfo)) {
       return cachedAnalyticsSessionData(scopedCached.data, "memory", new Date(scopedCached.createdAt).toISOString());
     }
     const data = await buildAnalyticsSessionLeaderboardData(sessionInfo, options);
-    if (analyticsSessionHasPublishedRows(data)) {
+    if (cachedDataUsable(data, sessionInfo)) {
       analyticsSessionCache.set(scopedCacheKey, { createdAt: Date.now(), data });
       trimAnalyticsSessionMemoryCache();
     }

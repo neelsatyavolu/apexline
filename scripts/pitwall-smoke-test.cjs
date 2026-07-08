@@ -986,7 +986,7 @@ const analyticsCacheSandbox = vm.runInNewContext(`(() => {
 assert.equal(analyticsCacheSandbox.analyticsSessionHasPublishedRows({ source: "Formula 1 livetiming", counts: { laps: 20, position: 20 } }), false, "Cached Formula 1 timing recap rows should not block a fresh OpenF1 recap load");
 assert.equal(analyticsCacheSandbox.analyticsSessionHasPublishedRows({ source: "OpenF1", counts: { laps: 20, position: 20 } }), true, "Published OpenF1 rows should satisfy session cache checks");
 assert.doesNotMatch(mainProcess, /const hasPublishedRows = \["drivers"/, "Roster-only OpenF1 responses should not block the Formula 1 timing fallback");
-assert.match(mainProcess, /analyticsSessionHasPublishedRows[\s\S]*\["laps", "position", "sessionResult", "stints"\][\s\S]*aliasDiskEntry\?\.data && analyticsSessionHasPublishedRows/, "Roster-only OpenF1 analytics cache entries should not block the Formula 1 timing fallback");
+assert.match(mainProcess, /analyticsSessionHasPublishedRows[\s\S]*\["laps", "position", "sessionResult", "stints"\][\s\S]*const cachedDataUsable[\s\S]*aliasDiskEntry\?\.data && cachedDataUsable/, "Roster-only OpenF1 analytics cache entries should not block the Formula 1 timing fallback");
 assert.match(mainProcess, /f1TimingArchiveIdentityFromOptions[\s\S]*raceName[\s\S]*raceStartsAt[\s\S]*resolveF1TimingArchiveBase\(optionIdentity\.meeting, optionIdentity\.session\)/, "Formula 1 timing fallback should resolve archives from the selected schedule race identity before trusting OpenF1 meeting metadata");
 assert.doesNotMatch(mainProcess, /if \(shouldPreferF1TimingAnalytics\(options\)\)/, "Schedule-identified weekend recaps should ask OpenF1 before trying Formula 1 timing");
 assert.doesNotMatch(mainProcess, /analyticsArchiveAliasKey/, "Formula 1 archive cache aliases should not shadow OpenF1 recap data");
@@ -2890,6 +2890,108 @@ assert.equal(qualifyingSummaryRows[0].resultDuration, 79.1, "Qualifying result d
 assert.equal(qualifyingSummaryRows[0].gapToLeader, 0, "Qualifying gap should use the latest completed segment");
 assert.equal(qualifyingSummaryRows[0].laps, 18, "Session result lap counts should populate recap rows even when lap rows are sparse");
 
+const leaderboardAnalyticsSandbox = vm.runInNewContext(`(() => {
+  let fallbackCalls = 0;
+  async function requestOpenF1AnalyticsWithRetry(endpoint) {
+    if (endpoint === "sessionResult") return [];
+    throw new Error("Unexpected endpoint " + endpoint);
+  }
+  async function requestOpenF1AnalyticsBatch() {
+    return {
+      raw: {
+        laps: [
+          { driver_number: 6, lap_number: 1, lap_duration: 89.276, is_pit_out_lap: false },
+          { driver_number: 30, lap_number: 1, lap_duration: 89.300, is_pit_out_lap: false },
+        ],
+        stints: [],
+      },
+      errors: [],
+    };
+  }
+  function readFallbackPitWallData() {
+    return { drivers: [
+      { code: "HAD", num: 6, name: "Isack Hadjar", color: "var(--accent)" },
+      { code: "LAW", num: 30, name: "Liam Lawson", color: "var(--accent)" },
+      { code: "LEC", num: 16, name: "Charles Leclerc", color: "var(--accent)" },
+    ] };
+  }
+  async function buildF1TimingAnalyticsSessionData(sessionInfo) {
+    fallbackCalls += 1;
+    return {
+      source: "Formula 1 livetiming",
+      session: { key: sessionInfo.session_key, name: sessionInfo.session_name },
+      drivers: [{ code: "LEC", position: 1, resultDuration: 88.1, fastestLap: 88.1, laps: 12 }],
+      counts: { drivers: 1, laps: 1, sessionResult: 0 },
+    };
+  }
+  ${[
+    "teamAbbr",
+    "compactText",
+    "cleanSessionName",
+    "parseOpenDrivers",
+    "finiteNumber",
+    "numberList",
+    "positiveDuration",
+    "sessionResultDuration",
+    "sessionResultGap",
+    "average",
+    "minMetric",
+    "maxLapSpeed",
+    "lapDurationSlope",
+    "analyticsDriverCode",
+    "median",
+    "lapSpread",
+    "cleanLapTrace",
+    "tyreAgeForLap",
+    "tyreAgeCurve",
+    "racecraftForDriver",
+    "summarizeAnalyticsDrivers",
+    "analyticsSessionIsImmutable",
+    "analyticsSessionHasPublishedRows",
+    "analyticsLeaderboardRequiresOfficialResult",
+    "analyticsSessionSatisfiesLeaderboardRequest",
+    "buildAnalyticsSessionLeaderboardData",
+  ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+  return { analyticsSessionSatisfiesLeaderboardRequest, buildAnalyticsSessionLeaderboardData, get fallbackCalls() { return fallbackCalls; } };
+})()`);
+assert.equal(
+  leaderboardAnalyticsSandbox.analyticsSessionSatisfiesLeaderboardRequest(
+    { source: "OpenF1", counts: { sessionResult: 0, laps: 36, stints: 12 }, drivers: [{ code: "HAD" }] },
+    { session_name: "Qualifying", session_type: "Qualifying" },
+    { sessionKind: "Qualifying" }
+  ),
+  false,
+  "Leaderboard cache should reject OpenF1 qualifying data when official session results are absent"
+);
+assert.equal(
+  leaderboardAnalyticsSandbox.analyticsSessionSatisfiesLeaderboardRequest(
+    { source: "Formula 1 livetiming", counts: { sessionResult: 0, laps: 1 }, drivers: [{ code: "LEC" }] },
+    { session_name: "Qualifying", session_type: "Qualifying" },
+    { sessionKind: "Qualifying" }
+  ),
+  true,
+  "Leaderboard cache should accept Formula 1 timing fallback rows for qualifying"
+);
+assert.equal(
+  leaderboardAnalyticsSandbox.analyticsSessionSatisfiesLeaderboardRequest(
+    { source: "OpenF1", counts: { sessionResult: 0, laps: 36, stints: 12 }, drivers: [{ code: "RUS" }] },
+    { session_name: "Practice 1", session_type: "Practice" },
+    { sessionKind: "Practice 1" }
+  ),
+  true,
+  "Leaderboard cache should still accept OpenF1 lap data for practice sessions"
+);
+leaderboardAnalyticsSandbox.buildAnalyticsSessionLeaderboardData({
+  session_key: 4242,
+  meeting_key: 99,
+  session_name: "Qualifying",
+  session_type: "Qualifying",
+}, { sessionKind: "Qualifying" }).then((data) => {
+  assert.equal(data.source, "Formula 1 livetiming", "Leaderboard-scoped qualifying should fall back to Formula 1 timing when OpenF1 session_result is empty");
+  assert.deepEqual(JSON.parse(JSON.stringify(data.drivers.map((row) => row.code))), ["LEC"], "Leaderboard-scoped qualifying should not expose OpenF1 lap-only order as official results");
+  assert.equal(leaderboardAnalyticsSandbox.fallbackCalls, 1, "Qualifying leaderboard fallback should be attempted once");
+});
+
 const richAnalyticsRows = analyticsSandbox.summarizeAnalyticsDrivers({
   drivers: [
     { driver_number: 44, name_acronym: "HAM", full_name: "Lewis Hamilton", team_name: "Ferrari" },
@@ -3409,7 +3511,8 @@ assert.match(mainProcess, /analyticsCacheFingerprint/, "Session analytics should
 assert.match(mainProcess, /analyticsSessionDiskEntry\(\[cacheKey, aliasKey\], \{ allowStale: true \}\)/, "Session analytics should return cached OpenF1 session data immediately while checking for updates later");
 assert.match(mainProcess, /function buildAnalyticsSessionLeaderboardData/, "Session analytics should expose a fast leaderboard-only loader for completed weekend sessions");
 assert.match(mainProcess, /scope === "leaderboard"[\s\S]*buildAnalyticsSessionLeaderboardData/, "Leaderboard scoped analytics requests should avoid the slower full-session analytics path");
-assert.match(mainProcess, /buildAnalyticsSessionLeaderboardData[\s\S]*sessionResult[\s\S]*if \(!raw\.sessionResult\?\.length\)/, "Leaderboard scoped analytics should use official session results before fetching heavier lap detail");
+assert.match(mainProcess, /buildAnalyticsSessionLeaderboardData[\s\S]*analyticsLeaderboardRequiresOfficialResult[\s\S]*requestOpenF1AnalyticsWithRetry\("sessionResult"[\s\S]*buildF1TimingAnalyticsSessionData[\s\S]*!requiresOfficialResult[\s\S]*requestOpenF1AnalyticsBatch/, "Leaderboard scoped analytics should use official session results before fetching heavier lap detail");
+assert.match(mainProcess, /getAnalyticsSession[\s\S]*analyticsSessionSatisfiesLeaderboardRequest/, "Leaderboard scoped analytics should not return cached classification data that lacks official session results");
 assert.match(mainProcess, /resolveAnalyticsSession[\s\S]*options\.round[\s\S]*meetings[\s\S]*meeting_key/, "Leaderboard analytics should resolve direct weekend round requests without waiting for the renderer library");
 assert.match(mainProcess, /OpenF1 rate limit reached/, "Session analytics should report OpenF1 rate limits without exposing raw URLs");
 assert.match(mainProcess, /hasPublishedRows/, "Session analytics should explain when OpenF1 has not published rows yet");
@@ -4161,6 +4264,7 @@ const weekendRecapSandbox = vm.runInNewContext(`(() => {
     "sessionCountdownState",
     "stableRandomValue",
     "pendingSessionRows",
+    "sessionRequiresOfficialResult",
     "sessionResultRows",
   ].map((name) => extractNamedFunction(source["Weekend.jsx"], name)).join("\n")}
   return { sessionCountdownState, sessionResultRows };
@@ -4183,6 +4287,16 @@ const recapRows = weekendRecapSandbox.sessionResultRows({ byCode: {} }, {
 }, []);
 assert.deepEqual(Array.from(recapRows, (row) => row.code), ["HAM", "NOR"], "Weekend recap should prefer official session-result order over fastest-lap order");
 assert.equal(recapRows[0].time, "1:19.100", "Weekend recap should show selected session result times");
+const unpublishedQualifyingRows = weekendRecapSandbox.sessionResultRows({ byCode: {} }, {
+  source: "OpenF1",
+  session: { name: "Qualifying", type: "Qualifying" },
+  counts: { sessionResult: 0, laps: 36, stints: 12 },
+  drivers: [
+    { code: "HAD", name: "Isack Hadjar", fastestLap: 89.276, laps: 4, stints: [{ compound: "soft" }] },
+    { code: "LAW", name: "Liam Lawson", fastestLap: 89.300, laps: 6, stints: [{ compound: "soft" }] },
+  ],
+}, [], { kind: "Qualifying", status: "done", startsAt: "2026-07-04T15:00:00Z" });
+assert.equal(unpublishedQualifyingRows.length, 0, "Weekend qualifying recap should hide OpenF1 lap-only rows until official results or F1 timing fallback are available");
 const practiceRecapRows = weekendRecapSandbox.sessionResultRows({ byCode: {} }, {
   session: { name: "Practice 1", type: "Practice" },
   drivers: [

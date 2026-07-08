@@ -318,6 +318,12 @@
     return options?.sameLap && delta === 0 ? "SAME LAP" : "";
   }
 
+  function sessionRequiresOfficialResult(sessionLabel) {
+    const text = raceMatchText(sessionLabel);
+    if (!text || text.includes("practice")) return false;
+    return /\brace\b|\bsprint\b|qualifying|shootout/.test(text);
+  }
+
   function sessionResultRows(D, analytics, fallbackRows, selectedSession, options) {
     if (options?.loading) return [];
     if (!sessionHasStarted(selectedSession)) return pendingSessionRows(D, selectedSession, fallbackRows);
@@ -328,7 +334,7 @@
       const usePracticeLapOrder = /practice/.test(sessionLabel);
       const useLapOrder = /practice|qualifying/.test(sessionLabel);
       const sessionResultCount = Number(analytics?.counts?.sessionResult);
-      if (useRaceClassification && Number.isFinite(sessionResultCount) && sessionResultCount <= 0) return [];
+      if (!/formula 1/i.test(String(analytics?.source || "")) && sessionRequiresOfficialResult(sessionLabel) && Number.isFinite(sessionResultCount) && sessionResultCount <= 0) return [];
       const ordered = drivers.slice().sort((a, b) => {
         const aMetric = resultMetric(a.resultDuration, a.fastestLap);
         const bMetric = resultMetric(b.resultDuration, b.fastestLap);

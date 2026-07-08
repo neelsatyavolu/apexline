@@ -33,7 +33,12 @@ assert.match(mainProcess, /Past results at this track/, "Projection prompts shou
 assert.match(mainProcess, /Driver skill overall/, "Projection prompts should include overall driver skill");
 assert.match(mainProcess, /The model decides how to weigh these sources/, "Projection prompts should leave source weighting to the model");
 assert.match(mainProcess, /effort:\s*model === "gpt-5\.4-mini"\s*\?\s*"high"/, "GPT 5.4 mini should use high reasoning effort");
-assert.match(mainProcess, /model === "grok-4\.3"[\s\S]*body\.reasoning\s*=\s*\{\s*effort:\s*"high"\s*\}/, "Grok 4.3 should use high reasoning effort");
+assert.match(mainProcess, /id: "grok-4\.5"/, "AI model list should include Grok 4.5");
+assert.match(mainProcess, /DEFAULT_GROK_MODEL = "grok-4\.5"/, "Default Grok model should be Grok 4.5");
+assert.match(mainProcess, /id: "grok-4\.3"[\s\S]*tier: "deprecated"/, "Grok 4.3 should remain available but marked deprecated");
+assert.match(mainProcess, /model === "grok-4\.5" \|\| model === "grok-4\.3"[\s\S]*body\.reasoning\s*=\s*\{\s*effort:\s*"high"\s*\}/, "Grok 4.5 and deprecated Grok 4.3 should use high reasoning effort");
+assert.match(settings, /Grok 4\.5/, "Settings should show Grok 4.5 as a model option");
+assert.match(settings, /Grok 4\.3 \(deprecated\)/, "Settings should show Grok 4.3 as deprecated");
 assert.match(mainProcess, /getPreferredAiSelection\(\)/, "Daily AI projections should use the persisted preferred AI model");
 assert.match(mainProcess, /requestCodexResponsesStream/, "Codex OAuth should use the streaming Codex responses contract");
 assert.match(mainProcess, /instructions:\s*AI_SYSTEM_PROMPT/, "Codex OAuth should send system guidance as top-level instructions");

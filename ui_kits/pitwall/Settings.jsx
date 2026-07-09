@@ -6,10 +6,13 @@
   const AI_MODEL_STORAGE = "pw-ai-model";
   const SYNC_STORAGE_KEY = "pw-sync-settings";
   const DEFAULT_WORLD_SYNC_TARGET = 36;
-  const DEFAULT_AI_MODEL = "codex:gpt-5.4-mini";
+  const DEFAULT_AI_MODEL = "codex:gpt-5.5";
   const PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
   const AI_MODEL_OPTIONS = [
-    { value: "codex:gpt-5.4-mini", label: "GPT-5.4 mini" },
+    { value: "codex:gpt-5.6-sol", label: "GPT-5.6 Sol" },
+    { value: "codex:gpt-5.6-terra", label: "GPT-5.6 Terra" },
+    { value: "codex:gpt-5.6-luna", label: "GPT-5.6 Luna" },
+    { value: "codex:gpt-5.5", label: "GPT-5.5" },
     { value: "grok:grok-4.5", label: "Grok 4.5" },
     { value: "grok:grok-4.3", label: "Grok 4.3 (deprecated)" },
     { value: "local", label: "Local MLX" },
@@ -223,6 +226,8 @@
     });
     const [oauthStatus, setOauthStatus] = React.useState({ codexConnected: false, grokConnected: false });
     const [oauthBusy, setOauthBusy] = React.useState("");
+    const [oauthCode, setOauthCode] = React.useState("");
+    const [oauthCodeBusy, setOauthCodeBusy] = React.useState(false);
     const [keyStatus, setKeyStatus] = React.useState("");
     const [f1Email, setF1Email] = React.useState("");
     const [f1Password, setF1Password] = React.useState("");
@@ -467,10 +472,12 @@
         return;
       }
       setOauthBusy(provider);
-      setKeyStatus(`Opening ${providerLabel(provider)} sign-in...`);
+      setOauthCode("");
+      setKeyStatus(`Opening ${providerLabel(provider)} sign-in… paste the code from the browser if asked.`);
       try {
         const status = await auth.authStart(provider);
         setOauthStatus(status || { codexConnected: false, grokConnected: false });
+        setOauthCode("");
         setKeyStatus(`${providerLabel(provider)} connected`);
         refreshConnections();
         setTimeout(() => setKeyStatus(""), 1800);
@@ -478,6 +485,29 @@
         setKeyStatus(error.message || `Could not connect ${providerLabel(provider)}`);
       } finally {
         setOauthBusy("");
+        setOauthCodeBusy(false);
+      }
+    }
+
+    async function submitOAuthCode(provider) {
+      const auth = aiAuth();
+      if (!auth?.authSubmitCode) {
+        setKeyStatus("Open the macOS app to paste an OAuth code");
+        return;
+      }
+      const code = oauthCode.trim();
+      if (!code) {
+        setKeyStatus("Paste the authorization code from the browser first");
+        return;
+      }
+      setOauthCodeBusy(true);
+      setKeyStatus(`Submitting ${providerLabel(provider)} code…`);
+      try {
+        await auth.authSubmitCode(provider, code);
+        setKeyStatus("Code accepted — finishing sign-in…");
+      } catch (error) {
+        setKeyStatus(error.message || `Could not submit ${providerLabel(provider)} code`);
+        setOauthCodeBusy(false);
       }
     }
 
@@ -598,6 +628,25 @@
                     <Badge tone={oauthStatus.grokConnected ? "success" : "neutral"} dot>{oauthStatus.grokConnected ? "Active" : "OAuth"}</Badge>
                     <Button variant={oauthStatus.grokConnected ? "ghost" : "secondary"} disabled={oauthBusy === "grok"} onClick={() => oauthStatus.grokConnected ? disconnectOAuthProvider("grok") : connectOAuthProvider("grok")}>{oauthStatus.grokConnected ? "Disconnect" : "Connect"}</Button>
                   </div>
+                  {oauthBusy && (
+                    <div className="friends-add-form" style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "end" }}>
+                      <Input
+                        label="Authorization code"
+                        value={oauthCode}
+                        placeholder="Paste code or full callback URL from the browser"
+                        onChange={(e) => setOauthCode(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            submitOAuthCode(oauthBusy);
+                          }
+                        }}
+                      />
+                      <Button variant="secondary" disabled={oauthCodeBusy || !oauthCode.trim()} onClick={() => submitOAuthCode(oauthBusy)}>
+                        {oauthCodeBusy ? "Submitting…" : "Submit code"}
+                      </Button>
+                    </div>
+                  )}
                   {keyStatus && <Badge tone="success">{keyStatus}</Badge>}
                 </div>
               </Card>

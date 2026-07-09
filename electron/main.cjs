@@ -137,9 +137,10 @@ const GROK_TOKEN_URL = "https://auth.x.ai/oauth2/token";
 const GROK_CHAT_COMPLETIONS_URL = "https://api.x.ai/v1/chat/completions";
 const GROK_SCOPE = "openid profile email offline_access grok-cli:access api:access";
 const CODEX_MODELS = [
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", tier: "" },
+  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", tier: "" },
+  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", tier: "" },
   { id: "gpt-5.5", label: "GPT-5.5", tier: "" },
-  { id: "gpt-5.4", label: "GPT-5.4", tier: "" },
-  { id: "gpt-5.4-mini", label: "GPT-5.4 mini", tier: "" },
 ];
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
 const GROK_MODELS = [
@@ -1496,11 +1497,11 @@ async function refreshCodexTokens(refreshToken, accountId = "") {
   };
 }
 
-async function exchangeGrokCode(code, verifier) {
+async function exchangeGrokCode(code, verifier, redirectUri = GROK_REDIRECT_URI) {
   const json = await requestFormPost(GROK_TOKEN_URL, new URLSearchParams({
     grant_type: "authorization_code",
     code,
-    redirect_uri: GROK_REDIRECT_URI,
+    redirect_uri: redirectUri,
     client_id: GROK_CLIENT_ID,
     code_verifier: verifier,
   }));
@@ -1525,15 +1526,45 @@ async function refreshGrokTokens(refreshToken) {
   };
 }
 
+function parseOAuthCodeInput(value, expectedState = "") {
+  const text = String(value || "").trim();
+  if (!text) throw new Error("Paste the authorization code from the sign-in page.");
+
+  const asUrl = (() => {
+    try {
+      if (/^https?:\/\//i.test(text) || text.startsWith("http://") || text.includes("://") || text.includes("?code=")) {
+        return new URL(text.includes("://") ? text : `http://local.invalid/${text.replace(/^\//, "")}`);
+      }
+    } catch {}
+    return null;
+  })();
+
+  if (asUrl) {
+    const error = asUrl.searchParams.get("error");
+    if (error) throw new Error(`OAuth failed: ${error}`);
+    const code = asUrl.searchParams.get("code");
+    const state = asUrl.searchParams.get("state");
+    if (code) {
+      if (expectedState && state && state !== expectedState) throw new Error("OAuth state mismatch.");
+      return code;
+    }
+  }
+
+  const bare = text.replace(/\s+/g, "");
+  if (bare.length < 8) throw new Error("That does not look like a valid authorization code.");
+  return bare;
+}
+
 function waitForOAuthCallback(redirectUri, expectedState) {
-  return new Promise((resolve, reject) => {
+  let settled = false;
+  let finish = () => {};
+  const promise = new Promise((resolve, reject) => {
     const redirect = new URL(redirectUri);
-    let settled = false;
-    const finish = (error, code) => {
+    finish = (error, code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      server.close(() => {});
+      try { server.close(() => {}); } catch {}
       if (error) reject(error);
       else resolve(code);
     };
@@ -1561,11 +1592,23 @@ function waitForOAuthCallback(redirectUri, expectedState) {
       res.end("<h1>Apexline sign-in complete</h1><p>You can close this tab and return to Apexline.</p>");
       finish(null, code);
     });
-    const timer = setTimeout(() => finish(new Error("OAuth sign-in timed out.")), 5 * 60 * 1000);
-    server.once("error", finish);
-    server.listen(Number(redirect.port), redirect.hostname);
+    const timer = setTimeout(() => finish(new Error("OAuth sign-in timed out. Paste the authorization code from the browser if the page showed one.")), 5 * 60 * 1000);
+    server.once("error", (error) => finish(error instanceof Error ? error : new Error(String(error))));
+    const port = Number(redirect.port);
+    server.listen(port || 0, redirect.hostname || "127.0.0.1");
   });
+  return {
+    promise,
+    injectCode(code) {
+      finish(null, code);
+    },
+    cancel(error) {
+      finish(error instanceof Error ? error : new Error(String(error || "OAuth cancelled.")));
+    },
+  };
 }
+
+let pendingAiOAuth = null;
 
 async function readOAuthSession(provider) {
   const raw = await getSecret(provider);
@@ -1621,24 +1664,54 @@ async function getAiAuthStatus() {
 async function startAiOAuth(provider) {
   const target = String(provider || "").toLowerCase();
   if (target !== "codex" && target !== "grok") throw new Error("Unsupported AI OAuth provider");
+  if (pendingAiOAuth) {
+    throw new Error(`Finish or wait for the in-progress ${pendingAiOAuth.provider} sign-in first.`);
+  }
   const pkce = generatePkce();
   const redirectUri = target === "codex" ? CODEX_REDIRECT_URI : GROK_REDIRECT_URI;
   const authorizeUrl = target === "codex"
     ? buildCodexAuthorizeUrl(pkce.challenge, pkce.state)
     : buildGrokAuthorizeUrl(pkce.challenge, pkce.state);
-  const codePromise = waitForOAuthCallback(redirectUri, pkce.state);
-  await shell.openExternal(authorizeUrl);
-  const code = await codePromise;
-  const tokens = target === "codex"
-    ? await exchangeCodexCode(code, pkce.verifier)
-    : await exchangeGrokCode(code, pkce.verifier);
-  await writeOAuthSession(target, tokens);
-  return getAiAuthStatus();
+  const wait = waitForOAuthCallback(redirectUri, pkce.state);
+  pendingAiOAuth = {
+    provider: target,
+    state: pkce.state,
+    redirectUri,
+    injectCode: wait.injectCode,
+    cancel: wait.cancel,
+  };
+  try {
+    await shell.openExternal(authorizeUrl);
+    const code = await wait.promise;
+    const tokens = target === "codex"
+      ? await exchangeCodexCode(code, pkce.verifier)
+      : await exchangeGrokCode(code, pkce.verifier, redirectUri);
+    await writeOAuthSession(target, tokens);
+    return getAiAuthStatus();
+  } finally {
+    if (pendingAiOAuth?.provider === target) pendingAiOAuth = null;
+  }
+}
+
+async function submitAiOAuthCode(provider, codeInput) {
+  const target = String(provider || "").toLowerCase();
+  if (target !== "codex" && target !== "grok") throw new Error("Unsupported AI OAuth provider");
+  const pending = pendingAiOAuth;
+  if (!pending || pending.provider !== target) {
+    throw new Error("No sign-in in progress. Click Connect first, then paste the code from the browser.");
+  }
+  const code = parseOAuthCodeInput(codeInput, pending.state);
+  pending.injectCode(code);
+  return { ok: true, provider: target };
 }
 
 async function disconnectAiOAuth(provider) {
   const target = String(provider || "").toLowerCase();
   if (target !== "codex" && target !== "grok") throw new Error("Unsupported AI OAuth provider");
+  if (pendingAiOAuth?.provider === target) {
+    pendingAiOAuth.cancel(new Error("Sign-in cancelled."));
+    pendingAiOAuth = null;
+  }
   await deleteSecret(target);
   return getAiAuthStatus();
 }
@@ -10442,8 +10515,8 @@ function responsesBody(model, options = {}) {
     },
     max_output_tokens: 900,
   };
-  if (/^gpt-5\.(4|5)/.test(model)) {
-    body.reasoning = { effort: model === "gpt-5.4-mini" ? "high" : "low" };
+  if (/^gpt-5\.(5|6)/.test(model)) {
+    body.reasoning = { effort: "low" };
     delete body.max_output_tokens;
   }
   return body;
@@ -10465,7 +10538,7 @@ function codexResponsesBody(model, options = {}) {
         schema: task.schema,
       },
     },
-    reasoning: { effort: model === "gpt-5.4-mini" ? "high" : "low" },
+    reasoning: { effort: "low" },
     store: false,
     stream: true,
   };
@@ -11420,6 +11493,7 @@ ipcMain.handle("pitwall:data:replayTimingAvailability", (_event, options = {}) =
 ipcMain.handle("pitwall:data:trackMapReplayTiming", (_event, options = {}) => getTrackMapReplayTimingSnapshot(options));
 ipcMain.handle("pitwall:ai:authStatus", () => getAiAuthStatus());
 ipcMain.handle("pitwall:ai:authStart", (_event, provider) => startAiOAuth(provider));
+ipcMain.handle("pitwall:ai:authSubmitCode", (_event, provider, code) => submitAiOAuthCode(provider, code));
 ipcMain.handle("pitwall:ai:authDisconnect", (_event, provider) => disconnectAiOAuth(provider));
 ipcMain.handle("pitwall:ai:ask", (_event, options = {}) => askConfiguredAi(options));
 ipcMain.handle("pitwall:analytics:library", (_event, options = {}) => getF1TvLibrary(options));

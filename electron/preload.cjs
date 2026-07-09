@@ -77,6 +77,7 @@ contextBridge.exposeInMainWorld("pitwall", {
   ai: {
     authStatus: () => ipcRenderer.invoke("pitwall:ai:authStatus"),
     authStart: (provider) => ipcRenderer.invoke("pitwall:ai:authStart", provider),
+    authSubmitCode: (provider, code) => ipcRenderer.invoke("pitwall:ai:authSubmitCode", provider, code),
     authDisconnect: (provider) => ipcRenderer.invoke("pitwall:ai:authDisconnect", provider),
     preferredModel: {
       get: () => ipcRenderer.invoke("pitwall:ai:preferredModel:get"),

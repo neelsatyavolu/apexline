@@ -1,6 +1,6 @@
 {
   "name": "apexline",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "private": true,
   "description": "Apexline macOS F1 companion app",
   "main": "electron/main.cjs",
@@ -10,6 +10,9 @@
     "icon:app": "node scripts/generate-app-icon.cjs",
     "package:mac": "node scripts/build-renderer.cjs && node scripts/package-macos.cjs",
     "package:mac:vmp": "node scripts/build-renderer.cjs && PITWALL_CASTLABS_VMP=1 node scripts/package-macos.cjs",
+    "package:mac:signed": "bash scripts/release-macos.sh --no-notarize --skip-feed",
+    "package:mac:release": "bash scripts/release-macos.sh --skip-feed",
+    "release:mac": "bash scripts/release-macos.sh",
     "release:update-feed": "node scripts/prepare-vercel-update.cjs",
     "start": "node scripts/build-renderer.cjs && electron .",
     "dev": "electron .",
@@ -34,7 +37,8 @@
     "electron": "github:castlabs/electron-releases#v39.1.0+wvcus"
   },
   "apexline": {
-    "updateBaseUrl": "https://apexline.io"
+    "updateBaseUrl": "https://apexline.io",
+    "bundleId": "io.apexline.app"
   },
   "pitwall": {
     "updateBaseUrl": "https://apexline.io"

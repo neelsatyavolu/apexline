@@ -14,8 +14,6 @@
     { value: "codex:gpt-5.6-luna", label: "GPT-5.6 Luna" },
     { value: "codex:gpt-5.5", label: "GPT-5.5" },
     { value: "grok:grok-4.5", label: "Grok 4.5" },
-    { value: "grok:grok-4.3", label: "Grok 4.3 (deprecated)" },
-    { value: "local", label: "Local MLX" },
   ];
   const VIDEO_QUALITY_OPTIONS = [
     { value: "max", label: "Max" },
@@ -655,7 +653,7 @@
                 <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
                   <SegmentedControl value={model} onChange={setModel} accent options={AI_MODEL_OPTIONS} />
                   <span style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
-                    {model === "local" ? "Lightweight on-device fallback — basic detection only, no key needed." : "Structured JSON output mode · teaching system prompt enabled."}
+                    Structured JSON output mode · teaching system prompt enabled.
                   </span>
                 </div>
               </Card>

@@ -22,8 +22,10 @@ helpers live in `scripts`.
 
 - Build renderer: `/opt/homebrew/bin/npm run build`
 - Run smoke checks: `/opt/homebrew/bin/npm test`
-- Package macOS app: `/opt/homebrew/bin/npm run package:mac`
-- Package with CastLabs VMP signing: `/opt/homebrew/bin/npm run package:mac:vmp`
+- Package macOS app (ad-hoc sign): `/opt/homebrew/bin/npm run package:mac`
+- Package with CastLabs VMP (ad-hoc codesign): `/opt/homebrew/bin/npm run package:mac:vmp`
+- Official signed + notarized release build + update feed:
+  `/opt/homebrew/bin/npm run release:mac`
 - Launch dev app: `/opt/homebrew/bin/npm run dev`
 
 ## Public Site and Updates
@@ -37,22 +39,42 @@ helpers live in `scripts`.
   `apexline.updateBaseUrl`. Keep it aligned with the public Vercel site before
   packaging. The legacy `pitwall.updateBaseUrl` key is still read for older
   packaged builds.
+- Production bundle ID: `io.apexline.app` (`package.json` → `apexline.bundleId`).
 - Current update feed path:
   `updates-site/public/updates/darwin/arm64/releases.json`.
 - Current macOS artifact path pattern:
   `updates-site/public/updates/darwin/arm64/Apexline-<version>-mac-arm64.zip`.
-- To publish a new update: bump `package.json` version, run
-  `/opt/homebrew/bin/npm run package:mac:vmp`, run
-  `/opt/homebrew/bin/npm run release:update-feed`, then deploy with
-  `/usr/bin/env CI=1 /opt/homebrew/bin/vercel deploy updates-site --prod -y`.
-  Confirm `/updates/darwin/arm64/releases.json` returns public
-  `200 application/json` without Vercel authentication before packaging a build
-  that points at a new alias.
-- Because this project does not use Apple Developer ID signing/notarization,
-  updates are manual-download updates: the app checks the public feed and opens
-  the hosted zip instead of silently installing and restarting.
-- Do not embed Vercel or GitHub tokens in the app. The feed and zip URLs must be
-  public static HTTPS URLs.
+- **Official release flow** (Developer ID + notarize + feed):
+  1. Bump `package.json` version.
+  2. Ensure 1Password CLI is signed in (`op signin`) with the shared items
+     documented in `~/Documents/GitHub/APPLE_SIGNING.md`
+     (Developer ID p12 + App Store Connect API key).
+  3. Run `/opt/homebrew/bin/npm run release:mac`
+     (`scripts/release-macos.sh`: CastLabs VMP → Developer ID codesign →
+     notarize + staple → `release:update-feed`).
+  4. Deploy: `/usr/bin/env CI=1 /opt/homebrew/bin/vercel deploy updates-site --prod -y`.
+  5. Confirm `/updates/darwin/arm64/releases.json` returns public
+     `200 application/json` without Vercel authentication.
+- Sign-only (no notary upload): `./scripts/release-macos.sh --no-notarize`
+- Local unsigned/ad-hoc packages remain available via `package:mac` /
+  `package:mac:vmp` for day-to-day work.
+- Updates stay manual-download: the app checks the public feed and opens the
+  hosted zip (no silent install/restart). Signed+notarized zips still avoid
+  Gatekeeper “unidentified developer” friction for end users.
+- Do not embed Vercel, GitHub, or Apple secrets in the app. Creds load only via
+  1Password / env for packaging. Feed and zip URLs must be public static HTTPS.
+
+## Apple signing notes
+
+- Shared credentials doc: `~/Documents/GitHub/APPLE_SIGNING.md`
+- Loader: `scripts/load-apple-creds.sh` (sources agmux’s canonical loader)
+- Entitlements: `build/entitlements.mac.plist` (hardened runtime for Electron)
+- Env consumed by `scripts/package-macos.cjs`:
+  - `APPLE_CERTIFICATE` + `APPLE_CERTIFICATE_PASSWORD` (base64 p12)
+  - `APPLE_SIGNING_IDENTITY` / `APEXLINE_CODESIGN=1`
+  - `APEXLINE_NOTARIZE=1` + `APPLE_API_KEY` / `APPLE_API_ISSUER` /
+    `APPLE_API_KEY_PATH` (or `APPLE_API_KEY_P8_BASE64`)
+- Order: CastLabs VMP first, then Apple codesign, then notarize/staple.
 
 ## Architecture Notes
 

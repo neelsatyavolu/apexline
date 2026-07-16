@@ -145,7 +145,6 @@ const CODEX_MODELS = [
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
 const GROK_MODELS = [
   { id: "grok-4.5", label: "Grok 4.5", tier: "" },
-  { id: "grok-4.3", label: "Grok 4.3", tier: "deprecated" },
 ];
 const DEFAULT_GROK_MODEL = "grok-4.5";
 const MAX_CAPTURED_STREAMS = 48;
@@ -10607,7 +10606,7 @@ async function askGrok(options = {}) {
     temperature: 0.4,
     max_tokens: 1200,
   };
-  if (model === "grok-4.5" || model === "grok-4.3") body.reasoning = { effort: "high" };
+  if (model === "grok-4.5") body.reasoning = { effort: "high" };
   const raw = await requestJsonPost(GROK_CHAT_COMPLETIONS_URL, body, { Authorization: `Bearer ${tokens.accessToken}` }, AI_PROVIDER_TIMEOUT_MS);
   return normalizeAiResult("grok", grokText(raw), raw, options.task);
 }

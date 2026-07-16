@@ -117,29 +117,127 @@ function notarizeRequested() {
   return envFlag("APEXLINE_NOTARIZE") || envFlag("APPLE_NOTARIZE");
 }
 
-function importCertificateKeychain() {
-  const b64 = String(process.env.APPLE_CERTIFICATE || "").trim();
-  const password = String(process.env.APPLE_CERTIFICATE_PASSWORD || "");
-  if (!b64) return null;
+function parseKeychainList(raw) {
+  return String(raw || "")
+    .split("\n")
+    .map((line) => line.trim().replace(/^"|"$/g, ""))
+    .filter(Boolean);
+}
 
+function loginKeychainPath() {
+  return path.join(os.homedir(), "Library/Keychains/login.keychain-db");
+}
+
+function findIdentityOutput() {
+  try {
+    return execFileSync("security", ["find-identity", "-v", "-p", "codesigning"], { encoding: "utf8" });
+  } catch (error) {
+    return String(error.stdout || error.stderr || error.message || "");
+  }
+}
+
+function identityAlreadyAvailable(identity) {
+  if (!identity) return false;
+  return findIdentityOutput().includes(identity);
+}
+
+// Match strix/scripts/load-apple-creds.sh — Apple CAs first, then leaf p12.
+// Docs: ~/Documents/GitHub/APPLE_SIGNING.md (electron-builder / temp keychain sections).
+function downloadAppleCas(destDir) {
+  fs.mkdirSync(destDir, { recursive: true });
+  const base = "https://www.apple.com/certificateauthority";
+  const files = [
+    ["DeveloperIDG2CA.cer", `${base}/DeveloperIDG2CA.cer`],
+    ["DeveloperIDCA.cer", `${base}/DeveloperIDCA.cer`],
+    ["AppleRootCA-G2.cer", `${base}/AppleRootCA-G2.cer`],
+    ["AppleRootCA-G3.cer", `${base}/AppleRootCA-G3.cer`],
+    ["AppleIncRootCertificate.cer", "https://www.apple.com/appleca/AppleIncRootCertificate.cer"],
+  ];
+  const py = `
+import urllib.request, pathlib
+dest = pathlib.Path(${JSON.stringify(destDir)})
+for name, url in ${JSON.stringify(files)}:
+    path = dest / name
+    if not path.is_file() or path.stat().st_size == 0:
+        urllib.request.urlretrieve(url, path)
+    print(path)
+`;
+  try {
+    execFileSync("python3", ["-c", py], { stdio: ["ignore", "pipe", "pipe"] });
+  } catch (error) {
+    console.warn("Warning: could not download Apple CA certs:", error.message);
+  }
+  return files.map(([name]) => path.join(destDir, name)).filter((p) => fs.existsSync(p) && fs.statSync(p).size > 0);
+}
+
+function resolveP12Source() {
+  const fromAgmux = process.env.AGMUX_APPLE_CREDS_DIR
+    ? path.join(process.env.AGMUX_APPLE_CREDS_DIR, "certificate.p12")
+    : "";
+  if (fromAgmux && fs.existsSync(fromAgmux)) {
+    return { p12Path: fromAgmux, tmpDir: null, password: String(process.env.APPLE_CERTIFICATE_PASSWORD || "") };
+  }
+  const b64 = String(process.env.APPLE_CERTIFICATE || "").trim();
+  if (!b64) return null;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "apexline-codesign-"));
   const p12Path = path.join(tmpDir, "certificate.p12");
-  const keychainPath = path.join(tmpDir, "signing.keychain-db");
-  const keychainPassword = crypto.randomBytes(24).toString("hex");
   fs.writeFileSync(p12Path, Buffer.from(b64, "base64"));
   fs.chmodSync(p12Path, 0o600);
+  return { p12Path, tmpDir, password: String(process.env.APPLE_CERTIFICATE_PASSWORD || "") };
+}
+
+function importCertificateKeychain(identity) {
+  // Prefer an already-valid Developer ID identity (Strix does the same).
+  if (identity && identityAlreadyAvailable(identity)) {
+    console.log(`Using existing keychain identity: ${identity}`);
+    return null;
+  }
+
+  const source = resolveP12Source();
+  if (!source) return null;
+  ensure(source.password, "APPLE_CERTIFICATE_PASSWORD is required to import the Developer ID p12.");
+
+  const tmpDir = source.tmpDir || fs.mkdtempSync(path.join(os.tmpdir(), "apexline-codesign-"));
+  const keychainPath = path.join(tmpDir, "signing.keychain-db");
+  // Alphanumeric password avoids shell/keychain edge cases (same idea as Strix).
+  const keychainPassword = crypto.randomBytes(18).toString("base64").replace(/[^a-zA-Z0-9]/g, "").slice(0, 24);
+  const login = loginKeychainPath();
+  const previousKeychains = parseKeychainList(
+    execFileSync("security", ["list-keychains", "-d", "user"], { encoding: "utf8" }),
+  );
+
+  try {
+    execFileSync("security", ["delete-keychain", keychainPath], { stdio: "ignore" });
+  } catch {}
 
   execFileSync("security", ["create-keychain", "-p", keychainPassword, keychainPath], { stdio: "ignore" });
   execFileSync("security", ["set-keychain-settings", "-lut", "21600", keychainPath], { stdio: "ignore" });
   execFileSync("security", ["unlock-keychain", "-p", keychainPassword, keychainPath], { stdio: "ignore" });
+
+  // 1) Apple intermediates/roots FIRST so the leaf becomes a "valid" codesigning identity.
+  const casDir = path.join(tmpDir, "apple-cas");
+  for (const cer of downloadAppleCas(casDir)) {
+    try {
+      execFileSync("security", [
+        "import", cer, "-k", keychainPath,
+        "-T", "/usr/bin/codesign",
+        "-T", "/usr/bin/security",
+      ], { stdio: "ignore" });
+    } catch {
+      // Already present or non-fatal.
+    }
+  }
+
+  // 2) Leaf p12 — trusted tools only (Strix pattern). -k on partition-list is KEYCHAIN pass, not p12 pass.
   execFileSync("security", [
-    "import", p12Path,
+    "import", source.p12Path,
     "-k", keychainPath,
-    "-P", password,
+    "-P", source.password,
     "-T", "/usr/bin/codesign",
     "-T", "/usr/bin/security",
     "-T", "/usr/bin/productsign",
   ], { stdio: "ignore" });
+
   execFileSync("security", [
     "set-key-partition-list",
     "-S", "apple-tool:,apple:,codesign:",
@@ -148,21 +246,60 @@ function importCertificateKeychain() {
     keychainPath,
   ], { stdio: "ignore" });
 
-  const list = execFileSync("security", ["list-keychains", "-d", "user"], { encoding: "utf8" });
-  const existing = list.split("\n").map((line) => line.trim().replace(/^"|"$/g, "")).filter(Boolean);
-  const ordered = [keychainPath, ...existing.filter((item) => item !== keychainPath)];
-  execFileSync("security", ["list-keychains", "-d", "user", "-s", ...ordered], { stdio: "ignore" });
-  execFileSync("security", ["default-keychain", "-d", "user", "-s", keychainPath], { stdio: "ignore" });
+  // 3) Temp first + login only — do NOT keep stale deleted temps from prior failed runs.
+  //    Do NOT steal default-keychain (Strix leaves default alone).
+  execFileSync("security", ["list-keychains", "-d", "user", "-s", keychainPath, login], { stdio: "ignore" });
   execFileSync("security", ["unlock-keychain", "-p", keychainPassword, keychainPath], { stdio: "ignore" });
 
-  return { tmpDir, keychainPath, keychainPassword, previousKeychains: existing };
+  const identities = findIdentityOutput();
+  if (identity && !identities.includes(identity)) {
+    throw new Error(`Identity not found after keychain import: ${identity}\n${identities}`);
+  }
+  if (!/Developer ID Application:/i.test(identities)) {
+    throw new Error("No Developer ID Application identity after import.\n" + identities);
+  }
+  console.log("Imported Developer ID + Apple CAs into temp keychain (Strix/APPLE_SIGNING pattern).");
+
+  return {
+    tmpDir,
+    keychainPath,
+    keychainPassword,
+    previousKeychains,
+    login,
+  };
 }
 
 function cleanupCertificateKeychain(session) {
   if (!session) return;
+  const login = session.login || loginKeychainPath();
   try {
+    // Prefer a clean login-only list (stale temps on the search list break later runs).
     if (session.previousKeychains?.length) {
-      execFileSync("security", ["list-keychains", "-d", "user", "-s", ...session.previousKeychains], { stdio: "ignore" });
+      const cleaned = session.previousKeychains.filter((item) => {
+        if (item === session.keychainPath) return false;
+        try {
+          return fs.existsSync(item);
+        } catch {
+          return false;
+        }
+      });
+      if (cleaned.length) {
+        execFileSync("security", ["list-keychains", "-d", "user", "-s", ...cleaned], { stdio: "ignore" });
+      } else {
+        execFileSync("security", ["list-keychains", "-d", "user", "-s", login], { stdio: "ignore" });
+      }
+    } else {
+      execFileSync("security", ["list-keychains", "-d", "user", "-s", login], { stdio: "ignore" });
+    }
+  } catch {
+    try {
+      execFileSync("security", ["list-keychains", "-d", "user", "-s", login], { stdio: "ignore" });
+    } catch {}
+  }
+  try {
+    const current = execFileSync("security", ["list-keychains", "-d", "user"], { encoding: "utf8" });
+    if (!/login\.keychain/i.test(current)) {
+      execFileSync("security", ["list-keychains", "-d", "user", "-s", login], { stdio: "ignore" });
     }
   } catch {}
   try {
@@ -244,9 +381,11 @@ function collectSignTargets(appPath) {
   return [...targets.filter((item) => item !== appPath), appPath];
 }
 
-function codesignPath(identity, targetPath, { entitlements, deep = false } = {}) {
+function codesignPath(identity, targetPath, { entitlements, deep = false, keychain } = {}) {
   const args = ["--force", "--sign", identity, "--timestamp", "--options", "runtime"];
+  if (keychain) args.push("--keychain", keychain);
   if (deep) args.push("--deep");
+  // Entitlements only on app/helper bundles — not on every dylib (electron-builder / Strix style).
   if (entitlements && fs.existsSync(entitlements)) {
     args.push("--entitlements", entitlements);
   }
@@ -254,22 +393,64 @@ function codesignPath(identity, targetPath, { entitlements, deep = false } = {})
   execFileSync("codesign", args, { stdio: "inherit" });
 }
 
-function signWithDeveloperId(appPath, identity) {
+function wantsEntitlements(targetPath, appPath) {
+  if (targetPath === appPath) return true;
+  if (/\.app$/i.test(targetPath)) return true;
+  // Nested helper apps live under Frameworks/*.app
+  return false;
+}
+
+function unlockSigningKeychain(keychainPath) {
+  if (!keychainPath) return;
+  const pass = String(process.env.APEXLINE_SIGN_KEYCHAIN_PASS || process.env.STRIX_SIGN_KEYCHAIN_PASS || "");
+  try {
+    if (pass) {
+      execFileSync("security", ["unlock-keychain", "-p", pass, keychainPath], { stdio: "ignore" });
+    } else {
+      execFileSync("security", ["unlock-keychain", keychainPath], { stdio: "ignore" });
+    }
+  } catch {
+    // Unlocked already or password not exported — search-list identity may still work.
+  }
+  // Keep temp keychain first + login (Strix pattern). Avoid pinning --keychain on every
+  // codesign call; after VMP that combination can spuriously hit errSecInternalComponent.
+  const login = loginKeychainPath();
+  try {
+    execFileSync("security", ["list-keychains", "-d", "user", "-s", keychainPath, login], { stdio: "ignore" });
+  } catch {}
+}
+
+function signWithDeveloperId(appPath, identity, keychainPath) {
   ensure(fs.existsSync(entitlementsPath), `Missing entitlements at ${path.relative(root, entitlementsPath)}`);
   console.log(`Developer ID codesign with identity: ${identity}`);
+  if (keychainPath) console.log(`  keychain: ${keychainPath}`);
+  unlockSigningKeychain(keychainPath);
+
+  const idCheck = findIdentityOutput();
+  if (!idCheck.includes(identity)) {
+    throw new Error(`Signing identity not visible before codesign: ${identity}\n${idCheck}`);
+  }
+
   const targets = collectSignTargets(appPath);
+  // Like electron-builder/Strix: rely on keychain search list, do not pass --keychain per file.
   for (const target of targets) {
-    const isBundle = /\.(app|framework|xpc)$/i.test(target) || target === appPath;
     codesignPath(identity, target, {
-      entitlements: entitlementsPath,
+      entitlements: wantsEntitlements(target, appPath) ? entitlementsPath : null,
       deep: false,
+      keychain: null,
     });
-    if (!isBundle && process.env.APEXLINE_CODESIGN_VERBOSE) {
+    if (process.env.APEXLINE_CODESIGN_VERBOSE) {
       console.log(`  signed ${path.relative(appPath, target)}`);
     }
   }
   execFileSync("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath], { stdio: "inherit" });
   console.log("codesign verify: OK");
+}
+
+function resolvePreparedKeychain() {
+  const fromEnv = String(process.env.APEXLINE_SIGN_KEYCHAIN || process.env.CSC_KEYCHAIN || "").trim();
+  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
+  return "";
 }
 
 function materializeApiKeyPath() {
@@ -385,22 +566,32 @@ signWithCastLabsVmp(appPath);
 const identity = resolveSigningIdentity();
 const wantDeveloperId = Boolean(identity) || envFlag("APEXLINE_CODESIGN");
 let keychainSession = null;
+// Shell loader (scripts/load-apple-creds.sh) owns cleanup when APEXLINE_SIGN_KEYCHAIN is set.
+const shellManagedKeychain = Boolean(resolvePreparedKeychain());
 
 try {
   if (wantDeveloperId) {
     ensure(identity, "Set APPLE_SIGNING_IDENTITY or APPLE_CERTIFICATE for Developer ID signing.");
-    keychainSession = importCertificateKeychain();
-    signWithDeveloperId(appPath, identity);
+    let keychainPath = resolvePreparedKeychain();
+    if (!keychainPath && !identityAlreadyAvailable(identity)) {
+      keychainSession = importCertificateKeychain(identity);
+      keychainPath = keychainSession?.keychainPath || "";
+    } else if (keychainPath) {
+      console.log(`Using shell-prepared signing keychain: ${keychainPath}`);
+    } else {
+      console.log(`Using existing keychain identity: ${identity}`);
+    }
+    signWithDeveloperId(appPath, identity, keychainPath || undefined);
     if (notarizeRequested()) {
       notarizeAndStaple(appPath);
     } else {
-      console.log("Skipping notarization (set APEXLINE_NOTARIZE=1 or provide APPLE_API_* to enable).");
+      console.log("Skipping notarization (set APEXLINE_NOTARIZE=1 to enable).");
     }
   } else {
     adHocSign(appPath);
   }
 } finally {
-  cleanupCertificateKeychain(keychainSession);
+  if (!shellManagedKeychain) cleanupCertificateKeychain(keychainSession);
 }
 
 const size = execFileSync("du", ["-sh", appPath], { encoding: "utf8" }).trim().split(/\s+/)[0];

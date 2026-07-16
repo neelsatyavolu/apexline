@@ -1,14 +1,14 @@
 {
-  "currentRelease": "1.1.7",
+  "currentRelease": "1.1.8",
   "releases": [
     {
-      "version": "1.1.7",
+      "version": "1.1.8",
       "updateTo": {
-        "version": "1.1.7",
-        "pub_date": "2026-07-08T20:45:32.691Z",
-        "notes": "Apexline 1.1.7",
-        "name": "Apexline 1.1.7",
-        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.7-mac-arm64.zip"
+        "version": "1.1.8",
+        "pub_date": "2026-07-16T05:55:07.429Z",
+        "notes": "Apexline 1.1.8 — Developer ID signed and notarized macOS build (Gatekeeper-ready).",
+        "name": "Apexline 1.1.8",
+        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.8-mac-arm64.zip"
       }
     }
   ]

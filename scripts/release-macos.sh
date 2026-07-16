@@ -55,13 +55,15 @@ while [ $# -gt 0 ]; do
 done
 
 cleanup() {
-  if [ -n "${AGMUX_APPLE_CREDS_DIR:-}" ] && [ -d "${AGMUX_APPLE_CREDS_DIR}" ]; then
+  if declare -F apexline_cleanup_apple_creds >/dev/null 2>&1; then
+    apexline_cleanup_apple_creds
+  elif [ -n "${AGMUX_APPLE_CREDS_DIR:-}" ] && [ -d "${AGMUX_APPLE_CREDS_DIR}" ]; then
     rm -rf "${AGMUX_APPLE_CREDS_DIR}"
   fi
   unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY \
         APPLE_API_ISSUER APPLE_API_KEY_PATH APPLE_SIGNING_IDENTITY \
         APPLE_TEAM_ID APEXLINE_CODESIGN APEXLINE_SIGN_IDENTITY \
-        APEXLINE_NOTARIZE 2>/dev/null || true
+        APEXLINE_SIGN_KEYCHAIN APEXLINE_NOTARIZE 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -76,6 +78,7 @@ if [ "$DO_PACKAGE" = "1" ]; then
   export APEXLINE_CODESIGN=1
   export PITWALL_CASTLABS_VMP="${PITWALL_CASTLABS_VMP:-1}"
   export APEXLINE_BUNDLE_ID="${APEXLINE_BUNDLE_ID:-io.apexline.app}"
+  export PITWALL_EVS_PYTHON="${PITWALL_EVS_PYTHON:-/opt/homebrew/opt/python@3.9/bin/python3.9}"
 
   if [ "$NOTARIZE" = "yes" ]; then
     if [ -z "${APPLE_API_KEY:-}" ] || [ -z "${APPLE_API_ISSUER:-}" ] || [ -z "${APPLE_API_KEY_PATH:-}" ]; then
@@ -96,6 +99,7 @@ if [ "$DO_PACKAGE" = "1" ]; then
 
   echo "Building renderer + packaging…"
   "$NPM" run build
+  # Keep shell-prepared APEXLINE_SIGN_KEYCHAIN; do not re-import in Node when present.
   "$NODE" "$ROOT/scripts/package-macos.cjs"
 
   echo "Verifying signature…"

@@ -1,14 +1,14 @@
 {
-  "currentRelease": "1.1.8",
+  "currentRelease": "1.1.9",
   "releases": [
     {
-      "version": "1.1.8",
+      "version": "1.1.9",
       "updateTo": {
-        "version": "1.1.8",
-        "pub_date": "2026-07-16T05:55:07.429Z",
-        "notes": "Apexline 1.1.8 — Developer ID signed and notarized macOS build (Gatekeeper-ready).",
-        "name": "Apexline 1.1.8",
-        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.8-mac-arm64.zip"
+        "version": "1.1.9",
+        "pub_date": "2026-08-12T23:16:34.315Z",
+        "notes": "Apexline 1.1.9 — News tab load fix, live timing mid-session alignment, timing-buffer compaction, lazy-screen stub handling, and data-loading performance fixes. Developer ID signed and notarized.",
+        "name": "Apexline 1.1.9",
+        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.9-mac-arm64.zip"
       }
     }
   ]

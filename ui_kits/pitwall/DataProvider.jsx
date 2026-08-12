@@ -236,11 +236,33 @@
     return Boolean(profile?.name || profile?.profileImageUrl || profile?.favoriteDrivers?.length || profile?.favoriteTeams?.length || profile?.livePanelSizes || profile?.liveCustomLayouts || profile?.videoQuality);
   }
 
-  function persistProfile(profile) {
+  function profilePatchIncludesImage(patch) {
+    return Boolean(patch && Object.prototype.hasOwnProperty.call(patch, "profileImageUrl"));
+  }
+
+  function shouldMigrateProfileImage(local, persisted) {
+    return Boolean(local?.profileImageUrl && !persisted?.profileImageUrl);
+  }
+
+  function normalizeProfilePatch(patch = {}) {
+    const normalized = normalizeProfile(patch);
+    return Object.fromEntries(
+      Object.keys(normalized)
+        .filter((key) => Object.prototype.hasOwnProperty.call(patch, key))
+        .map((key) => [key, normalized[key]])
+    );
+  }
+
+  function persistProfile(profile, options = {}) {
     const next = normalizeProfile(profile);
     localStorage.setItem("pw-profile", JSON.stringify(next));
     if (window.pitwall?.profile?.set) {
-      window.pitwall.profile.set(next).catch(() => {});
+      const payload = options.patch
+        ? normalizeProfilePatch(options.patch)
+        : options.includeProfileImage
+          ? next
+          : Object.fromEntries(Object.entries(next).filter(([key]) => key !== "profileImageUrl"));
+      window.pitwall.profile.set(payload).catch(() => {});
     }
   }
 
@@ -356,7 +378,7 @@
       timing: incoming?.timing || base?.timing || [],
       schedule: incoming?.schedule?.length ? incoming.schedule : base?.schedule || [],
       sessions: incoming?.sessions || base?.sessions || [],
-      news: incoming?.news || base?.news || [],
+      news: incoming?.news?.length ? incoming.news : base?.news || [],
       insights: incoming?.insights || base?.insights || [],
       battlePairs: incoming?.battlePairs || base?.battlePairs || [],
       strategyContext: incoming?.strategyContext || base?.strategyContext || null,
@@ -386,7 +408,12 @@
   }
 
   function shouldWaitForStartupNews(snapshot) {
-    return Boolean(snapshot?.enrichmentPending && /refreshing/i.test(String(snapshot?.sourceLabel || "")));
+    return false;
+  }
+
+  function scheduleBackgroundEnrichmentPoll(snapshot, attempt, setTimer, refresh) {
+    if (!snapshot?.enrichmentPending || attempt >= 4) return null;
+    return setTimer(() => refresh({ enrichmentAttempt: attempt + 1 }), 2500);
   }
 
   function DataProvider({ children }) {
@@ -431,7 +458,12 @@
         }
         if (snapshot?.enrichmentPending) {
           clearTimeout(enrichmentTimerRef.current);
-          enrichmentTimerRef.current = setTimeout(refreshData, 2500);
+          enrichmentTimerRef.current = scheduleBackgroundEnrichmentPoll(
+            snapshot,
+            Number(options.enrichmentAttempt) || 0,
+            setTimeout,
+            refreshData,
+          );
         }
         return snapshot;
       } catch {
@@ -444,22 +476,27 @@
     }
 
     async function refreshConnections() {
-      const next = { aiConfigured: false, f1tvConnected: false };
+      let aiProbe;
+      let f1TvProbe;
       try {
-        const authStatus = await window.pitwall?.ai?.authStatus?.().catch(() => null);
-        next.aiConfigured = Boolean(authStatus?.codexConnected || authStatus?.grokConnected);
+        aiProbe = window.pitwall?.ai?.authStatus?.();
       } catch {}
       try {
-        const status = await (window.pitwall?.f1tv?.probeStatus?.({ timeoutMs: 1200 }) || window.pitwall?.f1tv?.status?.());
-        next.f1tvConnected = Boolean(status?.authenticated);
+        f1TvProbe = window.pitwall?.f1tv?.probeStatus?.({ timeoutMs: 1200 }) || window.pitwall?.f1tv?.status?.();
       } catch {}
-      setConnection(next);
+      const [aiResult, f1TvResult] = await Promise.allSettled([aiProbe, f1TvProbe]);
+      const authStatus = aiResult.status === "fulfilled" ? aiResult.value : null;
+      const status = f1TvResult.status === "fulfilled" ? f1TvResult.value : null;
+      setConnection({
+        aiConfigured: Boolean(authStatus?.codexConnected || authStatus?.grokConnected),
+        f1tvConnected: Boolean(status?.authenticated),
+      });
     }
 
     function updateProfile(patch) {
       setProfile((current) => {
         const next = normalizeProfile({ ...current, ...patch });
-        persistProfile(next);
+        persistProfile(next, { patch });
         return next;
       });
     }
@@ -474,12 +511,13 @@
           const next = profileHasContent(persisted) ? {
             ...local,
             ...persisted,
+            profileImageUrl: persisted.profileImageUrl || local.profileImageUrl,
             livePanelSizes: persisted.livePanelSizes != null ? persisted.livePanelSizes : local.livePanelSizes,
             liveCustomLayouts: persisted.liveCustomLayouts != null ? persisted.liveCustomLayouts : local.liveCustomLayouts,
             videoQuality: persisted.videoQuality != null && persisted.videoQuality !== "" ? persisted.videoQuality : local.videoQuality,
           } : local;
           if (mounted) setProfile(next);
-          if (profileHasContent(next)) persistProfile(next);
+          if (profileHasContent(next)) persistProfile(next, { includeProfileImage: shouldMigrateProfileImage(local, persisted) });
         } catch {}
       })();
       const initialRefreshTimer = bypassInitialLiveDataGate
@@ -487,12 +525,14 @@
         : null;
       if (!bypassInitialLiveDataGate) refreshData({ initial: true });
       refreshConnections();
+      const unsubscribeDataUpdated = window.pitwall?.data?.onUpdated?.(() => refreshData());
       const timer = setInterval(refreshData, 1000 * 60 * 3);
       return () => {
         mounted = false;
         clearInterval(timer);
         clearTimeout(initialRefreshTimer);
         clearTimeout(enrichmentTimerRef.current);
+        unsubscribeDataUpdated?.();
       };
     }, []);
 

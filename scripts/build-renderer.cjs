@@ -37,7 +37,9 @@ for (const name of screens) {
   fs.writeFileSync(outPath, code + "\n");
 }
 
-const screenScripts = screens.map((name) => `<script src="${name}.js"></script>`).join("\n");
+const initialScreenScripts = ["DataProvider", "AppShell", "Dashboard"]
+  .map((name) => `<script src="${name}.js"></script>`)
+  .join("\n");
 const html = `<!-- Built Apexline renderer. Source: ui_kits/pitwall/index.html -->
 <!DOCTYPE html>
 <html lang="en">
@@ -57,19 +59,51 @@ const html = `<!-- Built Apexline renderer. Source: ui_kits/pitwall/index.html -
 </head>
 <body>
 <div id="root"></div>
-<script src="../../node_modules/react/umd/react.development.js"></script>
-<script src="../../node_modules/react-dom/umd/react-dom.development.js"></script>
-<script src="../../node_modules/hls.js/dist/hls.min.js"></script>
-<script src="../../node_modules/shaka-player/dist/shaka-player.compiled.js"></script>
+<script src="../../node_modules/react/umd/react.production.min.js"></script>
+<script src="../../node_modules/react-dom/umd/react-dom.production.min.js"></script>
 <script src="../../_ds_bundle.js"></script>
 <script src="theme.js"></script>
 <script src="data.js"></script>
 <script src="sync.js"></script>
 <script src="social.js"></script>
 <script src="trackmap-circuits.js"></script>
-${screenScripts}
+${initialScreenScripts}
 <script>
   const { AppShell } = window.PW;
+  const runtimeScriptPromises = new Map();
+  const SCREEN_SCRIPTS = {
+    weekend: "Weekend.js",
+    live: "LiveRacing.js",
+    trackmap: "TrackMap.js",
+    leaderboards: "Leaderboards.js",
+    drivers: "Drivers.js",
+    teams: "Teams.js",
+    schedule: "Schedule.js",
+    news: "News.js",
+    analytics: "Analytics.js",
+    copilot: "Copilot.js",
+    settings: "Settings.js",
+  };
+  const SCREEN_GLOBALS = {
+    weekend: "Weekend",
+    trackmap: "TrackMap",
+    leaderboards: "Leaderboards",
+    drivers: "Drivers",
+    teams: "Teams",
+    schedule: "Schedule",
+    news: "News",
+    analytics: "Analytics",
+    copilot: "Copilot",
+    settings: "Settings",
+  };
+  // _ds_bundle.js historically stamped demo screen components onto window.PW.
+  // Those capture window.PW_DATA at bundle-eval time (before data.js) and must
+  // never short-circuit the real dist/pitwall screen scripts.
+  window.PW = window.PW || {};
+  for (const globalName of [...Object.values(SCREEN_GLOBALS), "LiveRacing"]) {
+    delete window.PW[globalName];
+  }
+  const loadedScreenScripts = new Set(["dashboard"]);
   const TITLES = {
     dashboard: { t: "Dashboard", c: "Live F1 overview" },
     weekend: { t: "Weekend", c: "Race weekend" },
@@ -83,6 +117,37 @@ ${screenScripts}
     copilot: { t: "AI Copilot", c: "Race intelligence" },
     settings: { t: "Settings", c: "" },
   };
+  function loadRuntimeScript(source) {
+    if (runtimeScriptPromises.has(source)) return runtimeScriptPromises.get(source);
+    const promise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = source;
+      script.onload = resolve;
+      script.onerror = () => {
+        runtimeScriptPromises.delete(source);
+        reject(new Error("Unable to load " + source));
+      };
+      document.head.appendChild(script);
+    });
+    runtimeScriptPromises.set(source, promise);
+    return promise;
+  }
+  function loadScreenResources(screen) {
+    if (loadedScreenScripts.has(screen)) return Promise.resolve();
+    if (screen === "live") {
+      return Promise.all([
+        loadRuntimeScript("../../node_modules/hls.js/dist/hls.min.js"),
+        loadRuntimeScript("../../node_modules/shaka-player/dist/shaka-player.compiled.js"),
+      ]).then(() => loadRuntimeScript("LiveRacing.js")).then(() => {
+        loadedScreenScripts.add(screen);
+      });
+    }
+    const source = SCREEN_SCRIPTS[screen];
+    if (!source) return Promise.resolve();
+    return loadRuntimeScript(source).then(() => {
+      loadedScreenScripts.add(screen);
+    });
+  }
   function initialPitWallScreen() {
     const allowed = new Set(["dashboard", "weekend", "live", "trackmap", "leaderboards", "drivers", "teams", "schedule", "news", "analytics", "copilot", "settings"]);
     const params = new URLSearchParams(window.location.search);
@@ -93,10 +158,44 @@ ${screenScripts}
   }
   function App() {
     const [screen, setScreen] = React.useState(initialPitWallScreen);
+    const [loadedScreen, setLoadedScreen] = React.useState(() => initialPitWallScreen() === "dashboard" ? "dashboard" : "");
+    const [loadError, setLoadError] = React.useState("");
+    const [loadAttempt, setLoadAttempt] = React.useState(0);
+    React.useEffect(() => {
+      let cancelled = false;
+      setLoadError("");
+      loadScreenResources(screen)
+        .then(() => {
+          if (!cancelled) setLoadedScreen(screen);
+        })
+        .catch(() => {
+          if (!cancelled) setLoadError("Unable to load this screen.");
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [screen, loadAttempt]);
     function handleSearchResult(result) {
       if (result && result.driverCode) localStorage.setItem("pw-search-focus", result.driverCode);
       if (result && result.teamAbbr) localStorage.setItem("pw-team-focus", result.teamAbbr);
       if (result && result.screen) setScreen(result.screen);
+    }
+    const meta = TITLES[screen] || { t: "", c: "" };
+    if (loadedScreen !== screen) {
+      const loading = React.createElement("div", { className: "pw-screen-loading", role: "status" },
+        React.createElement("span", null, loadError || "Loading " + (meta.t || "screen") + "…"),
+        loadError ? React.createElement("button", { type: "button", onClick: () => setLoadAttempt((attempt) => attempt + 1) }, "Retry") : null,
+        screen === "live" ? React.createElement("button", { type: "button", onClick: () => setScreen("dashboard") }, "Back to dashboard") : null,
+      );
+      if (screen === "live") return loading;
+      return React.createElement(AppShell, {
+        active: screen,
+        onNavigate: setScreen,
+        title: meta.t,
+        crumb: meta.c,
+        onGoLive: () => setScreen("live"),
+        onSearchResult: handleSearchResult,
+      }, loading);
     }
     if (screen === "live") {
       const Live = window.PW.LiveRacing;
@@ -115,7 +214,6 @@ ${screenScripts}
       copilot: window.PW.Copilot,
       settings: window.PW.Settings,
     }[screen];
-    const meta = TITLES[screen] || { t: "", c: "" };
     return React.createElement(AppShell, {
       active: screen,
       onNavigate: setScreen,

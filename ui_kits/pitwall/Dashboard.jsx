@@ -74,13 +74,23 @@
       return { race: D.race || {}, session: currentSession, startsAt: currentSession.startsAt || D.race?.startsAt || "" };
     }
 
-    const race = (D.schedule || []).find((item) => (item.sessions || []).some(dashboardSessionCandidate)) ||
+    const scheduledRace = (D.schedule || []).find((item) => (item.sessions || []).some(dashboardSessionCandidate)) ||
       (D.schedule || []).find((item) => ["live", "upcoming", "scheduled"].includes(String(item?.status || "").toLowerCase()));
+    const race = scheduledRace || (dashboardSessionCandidate(D.race) ? D.race : null);
     const session = (race?.sessions || []).find((item) => String(item?.status || "").toLowerCase() === "live") ||
       (race?.sessions || []).find(dashboardSessionCandidate) ||
       null;
-    const startsAt = session?.startsAt || race?.startsAt || D.race?.startsAt || "";
+    const startsAt = session?.startsAt || race?.startsAt || "";
     return startsAt ? { race: race || D.race || {}, session, startsAt } : null;
+  }
+
+  function dashboardHeroRace(D, nextSession) {
+    return nextSession?.race || D.race || {};
+  }
+
+  function dashboardHeroSessions(D, nextSession) {
+    const raceSessions = nextSession?.race?.sessions;
+    return Array.isArray(raceSessions) && raceSessions.length ? raceSessions : D.sessions || [];
   }
 
   function dashboardCountdownLabel(nextSession) {
@@ -104,6 +114,8 @@
     const titleGap = top5.length > 1 ? Math.max(0, top5[0].pts - top5[1].pts) : 0;
     const racesLeft = Math.max(0, (D.seasonSummary.totalRounds || D.schedule.length || 0) - (D.seasonSummary.round || 0));
     const nextSession = dashboardNextSession(D);
+    const heroRace = dashboardHeroRace(D, nextSession);
+    const heroSessions = dashboardHeroSessions(D, nextSession);
     const startsAt = nextSession?.startsAt || "";
     return (
       <div className="dash">
@@ -112,11 +124,11 @@
             {/* HERO */}
             <section className="hero">
               <div className="hero__eyebrow">
-                <span>{startsAt ? "Next race" : "Latest session"}</span><span className="hero__round">Round {D.race.round || "—"} / {D.seasonSummary.totalRounds || "—"}</span>
+                <span>{startsAt ? "Next race" : "Latest session"}</span><span className="hero__round">Round {heroRace.round || "—"} / {D.seasonSummary.totalRounds || "—"}</span>
               </div>
-              <h1 className="hero__name">{D.race.name || "Formula 1"}</h1>
+              <h1 className="hero__name">{heroRace.name || "Formula 1"}</h1>
               <div className="hero__circuit">
-                <Icon name="pin" size={15} /> {[D.race.circuit, D.race.loc].filter(Boolean).join(" · ") || dataSource}
+                <Icon name="pin" size={15} /> {[heroRace.circuit, heroRace.loc].filter(Boolean).join(" · ") || dataSource}
               </div>
               <div className="hero__cd">
                 <div>
@@ -124,7 +136,7 @@
                   {startsAt ? <Countdown to={startsAt} size="md" /> : <Badge tone="outline">{dataSource}</Badge>}
                 </div>
                 <div className="hero__sessions">
-                  {D.sessions.length ? D.sessions.map((s) => (
+                  {heroSessions.length ? heroSessions.map((s) => (
                     <div className="sess" key={s.kind} data-live={s.status === "live"} data-done={s.status === "done"}>
                       <span className="sess__k">{s.kind.replace("Practice", "FP")}</span>
                       <span className="sess__t">{s.time}</span>

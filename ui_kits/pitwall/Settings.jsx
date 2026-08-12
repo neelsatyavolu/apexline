@@ -8,13 +8,45 @@
   const DEFAULT_WORLD_SYNC_TARGET = 36;
   const DEFAULT_AI_MODEL = "codex:gpt-5.5";
   const PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+  const PROFILE_NAME_PERSIST_DELAY_MS = 300;
+
+  function createProfilePersistence(persist, timers = { setTimeout, clearTimeout }) {
+    let nameTimer = null;
+    let nameDraft = null;
+    function writeNameDraft() {
+      if (nameDraft == null) return;
+      const name = nameDraft;
+      nameDraft = null;
+      nameTimer = null;
+      persist({ name });
+    }
+    return {
+      scheduleName(name) {
+        nameDraft = String(name || "");
+        if (nameTimer != null) timers.clearTimeout(nameTimer);
+        nameTimer = timers.setTimeout(writeNameDraft, PROFILE_NAME_PERSIST_DELAY_MS);
+      },
+      persistNow(patch) {
+        persist(patch);
+      },
+      flush() {
+        if (nameTimer == null) return;
+        timers.clearTimeout(nameTimer);
+        writeNameDraft();
+      },
+    };
+  }
   const AI_MODEL_OPTIONS = [
     { value: "codex:gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { value: "codex:gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { value: "codex:gpt-5.6-luna", label: "GPT-5.6 Luna" },
     { value: "codex:gpt-5.5", label: "GPT-5.5" },
-    { value: "grok:grok-4.5", label: "Grok 4.5" },
+    { value: "grok:grok-4.6", label: "Grok 4.6" },
   ];
+  function normalizeSavedAiModel(value) {
+    const saved = value === "grok:grok-4.5" ? "grok:grok-4.6" : value;
+    return AI_MODEL_OPTIONS.some((option) => option.value === saved) ? saved : "";
+  }
   const VIDEO_QUALITY_OPTIONS = [
     { value: "max", label: "Max" },
     { value: "high", label: "High" },
@@ -197,16 +229,19 @@
   function Settings() {
     const { data: D, profile, updateProfile, refreshConnections } = window.PW.usePitWall();
     const [sec, setSec] = React.useState("ai");
-    const [model, setModel] = React.useState(() => {
-      const saved = localStorage.getItem(AI_MODEL_STORAGE) || DEFAULT_AI_MODEL;
-      return AI_MODEL_OPTIONS.some((option) => option.value === saved) ? saved : DEFAULT_AI_MODEL;
-    });
+    const [model, setModel] = React.useState(() => normalizeSavedAiModel(localStorage.getItem(AI_MODEL_STORAGE)) || DEFAULT_AI_MODEL);
     const [userName, setUserName] = React.useState(profile.name || "");
     const [profileImageUrl, setProfileImageUrl] = React.useState(profile.profileImageUrl || "");
     const [profileImageMessage, setProfileImageMessage] = React.useState("");
     const [favDrivers, setFavDrivers] = React.useState(profile.favoriteDrivers || []);
     const [favTeams, setFavTeams] = React.useState(profile.favoriteTeams || []);
     const profileImageInputRef = React.useRef(null);
+    const updateProfileRef = React.useRef(updateProfile);
+    updateProfileRef.current = updateProfile;
+    const profilePersistenceRef = React.useRef(null);
+    if (!profilePersistenceRef.current) {
+      profilePersistenceRef.current = createProfilePersistence((patch) => updateProfileRef.current(patch));
+    }
     function normalizePresetName(name) {
       return name === "Driver Focus" ? "Intelligent" : name;
     }
@@ -245,8 +280,8 @@
       let active = true;
       (async () => {
         try {
-          const saved = await window.pitwall?.ai?.preferredModel?.get?.();
-          if (active && AI_MODEL_OPTIONS.some((option) => option.value === saved)) setModel(saved);
+          const saved = normalizeSavedAiModel(await window.pitwall?.ai?.preferredModel?.get?.());
+          if (active && saved) setModel(saved);
         } catch {}
         if (active) setModelPrefReady(true);
       })();
@@ -266,18 +301,27 @@
 
     React.useEffect(() => {
       setUserName(profile.name || "");
+    }, [profile.name]);
+
+    React.useEffect(() => {
       setProfileImageUrl(profile.profileImageUrl || "");
+    }, [profile.profileImageUrl]);
+
+    React.useEffect(() => {
       setFavDrivers(profile.favoriteDrivers || []);
+    }, [(profile.favoriteDrivers || []).join("|")]);
+
+    React.useEffect(() => {
       setFavTeams(profile.favoriteTeams || []);
-    }, [profile.name, profile.profileImageUrl, (profile.favoriteDrivers || []).join("|"), (profile.favoriteTeams || []).join("|")]);
+    }, [(profile.favoriteTeams || []).join("|")]);
 
     React.useEffect(() => {
       setF1LiveLatencyDraft(String(appPrefs.f1LiveLatency));
     }, [appPrefs.f1LiveLatency]);
 
-    React.useEffect(() => {
-      updateProfile({ name: userName, profileImageUrl, favoriteDrivers: favDrivers, favoriteTeams: favTeams });
-    }, [userName, profileImageUrl, favDrivers.join("|"), favTeams.join("|")]);
+    React.useEffect(() => () => {
+      profilePersistenceRef.current.flush();
+    }, []);
 
     React.useEffect(() => {
       if (!profile.videoQuality) return;
@@ -286,10 +330,6 @@
         return prefs.videoQuality === videoQuality ? prefs : { ...prefs, videoQuality };
       });
     }, [profile.videoQuality]);
-
-    React.useEffect(() => {
-      updateProfile({ videoQuality: appPrefs.videoQuality });
-    }, [appPrefs.videoQuality]);
 
     React.useEffect(() => {
       let cancelled = false;
@@ -311,6 +351,7 @@
     }, [profile.name, profile.profileImageUrl]);
 
     function setPref(key, value) {
+      if (key === "videoQuality") profilePersistenceRef.current.persistNow({ videoQuality: value });
       setAppPrefs((prefs) => ({ ...prefs, [key]: value }));
     }
 
@@ -363,7 +404,9 @@
       }
       const reader = new FileReader();
       reader.onload = () => {
-        setProfileImageUrl(String(reader.result || ""));
+        const nextProfileImageUrl = String(reader.result || "");
+        setProfileImageUrl(nextProfileImageUrl);
+        profilePersistenceRef.current.persistNow({ profileImageUrl: nextProfileImageUrl });
         setProfileImageMessage("Profile photo updated.");
       };
       reader.onerror = () => setProfileImageMessage("Could not read that image.");
@@ -582,8 +625,16 @@
         setList(next);
       };
     }
-    const moveDriver = move(favDrivers, setFavDrivers);
-    const moveTeam = move(favTeams, setFavTeams);
+    function persistFavoriteDrivers(next) {
+      setFavDrivers(next);
+      profilePersistenceRef.current.persistNow({ favoriteDrivers: next });
+    }
+    function persistFavoriteTeams(next) {
+      setFavTeams(next);
+      profilePersistenceRef.current.persistNow({ favoriteTeams: next });
+    }
+    const moveDriver = move(favDrivers, persistFavoriteDrivers);
+    const moveTeam = move(favTeams, persistFavoriteTeams);
     const f1SignedIn = Boolean(f1Status.authenticated);
     const f1BrowserSignedIn = Boolean(!f1SignedIn && f1Status.browserSession);
     const f1BadgeLabel = f1SignedIn ? "Ready" : f1BrowserSignedIn ? "Browser signed in" : "Offline";
@@ -712,13 +763,13 @@
                       <span className="fav-col__count">{favDrivers.length} ranked</span>
                     </div>
                     <RankList items={driverItems} kind="drivers" onMove={moveDriver}
-                      onRemove={(k) => setFavDrivers(favDrivers.filter((c) => c !== k))} />
+                      onRemove={(k) => persistFavoriteDrivers(favDrivers.filter((c) => c !== k))} />
                     {driverPool.length > 0 && (
                       <>
                         <div className="fav-pool__label">Add a driver</div>
                         <div className="fav-pool">
                           {driverPool.map((d) => (
-                            <button className="fav-chip" key={d.code} onClick={() => setFavDrivers([...favDrivers, d.code])}>
+                            <button className="fav-chip" key={d.code} onClick={() => persistFavoriteDrivers([...favDrivers, d.code])}>
                               <span className="fav-chip__swatch" style={{ background: d.color }} />
                               {d.code}
                               <span className="fav-chip__add"><Icon name="plus" size={13} /></span>
@@ -737,13 +788,13 @@
                       <span className="fav-col__count">{favTeams.length} ranked</span>
                     </div>
                     <RankList items={teamItems} kind="teams" onMove={moveTeam}
-                      onRemove={(k) => setFavTeams(favTeams.filter((a) => a !== k))} />
+                      onRemove={(k) => persistFavoriteTeams(favTeams.filter((a) => a !== k))} />
                     {teamPool.length > 0 && (
                       <>
                         <div className="fav-pool__label">Add a team</div>
                         <div className="fav-pool">
                           {teamPool.map((c) => (
-                            <button className="fav-chip" key={c.abbr} onClick={() => setFavTeams([...favTeams, c.abbr])}>
+                            <button className="fav-chip" key={c.abbr} onClick={() => persistFavoriteTeams([...favTeams, c.abbr])}>
                               <span className="fav-chip__swatch" style={{ background: c.color }} />
                               {c.name}
                               <span className="fav-chip__add"><Icon name="plus" size={13} /></span>
@@ -806,7 +857,11 @@
                   <div className="row__t">Your name</div>
                   <div className="row__s">Used for greetings and local personalization only.</div>
                 </div>
-                <Input label="Display name" value={userName} placeholder="Enter your name" onChange={(e) => setUserName(e.target.value)} />
+                <Input label="Display name" value={userName} placeholder="Enter your name" onChange={(event) => {
+                  const name = event.target.value;
+                  setUserName(name);
+                  profilePersistenceRef.current.scheduleName(name);
+                }} />
               </div>
               <div className="row">
                 <div className="row__txt">
@@ -819,7 +874,11 @@
                     <div className="profile-photo__actions">
                       <input id="profile-image-input" className="profile-photo__input" ref={profileImageInputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" onChange={selectProfileImage} />
                       <Button variant="secondary" onClick={() => profileImageInputRef.current?.click()}>Choose photo</Button>
-                      {profileImageUrl && <Button variant="ghost" onClick={() => { setProfileImageUrl(""); setProfileImageMessage("Profile photo cleared."); }}>Clear photo</Button>}
+                      {profileImageUrl && <Button variant="ghost" onClick={() => {
+                        setProfileImageUrl("");
+                        profilePersistenceRef.current.persistNow({ profileImageUrl: "" });
+                        setProfileImageMessage("Profile photo cleared.");
+                      }}>Clear photo</Button>}
                     </div>
                     <div className="profile-photo__msg">{profileImageMessage || "PNG, JPG, GIF, WebP, or SVG under 2 MB."}</div>
                   </div>

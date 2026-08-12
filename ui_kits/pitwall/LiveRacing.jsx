@@ -4052,7 +4052,7 @@
       localStorage.setItem(PANEL_SIZE_STORAGE_KEY, serialized);
       if (!panelSizesTouchedRef.current || !window.pitwall?.profile?.set || serialized === profilePanelSizesKeyRef.current) return;
       profilePanelSizesKeyRef.current = serialized;
-      window.pitwall.profile.set({ ...profile, livePanelSizes: normalized }).catch(() => {});
+      window.pitwall.profile.set({ livePanelSizes: normalized }).catch(() => {});
     }, [panelSizes, profile]);
     React.useEffect(() => {
       const normalized = normalizeCustomLayouts(customLayouts);
@@ -4060,7 +4060,7 @@
       localStorage.setItem(CUSTOM_LAYOUT_STORAGE_KEY, serialized);
       if (!customLayoutsTouchedRef.current || !window.pitwall?.profile?.set || serialized === profileCustomLayoutsKeyRef.current) return;
       profileCustomLayoutsKeyRef.current = serialized;
-      window.pitwall.profile.set({ ...profile, liveCustomLayouts: normalized }).catch(() => {});
+      window.pitwall.profile.set({ liveCustomLayouts: normalized }).catch(() => {});
     }, [customLayouts, profile]);
     React.useEffect(() => {
       if (customLayoutsTouchedRef.current) return;
@@ -4707,15 +4707,26 @@
     function recordSyncMetrics(key, metrics) {
       if (!key) return;
       setSyncMetrics((current) => {
+        const videoTimeUtcMs = validVideoUtcMs(metrics.videoTimeUtcMs);
+        const measuredAtMs = Number(metrics.videoTimeAtMs);
         const rounded = {
           targetLatency: metrics.targetLatency,
           liveLatency: metrics.liveLatency == null ? null : Math.round(metrics.liveLatency * 10) / 10,
           playbackRate: Math.round((metrics.playbackRate || 1) * 100) / 100,
           delta: metrics.delta == null ? null : Math.round(metrics.delta * 10) / 10,
-          videoTimeUtcMs: validVideoUtcMs(metrics.videoTimeUtcMs),
+          videoTimeUtcMs,
+          // Keep the wall-clock sample time so live timing can extrapolate the
+          // playhead between 750ms sync reports (and not freeze across Q restarts).
+          videoTimeAtMs: videoTimeUtcMs != null && Number.isFinite(measuredAtMs) ? measuredAtMs : null,
         };
         const previous = current[key] || {};
-        if (previous.liveLatency === rounded.liveLatency && previous.playbackRate === rounded.playbackRate && previous.targetLatency === rounded.targetLatency && previous.videoTimeUtcMs === rounded.videoTimeUtcMs) return current;
+        if (
+          previous.liveLatency === rounded.liveLatency
+          && previous.playbackRate === rounded.playbackRate
+          && previous.targetLatency === rounded.targetLatency
+          && previous.videoTimeUtcMs === rounded.videoTimeUtcMs
+          && previous.videoTimeAtMs === rounded.videoTimeAtMs
+        ) return current;
         return { ...current, [key]: rounded };
       });
     }
@@ -5600,7 +5611,7 @@
     }, [replaySync.masterTime]);
     React.useEffect(() => {
       liveTimingSyncRef.current = liveTimingRequestForMetrics(syncMetrics.WORLD, syncTargetFor("WORLD"));
-    }, [syncMetrics.WORLD?.liveLatency, syncMetrics.WORLD?.targetLatency, syncMetrics.WORLD?.videoTimeUtcMs, syncSettings]);
+    }, [syncMetrics.WORLD?.liveLatency, syncMetrics.WORLD?.targetLatency, syncMetrics.WORLD?.videoTimeUtcMs, syncMetrics.WORLD?.videoTimeAtMs, syncSettings]);
     React.useEffect(() => {
       if (!liveWorkspaceReady || replaySync.mode === "replay" || pendingF1TvSelection) {
         setLiveTimingData(null);

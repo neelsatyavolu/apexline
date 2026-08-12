@@ -17,7 +17,7 @@
   const FLAG_LABEL = { green: "GREEN FLAG", yellow: "YELLOW FLAG", sc: "SAFETY CAR", vsc: "VIRTUAL SC", red: "RED FLAG", chequered: "CHEQUERED" };
   const FLAG_VAR = { green: "var(--flag-green)", yellow: "var(--flag-yellow, #ffd23f)", sc: "var(--flag-yellow, #ffd23f)", vsc: "var(--flag-yellow, #ffd23f)", red: "var(--live)", chequered: "var(--text-1)" };
   const TRACK_MAP_REPLAY_TICK_MS = 100;
-  const TRACK_MAP_REPLAY_DATA_POLL_MS = 270;
+  const TRACK_MAP_REPLAY_DATA_POLL_MS = 1000;
   const TRACK_MAP_MOTION_TAU_MS = 200;
   const TRACK_MAP_FALLBACK_TAU_MS = 550;
   const TRACK_MAP_DEAD_RECKON_MAX_MS = 900;
@@ -686,6 +686,35 @@
     return { d, points: pts, turns, sectors, startNode, vb };
   }
 
+  function buildTrackMapInvariantModel(data, selectedRaceKey) {
+    const races = Array.isArray(data.schedule) ? data.schedule : [];
+    const liveRace = races.find((race) => race.status === "live") || null;
+    const liveSession = (Array.isArray(data.sessions) ? data.sessions : []).find((session) => session.status === "live") || null;
+    const live = (Array.isArray(data.timing) ? data.timing.length : 0) > 0 && Boolean(liveRace || liveSession);
+    const upcomingRace = races.find((race) => race.status === "upcoming") || null;
+    const latestCompletedRace = races.filter((race) => race.status === "done").at(-1) || null;
+    const autoRace = liveRace || upcomingRace || latestCompletedRace || races[0] || null;
+    const selectedRace = selectedRaceKey
+      ? races.find((race) => raceKey(race) === selectedRaceKey) || autoRace
+      : autoRace;
+    const liveRaceKey = raceKey(liveRace);
+    const selectedRaceValue = raceKey(selectedRace);
+    const mapLive = live && (!selectedRaceKey || selectedRaceKey === liveRaceKey);
+    const circuit = resolveCircuit(mapLive ? data.race : selectedRace) || (mapLive ? resolveCircuit(data.race) : null);
+    const replaySessionOptions = trackMapReplaySessionOptions(selectedRace);
+    const raceSession = (selectedRace?.sessions || []).find((session) => /race/i.test(session.kind) && !/sprint/i.test(session.kind)) || null;
+    return {
+      races,
+      selectedRace,
+      selectedRaceValue,
+      mapLive,
+      circuit,
+      replaySessionOptions,
+      raceSession,
+      canLoadReplay: canLoadReplayRace(selectedRace),
+    };
+  }
+
   /* ====================================================================== */
   /* SVG renderer (consumes a prebuilt geom).                               */
   /* ====================================================================== */
@@ -937,10 +966,24 @@
     );
   }
 
-  function ReplayProgress({ replay, onSeekReplay }) {
+  function useReplayElapsedClock(elapsedClock, fallbackSeconds = 0) {
+    const [elapsedSeconds, setElapsedSeconds] = useState(() => elapsedClock?.getElapsedSeconds() ?? fallbackSeconds);
+    useEffect(() => {
+      if (!elapsedClock) {
+        setElapsedSeconds(fallbackSeconds);
+        return undefined;
+      }
+      setElapsedSeconds(elapsedClock.getElapsedSeconds());
+      return elapsedClock.subscribe(setElapsedSeconds);
+    }, [elapsedClock, fallbackSeconds]);
+    return elapsedSeconds;
+  }
+
+  function ReplayProgress({ replay, onSeekReplay, elapsedClock }) {
+    const visualElapsedSeconds = useReplayElapsedClock(elapsedClock, replay?.elapsedSeconds || 0);
     if (!replay?.active && !replay?.loading) return null;
     const duration = Math.max(1, Math.round(Number(replay?.data?.durationSeconds || replay?.durationSeconds || 1)));
-    const elapsed = Math.max(0, Math.min(duration, Math.round(Number(replay?.elapsedSeconds || 0))));
+    const elapsed = Math.max(0, Math.min(duration, Math.round(Number(visualElapsedSeconds || 0))));
     const lap = replay?.data?.sessionClock?.lapCount?.lap || "";
     const laps = replay?.data?.sessionClock?.lapCount?.laps || "";
     const label = lap ? `L${lap}/${laps || "-"}` : formatReplayClock(elapsed);
@@ -953,51 +996,105 @@
     );
   }
 
-  function Header({ round, gp, name, loc, live, replay, race, countdownTarget, raceStartLabel, races, selectedRaceKey, onSelectRace, canLoadReplay, onLoadReplay, onSeekReplay }) {
+  function staticTrackMapPropsEqual(previous, next) {
+    const previousKeys = Object.keys(previous);
+    const nextKeys = Object.keys(next);
+    return previousKeys.length === nextKeys.length
+      && previousKeys.every((key) => Object.is(previous[key], next[key]));
+  }
+
+  function staticTrackMapSessionControlsEqual(previous, next) {
+    return previous.races === next.races
+      && previous.selectedRaceKey === next.selectedRaceKey
+      && previous.replayActive === next.replayActive
+      && previous.replayLoading === next.replayLoading
+      && previous.canLoadReplay === next.canLoadReplay;
+  }
+
+  function HeaderIdentity({ round, gp, name, loc }) {
+    return (
+      <div className="tm-head__id">
+        {round ? <div className="tm-head__round">Round {round} · 2026</div> : null}
+        <h1 className="tm-head__gp">{gp || name || "Track Map"}</h1>
+        <div className="tm-head__circuit"><Icon name="pin" size={13} /> {[name, loc].filter(Boolean).join(" · ")}</div>
+      </div>
+    );
+  }
+  const MemoizedHeaderIdentity = React.memo(HeaderIdentity, staticTrackMapPropsEqual);
+
+  function HeaderSessionControls({ races, selectedRaceKey, replayActive, replayLoading, canLoadReplay, onSelectRace, onLoadReplay }) {
+    return (
+      <>
+        <RaceSelector races={races} selectedRaceKey={selectedRaceKey} onSelectRace={onSelectRace} />
+        {!replayActive && (
+          <button className="tm-replaybtn" type="button" disabled={!canLoadReplay || replayLoading} onClick={onLoadReplay}>
+            <Icon name="play" size={14} /> {replayLoading ? "Loading..." : "Load replay"}
+          </button>
+        )}
+      </>
+    );
+  }
+  const MemoizedHeaderSessionControls = React.memo(HeaderSessionControls, staticTrackMapSessionControlsEqual);
+
+  function HeaderSessionStatus({ live, replayActive, race, countdownTarget, raceStartLabel }) {
     const cd = useCountdown(countdownTarget);
     const wx = (race && race.weather) || {};
     const flag = (race && race.flag) || "green";
     return (
+      <>
+        {live ? (
+          <>
+            <div className="tm-statline">
+              <span className="pw-badge pw-badge--live tm-livebadge"><span className="tm-livedot" />{replayActive ? "REPLAY" : "LIVE"}</span>
+              <span className="tm-flag" style={{ color: FLAG_VAR[flag] || "var(--flag-green)" }}>{FLAG_LABEL[flag] || "GREEN FLAG"}</span>
+            </div>
+            <div className="tm-lap">
+              <span className="tm-lap__big">{race.lap}</span>
+              <span className="tm-lap__sml">/ {race.laps}</span>
+              <span className="tm-lap__lbl">LAP · RACE</span>
+            </div>
+            <div className="tm-wx">
+              {wx.air !== "" && wx.air != null && <span><Icon name="thermometer" size={12} /> Air {wx.air}°</span>}
+              {wx.track !== "" && wx.track != null && <span><Icon name="gauge" size={12} /> Track {wx.track}°</span>}
+              {wx.cond && <span className="tm-wx__dry">{wx.cond}</span>}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="tm-statline"><span className="pw-badge pw-badge--accent">NEXT ROUND</span></div>
+            {cd.valid && <div className="tm-cd"><Seg n={cd.d} l="DAYS" /><Seg n={cd.h} l="HRS" /><Seg n={cd.m} l="MIN" /></div>}
+            {raceStartLabel && <div className="tm-wx"><span>{raceStartLabel}</span></div>}
+          </>
+        )}
+      </>
+    );
+  }
+  const MemoizedHeaderSessionStatus = React.memo(HeaderSessionStatus, staticTrackMapPropsEqual);
+
+  function Header({ round, gp, name, loc, live, replay, race, countdownTarget, raceStartLabel, races, selectedRaceKey, onSelectRace, canLoadReplay, onLoadReplay, onSeekReplay, elapsedClock }) {
+    return (
       <div className="tm-head">
-        <div className="tm-head__id">
-          {round ? <div className="tm-head__round">Round {round} · 2026</div> : null}
-          <h1 className="tm-head__gp">{gp || name || "Track Map"}</h1>
-          <div className="tm-head__circuit"><Icon name="pin" size={13} /> {[name, loc].filter(Boolean).join(" · ")}</div>
-        </div>
+        <MemoizedHeaderIdentity round={round} gp={gp} name={name} loc={loc} />
         <div className="tm-head__status">
           <div className="tm-head__actions">
-            <ReplayProgress replay={replay} onSeekReplay={onSeekReplay} />
-            <RaceSelector races={races} selectedRaceKey={selectedRaceKey} onSelectRace={onSelectRace} />
-            {!replay?.active && (
-              <button className="tm-replaybtn" type="button" disabled={!canLoadReplay || replay?.loading} onClick={onLoadReplay}>
-                <Icon name="play" size={14} /> {replay?.loading ? "Loading..." : "Load replay"}
-              </button>
-            )}
+            <ReplayProgress replay={replay} onSeekReplay={onSeekReplay} elapsedClock={elapsedClock} />
+            <MemoizedHeaderSessionControls
+              races={races}
+              selectedRaceKey={selectedRaceKey}
+              replayActive={Boolean(replay?.active)}
+              replayLoading={Boolean(replay?.loading)}
+              canLoadReplay={canLoadReplay}
+              onSelectRace={onSelectRace}
+              onLoadReplay={onLoadReplay}
+            />
           </div>
-          {live ? (
-            <>
-              <div className="tm-statline">
-                <span className="pw-badge pw-badge--live tm-livebadge"><span className="tm-livedot" />{replay?.active ? "REPLAY" : "LIVE"}</span>
-                <span className="tm-flag" style={{ color: FLAG_VAR[flag] || "var(--flag-green)" }}>{FLAG_LABEL[flag] || "GREEN FLAG"}</span>
-              </div>
-              <div className="tm-lap">
-                <span className="tm-lap__big">{race.lap}</span>
-                <span className="tm-lap__sml">/ {race.laps}</span>
-                <span className="tm-lap__lbl">LAP · RACE</span>
-              </div>
-              <div className="tm-wx">
-                {wx.air !== "" && wx.air != null && <span><Icon name="thermometer" size={12} /> Air {wx.air}°</span>}
-                {wx.track !== "" && wx.track != null && <span><Icon name="gauge" size={12} /> Track {wx.track}°</span>}
-                {wx.cond && <span className="tm-wx__dry">{wx.cond}</span>}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="tm-statline"><span className="pw-badge pw-badge--accent">NEXT ROUND</span></div>
-              {cd.valid && <div className="tm-cd"><Seg n={cd.d} l="DAYS" /><Seg n={cd.h} l="HRS" /><Seg n={cd.m} l="MIN" /></div>}
-              {raceStartLabel && <div className="tm-wx"><span>{raceStartLabel}</span></div>}
-            </>
-          )}
+          <MemoizedHeaderSessionStatus
+            live={live}
+            replayActive={Boolean(replay?.active)}
+            race={race}
+            countdownTarget={countdownTarget}
+            raceStartLabel={raceStartLabel}
+          />
         </div>
       </div>
     );
@@ -1090,6 +1187,7 @@
       </div>
     );
   }
+  const MemoizedCircuitFacts = React.memo(CircuitFacts, staticTrackMapPropsEqual);
 
   /* ====================================================================== */
   /* On-map overlays.                                                       */
@@ -1101,13 +1199,14 @@
       </svg>
     );
   }
-  function MapControls({ paused, setPaused, focusCode, onClear, replay, elapsedSeconds, onStopReplay }) {
+  function MapControls({ paused, setPaused, focusCode, onClear, replay, elapsedClock, elapsedSeconds = 0, onStopReplay }) {
+    const visualElapsedSeconds = useReplayElapsedClock(elapsedClock, elapsedSeconds);
     return (
       <div className="tm-mapctl">
         <button className="tm-ctlbtn" onClick={() => setPaused(!paused)}>
           {paused ? <Icon name="play" size={14} /> : <PauseGlyph size={14} />} {paused ? "Resume" : "Pause"}
         </button>
-        {replay && <span className="tm-ctlbtn">REPLAY {formatReplayClock(elapsedSeconds)}</span>}
+        {replay && <span className="tm-ctlbtn">REPLAY {formatReplayClock(visualElapsedSeconds)}</span>}
         {replay && <button className="tm-ctlbtn tm-ctlbtn--clear" onClick={onStopReplay}><Icon name="close" size={13} /> Exit replay</button>}
         {focusCode && (
           <button className="tm-ctlbtn tm-ctlbtn--clear" onClick={onClear}><Icon name="close" size={13} /> {focusCode}</button>
@@ -1126,6 +1225,7 @@
       </div>
     );
   }
+  const MemoizedMapLegend = React.memo(MapLegend, staticTrackMapPropsEqual);
   function TurnCard({ circuitName, turn, onClose }) {
     return (
       <div className="tm-turncard">
@@ -1137,11 +1237,78 @@
     );
   }
 
+  function createReplayElapsedClock(initialSeconds, onCommit, timers = {
+    now: () => Date.now(),
+    setInterval,
+    clearInterval,
+  }) {
+    let elapsedMs = Math.max(0, Number(initialSeconds || 0) * 1000);
+    let committedMs = elapsedMs;
+    let committedBucket = Math.floor(elapsedMs / TRACK_MAP_REPLAY_DATA_POLL_MS);
+    let commitListener = onCommit;
+    let interval = null;
+    let running = false;
+    let previous = timers.now();
+    const listeners = new Set();
+    const elapsedSeconds = () => elapsedMs / 1000;
+    const emit = () => listeners.forEach((listener) => listener(elapsedSeconds()));
+    const commit = (force = false) => {
+      const bucket = Math.floor(elapsedMs / TRACK_MAP_REPLAY_DATA_POLL_MS);
+      if (bucket === committedBucket && (!force || elapsedMs === committedMs)) return;
+      committedBucket = bucket;
+      committedMs = elapsedMs;
+      commitListener?.(elapsedSeconds(), bucket);
+    };
+    const tick = () => {
+      if (!running) return;
+      const now = timers.now();
+      const deltaMs = Math.max(0, Math.min(2000, now - previous));
+      previous = now;
+      elapsedMs += deltaMs;
+      emit();
+      commit();
+    };
+    return {
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      setOnCommit(listener) {
+        commitListener = listener;
+      },
+      getElapsedSeconds: elapsedSeconds,
+      start() {
+        if (running) return;
+        running = true;
+        previous = timers.now();
+        interval = timers.setInterval(tick, TRACK_MAP_REPLAY_TICK_MS);
+      },
+      pause(shouldCommit = true) {
+        if (running) {
+          running = false;
+          timers.clearInterval(interval);
+          interval = null;
+        }
+        if (shouldCommit) commit(true);
+        return elapsedSeconds();
+      },
+      seek(seconds, shouldCommit = true) {
+        elapsedMs = Math.max(0, Number(seconds || 0) * 1000);
+        previous = timers.now();
+        emit();
+        if (shouldCommit) commit(true);
+        return elapsedSeconds();
+      },
+      stop() {
+        this.pause(true);
+      },
+    };
+  }
+
   /* ====================================================================== */
   /* Screen.                                                                */
   /* ====================================================================== */
-  function TrackMap() {
-    const { data, dataSource } = window.PW.usePitWall();
+  function TrackMapDynamicReplayStage({ data, dataSource }) {
     const [focusCode, setFocus] = useState(null);
     const [selTurn, setSelTurn] = useState(null);
     const [paused, setPaused] = useState(false);
@@ -1150,22 +1317,32 @@
     const [replayChoiceRace, setReplayChoiceRace] = useState(null);
     const replayRequestRef = useRef(0);
     const replayTimingInFlightRef = useRef(false);
+    const replayElapsedClockRef = useRef(null);
+    if (!replayElapsedClockRef.current) {
+      replayElapsedClockRef.current = createReplayElapsedClock(0, null);
+    }
+    const replayElapsedClock = replayElapsedClockRef.current;
+    replayElapsedClock.setOnCommit((elapsedSeconds) => {
+      setReplay((current) => current.active && current.elapsedSeconds !== elapsedSeconds
+        ? { ...current, elapsedSeconds }
+        : current);
+    });
 
     const timing = Array.isArray(data.timing) ? data.timing : [];
-
-    const races = Array.isArray(data.schedule) ? data.schedule : [];
-    const liveRace = useMemo(() => races.find((r) => r.status === "live") || null, [races]);
-    const liveSession = useMemo(() => (Array.isArray(data.sessions) ? data.sessions : []).find((s) => s.status === "live") || null, [data.sessions]);
-    const live = timing.length > 0 && Boolean(liveRace || liveSession);
-    const upcomingRace = useMemo(() => races.find((r) => r.status === "upcoming") || null, [races]);
-    const latestCompletedRace = useMemo(() => races.filter((r) => r.status === "done").at(-1) || null, [races]);
-    const autoRace = liveRace || upcomingRace || latestCompletedRace || races[0] || null;
-    const liveRaceKey = raceKey(liveRace);
-    const selectedRace = selectedRaceKey ? races.find((race) => raceKey(race) === selectedRaceKey) || autoRace : autoRace;
-    const selectedRaceValue = raceKey(selectedRace);
+    const invariantModel = useMemo(() => buildTrackMapInvariantModel(data, selectedRaceKey), [data.schedule, data.sessions, data.race, timing.length, selectedRaceKey]);
+    const {
+      races,
+      selectedRace,
+      selectedRaceValue,
+      mapLive,
+      circuit,
+      replaySessionOptions,
+      raceSession,
+      canLoadReplay,
+    } = invariantModel;
+    const geom = useMemo(() => (circuit ? buildGeom(circuit) : null), [circuit]);
     const replayActive = replay.active && replay.raceKey === selectedRaceValue;
     const activeTiming = replayActive ? (Array.isArray(replay.data?.timing) ? replay.data.timing : []) : timing;
-    const mapLive = live && (!selectedRaceKey || selectedRaceKey === liveRaceKey);
     const mapTracking = mapLive || replayActive;
     const replayDataBucket = replayActive ? Math.floor((Number(replay.elapsedSeconds || 0) * 1000) / TRACK_MAP_REPLAY_DATA_POLL_MS) : 0;
 
@@ -1179,15 +1356,13 @@
     }, [replay.active, replay.raceKey, selectedRaceValue]);
 
     useEffect(() => {
-      if (!replayActive || !replay.playing) return undefined;
-      let prev = Date.now();
-      const timer = setInterval(() => {
-        const now = Date.now();
-        const delta = Math.max(0, Math.min(2, (now - prev) / 1000));
-        prev = now;
-        setReplay((current) => current.active && current.playing ? { ...current, elapsedSeconds: current.elapsedSeconds + delta } : current);
-      }, TRACK_MAP_REPLAY_TICK_MS);
-      return () => clearInterval(timer);
+      if (!replayActive) {
+        replayElapsedClock.pause(false);
+        return undefined;
+      }
+      if (replay.playing) replayElapsedClock.start();
+      else replayElapsedClock.pause(false);
+      return () => replayElapsedClock.pause(false);
     }, [replayActive, replay.playing]);
 
     useEffect(() => {
@@ -1238,11 +1413,12 @@
       setSelectedRaceKey(raceKey(race));
       setReplayChoiceRace(null);
       setPaused(false);
+      replayElapsedClock.seek(0, false);
       setReplay({ active: true, playing: true, loading: true, raceKey: raceKey(race), sessionKind: kind, session: session || null, elapsedSeconds: 0, data: null, error: "", needsInitialLapStart: false });
     }
     function loadTrackMapReplay() {
       if (!selectedRace) return;
-      const options = trackMapReplaySessionOptions(selectedRace);
+      const options = replaySessionOptions;
       if (options.length > 1) {
         setReplayChoiceRace(selectedRace);
         return;
@@ -1250,25 +1426,31 @@
       startTrackMapReplay(selectedRace, options[0]);
     }
     function stopTrackMapReplay() {
-      setReplay((current) => ({ ...current, active: false, playing: false }));
+      const elapsedSeconds = replayElapsedClock.pause(false);
+      setReplay((current) => ({ ...current, active: false, playing: false, elapsedSeconds }));
     }
     function seekReplaySeconds(seconds) {
       replayRequestRef.current += 1;
       replayTimingInFlightRef.current = false;
-      setReplay((current) => ({ ...current, needsInitialLapStart: false, loading: true, error: "", elapsedSeconds: Math.max(0, Number(seconds || 0)) }));
+      const elapsedSeconds = replayElapsedClock.seek(seconds, false);
+      setReplay((current) => ({ ...current, needsInitialLapStart: false, loading: true, error: "", elapsedSeconds }));
     }
     function setTrackPaused(nextPaused) {
       setPaused(nextPaused);
-      if (replayActive) setReplay((current) => ({ ...current, playing: !nextPaused }));
+      if (replayActive) {
+        const elapsedSeconds = nextPaused ? replayElapsedClock.pause(false) : replayElapsedClock.getElapsedSeconds();
+        setReplay((current) => ({ ...current, playing: !nextPaused, elapsedSeconds }));
+      }
     }
 
     const replayLap = replay.data?.sessionClock?.lapCount?.lap || "-";
     const replayLaps = replay.data?.sessionClock?.lapCount?.laps || "-";
-    const headerRace = replayActive
-      ? { ...(selectedRace || {}), lap: replayLap, laps: replayLaps, weather: replay.data?.weather || {} }
-      : mapLive ? { ...(data.race || {}), lap: data.race?.lap || "-", laps: data.race?.laps || "-" } : selectedRace;
-    const circuit = resolveCircuit(headerRace) || (mapLive ? resolveCircuit(data.race) : null);
-    const geom = useMemo(() => (circuit ? buildGeom(circuit) : null), [circuit]);
+    const headerRace = useMemo(
+      () => replayActive
+        ? { ...(selectedRace || {}), lap: replayLap, laps: replayLaps, weather: replay.data?.weather || {} }
+        : mapLive ? { ...(data.race || {}), lap: data.race?.lap || "-", laps: data.race?.laps || "-" } : selectedRace,
+      [replayActive, selectedRace, replayLap, replayLaps, replay.data?.weather, mapLive, data.race]
+    );
 
     const circuitId = circuit?.id || "none";
     useEffect(() => { setFocus(null); setSelTurn(null); }, [circuitId, mapTracking]);
@@ -1291,7 +1473,7 @@
       });
     }, [mapTracking, activeTiming, data.byCode]);
 
-    const layers = { turns: true, names: true, sectors: true, start: true };
+    const layers = useMemo(() => ({ turns: true, names: true, sectors: true, start: true }), []);
     const selTurnObj = useMemo(() => (geom ? geom.turns.find((t) => t.n === selTurn) || null : null), [geom, selTurn]);
 
     const round = mapLive && !replayActive ? data.race?.round : selectedRace?.rnd;
@@ -1299,10 +1481,6 @@
     const circuitName = (mapLive && !replayActive ? data.race?.circuit : selectedRace?.circuit) || circuit?.name || "";
     const loc = (mapLive && !replayActive ? data.race?.loc : selectedRace?.loc) || circuit?.loc || "";
 
-    const raceSession = useMemo(
-      () => (selectedRace?.sessions || []).find((s) => /race/i.test(s.kind) && !/sprint/i.test(s.kind)) || null,
-      [selectedRace]
-    );
     const countdownTarget = !mapTracking ? (raceSession?.startsAt || selectedRace?.startsAt || "") : "";
     const raceStartLabel = !mapTracking && raceSession ? `Race start · ${raceSession.day || ""} ${raceSession.time || ""} local`.trim() : "";
 
@@ -1313,7 +1491,7 @@
     }, [replayActive, activeTiming]);
 
     const battles = replayActive ? [] : Array.isArray(data.battlePairs) ? data.battlePairs : [];
-    const loadableReplay = !replayActive && canLoadReplayRace(selectedRace);
+    const loadableReplay = !replayActive && canLoadReplay;
     const replayChoices = trackMapReplaySessionOptions(replayChoiceRace);
 
     return (
@@ -1321,7 +1499,8 @@
         <Header round={round} gp={gp} name={circuitName} loc={loc} live={mapTracking} replay={replayActive ? replay : null}
           race={mapTracking ? headerRace : null} countdownTarget={countdownTarget} raceStartLabel={raceStartLabel}
           races={races} selectedRaceKey={selectedRaceValue} onSelectRace={setSelectedRaceKey}
-          canLoadReplay={loadableReplay} onLoadReplay={loadTrackMapReplay} onSeekReplay={seekReplaySeconds} />
+          canLoadReplay={loadableReplay} onLoadReplay={loadTrackMapReplay} onSeekReplay={seekReplaySeconds}
+          elapsedClock={replayElapsedClock} />
         <div className="tm-stage">
           <div className="tm-mapwrap">
             <div className="tm-mapcard">
@@ -1333,8 +1512,8 @@
                     trackPositionSample={replayActive ? replay.data?.trackPositionSample : null}
                     lapPaceSeconds={replayLapPace} />
                   {mapTracking && <MapControls paused={paused} setPaused={setTrackPaused} focusCode={focusCode} onClear={() => setFocus(null)}
-                    replay={replayActive} elapsedSeconds={replay.elapsedSeconds} onStopReplay={stopTrackMapReplay} />}
-                  <MapLegend live={mapTracking} layers={layers} carCount={cars.length} />
+                    replay={replayActive} elapsedClock={replayElapsedClock} elapsedSeconds={replay.elapsedSeconds} onStopReplay={stopTrackMapReplay} />}
+                  <MemoizedMapLegend live={mapTracking} layers={layers} carCount={cars.length} />
                   {selTurnObj && <TurnCard circuitName={circuit.name} turn={selTurnObj} onClose={() => setSelTurn(null)} />}
                 </>
               ) : (
@@ -1352,7 +1531,7 @@
               <TimingTower rows={activeTiming} byCode={data.byCode} lap={headerRace.lap} laps={headerRace.laps}
                 battles={battles} focusCode={focusCode} onFocus={setFocus} />
             ) : geom ? (
-              <CircuitFacts circuit={circuit} turns={geom.turns} selTurn={selTurn} onSelTurn={setSelTurn} />
+              <MemoizedCircuitFacts circuit={circuit} turns={geom.turns} selTurn={selTurn} onSelTurn={setSelTurn} />
             ) : (
               <div className="tm-rail">
                 <div className="tm-rail__hd"><span className="tm-rail__ttl">Circuit Facts</span></div>
@@ -1385,6 +1564,11 @@
         )}
       </div>
     );
+  }
+
+  function TrackMap() {
+    const { data, dataSource } = window.PW.usePitWall();
+    return <TrackMapDynamicReplayStage data={data} dataSource={dataSource} />;
   }
 
   window.PW = window.PW || {};

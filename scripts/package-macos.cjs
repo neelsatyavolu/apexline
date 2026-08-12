@@ -24,6 +24,65 @@ function envFlag(name) {
   return /^(1|true|yes)$/i.test(String(process.env[name] || ""));
 }
 
+function packagedRuntimeFiles() {
+  return [
+    "react/umd/react.production.min.js",
+    "react/LICENSE",
+    "react-dom/umd/react-dom.production.min.js",
+    "react-dom/LICENSE",
+    "hls.js/dist/hls.min.js",
+    "hls.js/LICENSE",
+    "shaka-player/dist/shaka-player.compiled.js",
+    "shaka-player/LICENSE",
+  ];
+}
+
+function copyPackagedRuntime(sourceRoot, targetRoot) {
+  for (const relativePath of packagedRuntimeFiles()) {
+    const target = path.join(targetRoot, relativePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(sourceRoot, relativePath), target);
+  }
+}
+
+function shouldKeepPackageSnapshot(environment) {
+  return String(environment?.APEXLINE_KEEP_PACKAGE_SNAPSHOT || "") === "1";
+}
+
+function packageSnapshotMessage(snapshotPath, keepSnapshot) {
+  return keepSnapshot
+    ? `Snapshot ${snapshotPath}`
+    : "Snapshot disabled (set APEXLINE_KEEP_PACKAGE_SNAPSHOT=1 to retain one)";
+}
+
+function resolveByteCeiling(environment, name, defaultBytes) {
+  const raw = String(environment?.[name] || "").trim();
+  const value = raw ? Number(raw) : defaultBytes;
+  if (!/^[1-9]\d*$/.test(raw || String(defaultBytes)) || !Number.isSafeInteger(value)) {
+    throw new Error(`${name} must be a positive safe integer byte count.`);
+  }
+  return value;
+}
+
+function assertArtifactSize(actualBytes, maxBytes, label) {
+  if (!Number.isSafeInteger(actualBytes) || actualBytes < 0) {
+    throw new Error(`${label} size must be a non-negative safe integer.`);
+  }
+  if (actualBytes > maxBytes) {
+    throw new Error(`${label} is too large (${actualBytes} bytes; maximum ${maxBytes} bytes).`);
+  }
+  return actualBytes;
+}
+
+function directorySizeBytes(directory) {
+  let total = 0;
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    total += entry.isDirectory() ? directorySizeBytes(entryPath) : fs.lstatSync(entryPath).size;
+  }
+  return total;
+}
+
 function copyEntry(source, target) {
   ensure(fs.existsSync(source), `Missing ${path.relative(root, source)}`);
   fs.cpSync(source, target, { recursive: true, verbatimSymlinks: true });
@@ -507,6 +566,7 @@ function adHocSign(appPath) {
 
 // --- build ---
 
+const maxAppBytes = resolveByteCeiling(process.env, "APEXLINE_MAX_APP_BYTES", 330 * 1024 * 1024);
 ensure(fs.existsSync(electronApp), "Electron runtime is not installed. Run /opt/homebrew/bin/npm install first.");
 ensure(fs.existsSync(path.join(root, "dist/pitwall/index.html")), "Renderer is not built. Run /opt/homebrew/bin/npm run build first.");
 
@@ -514,6 +574,7 @@ fs.mkdirSync(outRoot, { recursive: true });
 const stamp = buildStamp();
 const appPath = baseOut;
 const snapshotPath = path.join(outRoot, `Apexline-${stamp}.app`);
+const keepPackageSnapshot = shouldKeepPackageSnapshot(process.env);
 fs.rmSync(appPath, { recursive: true, force: true });
 copyEntry(electronApp, appPath);
 repairMacFrameworkSymlinks(appPath);
@@ -533,9 +594,7 @@ for (const entry of ["styles.css", "_ds_bundle.js"]) {
 }
 
 fs.mkdirSync(path.join(appDir, "node_modules"), { recursive: true });
-for (const packageName of ["react", "react-dom", "hls.js", "shaka-player"]) {
-  copyEntry(path.join(root, "node_modules", packageName), path.join(appDir, "node_modules", packageName));
-}
+copyPackagedRuntime(path.join(root, "node_modules"), path.join(appDir, "node_modules"));
 
 fs.writeFileSync(path.join(appDir, "package.json"), JSON.stringify({
   name: "apexline",
@@ -594,11 +653,15 @@ try {
   if (!shellManagedKeychain) cleanupCertificateKeychain(keychainSession);
 }
 
+const appBytes = directorySizeBytes(appPath);
+assertArtifactSize(appBytes, maxAppBytes, "Packaged app");
 const size = execFileSync("du", ["-sh", appPath], { encoding: "utf8" }).trim().split(/\s+/)[0];
-fs.rmSync(snapshotPath, { recursive: true, force: true });
-copyEntry(appPath, snapshotPath);
+if (keepPackageSnapshot) {
+  ensure(!fs.existsSync(snapshotPath), `Refusing to overwrite existing snapshot ${snapshotPath}`);
+  copyEntry(appPath, snapshotPath);
+}
 console.log(`Built ${appPath}`);
-console.log(`Snapshot ${snapshotPath}`);
+console.log(packageSnapshotMessage(snapshotPath, keepPackageSnapshot));
 console.log(`Size ${size}`);
 console.log(`Bundle ID ${bundleId}`);
 console.log(`Signing ${wantDeveloperId ? `Developer ID (${identity})` : "ad-hoc"}`);

@@ -68,6 +68,12 @@ contextBridge.exposeInMainWorld("pitwall", {
   },
   data: {
     snapshot: (options = {}) => ipcRenderer.invoke("pitwall:data:snapshot", options),
+    onUpdated: (callback) => {
+      if (typeof callback !== "function") return () => {};
+      const listener = () => callback();
+      ipcRenderer.on("pitwall:data:updated", listener);
+      return () => ipcRenderer.removeListener("pitwall:data:updated", listener);
+    },
     liveTiming: (options = {}) => ipcRenderer.invoke("pitwall:data:liveTiming", options),
     liveTimingResync: () => ipcRenderer.invoke("pitwall:data:liveTimingResync"),
     replayTiming: (options = {}) => ipcRenderer.invoke("pitwall:data:replayTiming", options),

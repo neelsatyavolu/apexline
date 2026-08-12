@@ -31,7 +31,7 @@
 
     .feed__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-7); }
     @media (max-width: 1180px) { .feed__grid { grid-template-columns: 1fr; } }
-    .item { display: flex; flex-direction: column; border-radius: var(--radius-md); background: var(--surface-card); border: 1px solid var(--border-subtle); cursor: pointer; overflow: hidden; transition: var(--tr-surface); }
+    .item { display: flex; flex-direction: column; border-radius: var(--radius-md); background: var(--surface-card); border: 1px solid var(--border-subtle); cursor: pointer; overflow: hidden; transition: var(--tr-surface); content-visibility: auto; contain-intrinsic-size: 350px; }
     .item:hover { background: var(--surface-hover); border-color: var(--border-default); }
     .item:hover .item__thumb img { transform: scale(1.04); }
     .item[data-selected="true"] { border-color: var(--accent-border); background: var(--accent-quiet); }
@@ -115,27 +115,50 @@
     return Math.max(1, Math.ceil(words / 220));
   }
 
+  function deriveNewsStories(news) {
+    return (Array.isArray(news) ? news : [])
+      .filter((story) => story && typeof story === "object")
+      .map((story, index) => ({ ...story, id: story.id || "story-" + index }));
+  }
+
+  function deriveNewsFilters(stories) {
+    return ["All", ...Array.from(new Set(stories.map((story) => story.tag).filter(Boolean)))];
+  }
+
+  function deriveFilteredNewsStories(stories, filter, query) {
+    const normalizedQuery = String(query || "").trim().toLowerCase();
+    return stories.filter((story) => {
+      const matchesFilter = filter === "All" || story.tag === filter;
+      const haystack = [story.title, story.lead, story.source, story.tag, story.team].join(" ").toLowerCase();
+      return matchesFilter && (!normalizedQuery || haystack.includes(normalizedQuery));
+    });
+  }
+
+  function deriveSavedNewsStories(stories, bookmarks) {
+    return stories.filter((story) => bookmarks.includes(story.id));
+  }
+
+  function deriveTrendingNewsStories(stories) {
+    return stories.map((story, index) => ({ story, rank: index + 1 }));
+  }
+
   function News() {
     const { data: D, dataSource, refreshData } = window.PW.usePitWall();
-    const stories = D.news.map((n, i) => ({ ...n, id: n.id || "story-" + i }));
+    const stories = React.useMemo(() => deriveNewsStories(D?.news), [D?.news]);
     const [filter, setFilter] = React.useState("All");
     const [query, setQuery] = React.useState("");
     const [selectedId, setSelectedId] = React.useState(stories[0]?.id);
     const [readerStory, setReaderStory] = React.useState(null);
     const [bookmarks, setBookmarks] = React.useState([]);
     const [refreshing, setRefreshing] = React.useState(false);
-    const filters = ["All", ...Array.from(new Set(stories.map((story) => story.tag).filter(Boolean)))];
-    const q = query.trim().toLowerCase();
-    const filtered = stories.filter((n) => {
-      const matchesFilter = filter === "All" || n.tag === filter;
-      const haystack = [n.title, n.lead, n.source, n.tag, n.team].join(" ").toLowerCase();
-      return matchesFilter && (!q || haystack.includes(q));
-    });
+    const filters = React.useMemo(() => deriveNewsFilters(stories), [stories]);
+    const filtered = React.useMemo(() => deriveFilteredNewsStories(stories, filter, query), [stories, filter, query]);
     const [lead, ...rest] = filtered;
-    const selectedStory = stories.find((n) => n.id === selectedId) || lead || stories[0];
-    const savedStories = stories.filter((n) => bookmarks.includes(n.id));
-    const readerParagraphs = articleParagraphs(readerStory);
-    const readerImages = Array.from(new Set([readerStory?.image, ...(readerStory?.images || [])].filter(Boolean)));
+    const selectedStory = React.useMemo(() => stories.find((story) => story.id === selectedId) || lead || stories[0], [stories, selectedId, lead]);
+    const savedStories = React.useMemo(() => deriveSavedNewsStories(stories, bookmarks), [stories, bookmarks]);
+    const trendingStories = React.useMemo(() => deriveTrendingNewsStories(stories), [stories]);
+    const readerParagraphs = React.useMemo(() => articleParagraphs(readerStory), [readerStory]);
+    const readerImages = React.useMemo(() => Array.from(new Set([readerStory?.image, ...(readerStory?.images || [])].filter(Boolean))), [readerStory]);
 
     React.useEffect(() => {
       if (!selectedId && stories[0]) setSelectedId(stories[0].id);
@@ -243,10 +266,10 @@
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-9)" }}>
           <Card title="Trending" subtitle="Across your sources" padding="tight">
             <div style={{ padding: "0 6px" }}>
-              {stories.map((n, i) => (
-                <div className="trend" key={n.id} onClick={() => openReader(n)} style={{ cursor: "pointer" }}>
-                  <span className="trend__rank">{i + 1}</span>
-                  <span className="trend__txt">{n.title}</span>
+              {trendingStories.map(({ story, rank }) => (
+                <div className="trend" key={story.id} onClick={() => openReader(story)} style={{ cursor: "pointer" }}>
+                  <span className="trend__rank">{rank}</span>
+                  <span className="trend__txt">{story.title}</span>
                 </div>
               ))}
             </div>

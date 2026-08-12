@@ -5,6 +5,7 @@ const vm = require("node:vm");
 const zlib = require("node:zlib");
 const Babel = require("@babel/standalone");
 
+async function runSmokeChecks() {
 const root = path.resolve(__dirname, "..");
 
 function decodePngRgba(buffer) {
@@ -206,6 +207,84 @@ assert.match(openF1ReplayProbe, /openF1SectorTimes[\s\S]*parseTiming/, "OpenF1 r
 assert.match(openF1ReplayProbe, /replayRowsTimeline[\s\S]*filterReplayRowsAt/, "OpenF1 replay probe should extract replay row timeline helpers used by filterReplayRowsAt");
 assert.match(packageScript, /const appPath = baseOut/, "macOS packaging should always rebuild dist/Apexline.app as the current app");
 assert.match(packageScript, /Snapshot \$\{snapshotPath\}/, "macOS packaging should also keep a timestamped snapshot path");
+const packagedRuntimeFiles = vm.runInNewContext(`(${extractNamedFunction(packageScript, "packagedRuntimeFiles")})`);
+const runtimeFiles = Array.from(packagedRuntimeFiles());
+assert.deepEqual(runtimeFiles, [
+  "react/umd/react.production.min.js",
+  "react/LICENSE",
+  "react-dom/umd/react-dom.production.min.js",
+  "react-dom/LICENSE",
+  "hls.js/dist/hls.min.js",
+  "hls.js/LICENSE",
+  "shaka-player/dist/shaka-player.compiled.js",
+  "shaka-player/LICENSE",
+], "macOS packaging should use an explicit production runtime and license allowlist");
+const runtimeBytes = runtimeFiles.reduce((total, relativePath) => {
+  const sourcePath = path.join(root, "node_modules", relativePath);
+  assert.ok(fs.existsSync(sourcePath), `Packaged runtime allowlist entry should exist: ${relativePath}`);
+  return total + fs.statSync(sourcePath).size;
+}, 0);
+assert.ok(runtimeBytes < 2_097_152, `Packaged runtime allowlist should remain below 2 MiB (found ${runtimeBytes} bytes)`);
+const copyPackagedRuntime = vm.runInNewContext(`(${extractNamedFunction(packageScript, "copyPackagedRuntime")})`, {
+  fs,
+  path,
+  packagedRuntimeFiles,
+});
+const runtimeStageRoot = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "apexline-runtime-stage-"));
+try {
+  copyPackagedRuntime(path.join(root, "node_modules"), runtimeStageRoot);
+  const stagedFiles = [];
+  const visitStagedRuntime = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) visitStagedRuntime(entryPath);
+      else stagedFiles.push(path.relative(runtimeStageRoot, entryPath));
+    }
+  };
+  visitStagedRuntime(runtimeStageRoot);
+  assert.deepEqual(stagedFiles.sort(), runtimeFiles.slice().sort(), "A staged packaged runtime tree should contain exactly the allowlisted scripts and licenses");
+  const stagedRuntimeBytes = stagedFiles.reduce((total, relativePath) => total + fs.statSync(path.join(runtimeStageRoot, relativePath)).size, 0);
+  assert.equal(stagedRuntimeBytes, runtimeBytes, "A staged packaged runtime tree should preserve every allowlisted file byte-for-byte");
+} finally {
+  fs.rmSync(runtimeStageRoot, { recursive: true, force: true });
+}
+assert.doesNotMatch(packageScript, /for \(const packageName of \["react", "react-dom", "hls\.js", "shaka-player"\]\)[\s\S]*copyEntry\(path\.join\(root, "node_modules", packageName\)/, "macOS packaging should not recursively copy full playback packages");
+const shouldKeepPackageSnapshot = vm.runInNewContext(`(${extractNamedFunction(packageScript, "shouldKeepPackageSnapshot")})`);
+const packageSnapshotMessage = vm.runInNewContext(`(${extractNamedFunction(packageScript, "packageSnapshotMessage")})`);
+assert.equal(shouldKeepPackageSnapshot({}), false, "macOS packaging should not retain timestamped snapshots by default");
+assert.equal(shouldKeepPackageSnapshot({ APEXLINE_KEEP_PACKAGE_SNAPSHOT: "0" }), false, "macOS packaging should keep snapshots disabled for zero");
+assert.equal(shouldKeepPackageSnapshot({ APEXLINE_KEEP_PACKAGE_SNAPSHOT: "true" }), false, "macOS packaging snapshot retention should require the explicit value 1");
+assert.equal(shouldKeepPackageSnapshot({ APEXLINE_KEEP_PACKAGE_SNAPSHOT: "1" }), true, "macOS packaging should retain a snapshot when explicitly requested");
+assert.equal(
+  packageSnapshotMessage("/tmp/Apexline-20260723-120000.app", true),
+  "Snapshot /tmp/Apexline-20260723-120000.app",
+  "opt-in package output should report the retained snapshot path",
+);
+assert.equal(
+  packageSnapshotMessage("/tmp/Apexline-20260723-120000.app", false),
+  "Snapshot disabled (set APEXLINE_KEEP_PACKAGE_SNAPSHOT=1 to retain one)",
+  "default package output should clearly report that snapshot retention is disabled",
+);
+assert.doesNotMatch(packageScript, /fs\.rmSync\(snapshotPath/, "macOS packaging should never delete an existing timestamped snapshot");
+assert.match(packageScript, /if \(keepPackageSnapshot\)[\s\S]*copyEntry\(appPath, snapshotPath\)/, "macOS packaging should only copy a timestamped snapshot in the opt-in branch");
+const resolvePackageByteCeiling = vm.runInNewContext(`(${extractNamedFunction(packageScript, "resolveByteCeiling")})`);
+const assertPackageArtifactSize = vm.runInNewContext(`(${extractNamedFunction(packageScript, "assertArtifactSize")})`);
+const defaultMaxAppBytes = 330 * 1024 * 1024;
+assert.equal(resolvePackageByteCeiling({}, "APEXLINE_MAX_APP_BYTES", defaultMaxAppBytes), defaultMaxAppBytes, "macOS packaging should default to a 330 MiB app ceiling");
+assert.equal(resolvePackageByteCeiling({ APEXLINE_MAX_APP_BYTES: "123456" }, "APEXLINE_MAX_APP_BYTES", defaultMaxAppBytes), 123456, "macOS packaging should honor a valid app-size override");
+for (const invalid of ["0", "-1", "1.5", "not-bytes", "9007199254740992"]) {
+  assert.throws(
+    () => resolvePackageByteCeiling({ APEXLINE_MAX_APP_BYTES: invalid }, "APEXLINE_MAX_APP_BYTES", defaultMaxAppBytes),
+    /APEXLINE_MAX_APP_BYTES must be a positive safe integer byte count/,
+    `macOS packaging should reject invalid app-size override ${invalid}`,
+  );
+}
+assert.doesNotThrow(() => assertPackageArtifactSize(defaultMaxAppBytes, defaultMaxAppBytes, "Packaged app"), "app-size guard should accept the exact ceiling");
+assert.throws(() => assertPackageArtifactSize(defaultMaxAppBytes + 1, defaultMaxAppBytes, "Packaged app"), /Packaged app is too large/, "app-size guard should reject one byte above the ceiling");
+assert.ok(
+  packageScript.indexOf("assertArtifactSize(appBytes, maxAppBytes") < packageScript.indexOf("console.log(`Built ${appPath}`)"),
+  "macOS packaging should enforce its app-size ceiling before reporting success",
+);
 assert.ok(packageJson.dependencies.react, "React should be a local dependency");
 assert.ok(packageJson.dependencies["hls.js"], "HLS playback should use hls.js");
 assert.ok(packageJson.dependencies["shaka-player"], "Protected DASH/Widevine playback should use Shaka Player");
@@ -262,15 +341,198 @@ assert.ok(fs.existsSync(path.join(root, "updates-site/public/favicon.svg")), "Ap
 assert.ok(fs.existsSync(path.join(root, "updates-site/public/updates/darwin/arm64/releases.json")), "Apexline should include a seed macOS arm64 update feed");
 const updateSiteIndex = fs.existsSync(path.join(root, "updates-site/public/index.html")) ? fs.readFileSync(path.join(root, "updates-site/public/index.html"), "utf8") : "";
 const updateFeed = JSON.parse(fs.readFileSync(path.join(root, "updates-site/public/updates/darwin/arm64/releases.json"), "utf8"));
+const prepareUpdateSource = fs.readFileSync(path.join(root, "scripts/prepare-vercel-update.cjs"), "utf8");
+const replaceLandingPageVersion = vm.runInNewContext(`(${extractNamedFunction(prepareUpdateSource, "replaceLandingPageVersion")})`);
+const resolveUpdateByteCeiling = vm.runInNewContext(`(${extractNamedFunction(prepareUpdateSource, "resolveByteCeiling")})`);
+const assertUpdateArtifactSize = vm.runInNewContext(`(${extractNamedFunction(prepareUpdateSource, "assertArtifactSize")})`);
+const defaultMaxUpdateZipBytes = 150 * 1024 * 1024;
+assert.equal(resolveUpdateByteCeiling({}, "APEXLINE_MAX_UPDATE_ZIP_BYTES", defaultMaxUpdateZipBytes), defaultMaxUpdateZipBytes, "update prep should default to a 150 MiB zip ceiling");
+assert.equal(resolveUpdateByteCeiling({ APEXLINE_MAX_UPDATE_ZIP_BYTES: "654321" }, "APEXLINE_MAX_UPDATE_ZIP_BYTES", defaultMaxUpdateZipBytes), 654321, "update prep should honor a valid zip-size override");
+for (const invalid of ["0", "-1", "1.5", "not-bytes", "9007199254740992"]) {
+  assert.throws(
+    () => resolveUpdateByteCeiling({ APEXLINE_MAX_UPDATE_ZIP_BYTES: invalid }, "APEXLINE_MAX_UPDATE_ZIP_BYTES", defaultMaxUpdateZipBytes),
+    /APEXLINE_MAX_UPDATE_ZIP_BYTES must be a positive safe integer byte count/,
+    `update prep should reject invalid zip-size override ${invalid}`,
+  );
+}
+assert.doesNotThrow(() => assertUpdateArtifactSize(defaultMaxUpdateZipBytes, defaultMaxUpdateZipBytes, "Update zip"), "zip-size guard should accept the exact ceiling");
+assert.throws(() => assertUpdateArtifactSize(defaultMaxUpdateZipBytes + 1, defaultMaxUpdateZipBytes, "Update zip"), /Update zip is too large/, "zip-size guard should reject one byte above the ceiling");
+const createValidatedUpdateZip = vm.runInNewContext(`(${extractNamedFunction(prepareUpdateSource, "createValidatedUpdateZip")})`, {
+  assertArtifactSize: assertUpdateArtifactSize,
+  Buffer,
+  crypto: { randomUUID: () => "fixture" },
+  ensure: (condition, message) => {
+    if (!condition) throw new Error(message);
+  },
+  execFileSync: () => {
+    throw new Error("fixture must inject compression");
+  },
+  fs,
+  path,
+  process: { pid: 123 },
+});
+const zipFixtureRoot = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "apexline-update-stage-"));
+const protectedZipPath = path.join(zipFixtureRoot, "Apexline-fixture.zip");
+const minimumUpdateZipBytes = 1024 * 1024;
+const storedZipFixture = (payload, name = "payload.bin") => {
+  const fileName = Buffer.from(name);
+  const crc = zlib.crc32(payload);
+  const localHeader = Buffer.alloc(30);
+  localHeader.writeUInt32LE(0x04034b50, 0);
+  localHeader.writeUInt16LE(20, 4);
+  localHeader.writeUInt32LE(crc, 14);
+  localHeader.writeUInt32LE(payload.length, 18);
+  localHeader.writeUInt32LE(payload.length, 22);
+  localHeader.writeUInt16LE(fileName.length, 26);
+  const centralHeader = Buffer.alloc(46);
+  centralHeader.writeUInt32LE(0x02014b50, 0);
+  centralHeader.writeUInt16LE(20, 4);
+  centralHeader.writeUInt16LE(20, 6);
+  centralHeader.writeUInt32LE(crc, 16);
+  centralHeader.writeUInt32LE(payload.length, 20);
+  centralHeader.writeUInt32LE(payload.length, 24);
+  centralHeader.writeUInt16LE(fileName.length, 28);
+  const centralOffset = localHeader.length + fileName.length + payload.length;
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(centralHeader.length + fileName.length, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  return Buffer.concat([localHeader, fileName, payload, centralHeader, fileName, end]);
+};
+const validFixtureZip = storedZipFixture(Buffer.alloc(minimumUpdateZipBytes + 1));
+const failedZipScenarios = [
+  {
+    name: "compression",
+    maximum: defaultMaxUpdateZipBytes,
+    write: (_source, temporaryPath) => {
+      fs.writeFileSync(temporaryPath, "partial");
+      throw new Error("simulated compression failure");
+    },
+    error: /simulated compression failure/,
+  },
+  {
+    name: "minimum size",
+    maximum: defaultMaxUpdateZipBytes,
+    write: (_source, temporaryPath) => fs.writeFileSync(temporaryPath, Buffer.from("PK")),
+    error: /Update zip is too small/,
+  },
+  {
+    name: "magic",
+    maximum: defaultMaxUpdateZipBytes,
+    write: (_source, temporaryPath) => fs.writeFileSync(temporaryPath, Buffer.alloc(minimumUpdateZipBytes + 2)),
+    error: /not a PKZip archive/,
+  },
+  {
+    name: "maximum size",
+    maximum: minimumUpdateZipBytes + 1,
+    write: (_source, temporaryPath) => fs.writeFileSync(temporaryPath, validFixtureZip),
+    error: /Update zip is too large/,
+  },
+];
+try {
+  for (const scenario of failedZipScenarios) {
+    fs.writeFileSync(protectedZipPath, validFixtureZip);
+    assert.throws(
+      () => createValidatedUpdateZip("/fixture/Apexline.app", protectedZipPath, scenario.maximum, scenario.write),
+      scenario.error,
+      `${scenario.name} failure should stop update zip publication`,
+    );
+    assert.deepEqual(fs.readFileSync(protectedZipPath), validFixtureZip, `${scenario.name} failure should preserve the existing valid update zip byte-for-byte`);
+    assert.deepEqual(fs.readdirSync(zipFixtureRoot), [path.basename(protectedZipPath)], `${scenario.name} failure should clean only its owned temporary sibling`);
+  }
+
+  let largestHeaderRead = 0;
+  const trackedFs = Object.create(fs);
+  trackedFs.readSync = (fd, buffer, offset, length, position) => {
+    largestHeaderRead = Math.max(largestHeaderRead, length);
+    return fs.readSync(fd, buffer, offset, length, position);
+  };
+  const trackedCreateValidatedUpdateZip = vm.runInNewContext(`(${extractNamedFunction(prepareUpdateSource, "createValidatedUpdateZip")})`, {
+    assertArtifactSize: assertUpdateArtifactSize,
+    Buffer,
+    crypto: { randomUUID: () => "tracked-fixture" },
+    ensure: (condition, message) => {
+      if (!condition) throw new Error(message);
+    },
+    execFileSync: () => {
+      throw new Error("fixture must inject compression");
+    },
+    fs: trackedFs,
+    path,
+    process: { pid: 124 },
+  });
+  fs.writeFileSync(protectedZipPath, Buffer.from("old"));
+  const publishedZipStat = trackedCreateValidatedUpdateZip(
+    "/fixture/Apexline.app",
+    protectedZipPath,
+    defaultMaxUpdateZipBytes,
+    (_source, temporaryPath) => fs.writeFileSync(temporaryPath, validFixtureZip),
+  );
+  assert.equal(publishedZipStat.size, validFixtureZip.length, "successful update staging should return the published zip stat");
+  assert.deepEqual(fs.readFileSync(protectedZipPath), validFixtureZip, "successful update staging should atomically replace the final zip");
+  assert.ok(largestHeaderRead > 0 && largestHeaderRead <= 80, `update zip validation should read at most the first 80 bytes (read ${largestHeaderRead})`);
+  assert.deepEqual(fs.readdirSync(zipFixtureRoot), [path.basename(protectedZipPath)], "successful update publication should leave no temporary sibling behind");
+} finally {
+  fs.rmSync(zipFixtureRoot, { recursive: true, force: true });
+}
+const createValidatedUpdateZipSource = extractNamedFunction(prepareUpdateSource, "createValidatedUpdateZip");
+assert.doesNotMatch(createValidatedUpdateZipSource, /readFileSync/, "update zip validation should never read the full archive into memory");
+assert.ok(
+  createValidatedUpdateZipSource.indexOf("fs.statSync(temporaryPath)") < createValidatedUpdateZipSource.indexOf("fs.openSync(temporaryPath"),
+  "update zip validation should check staged size before opening the archive header",
+);
+assert.doesNotMatch(prepareUpdateSource, /fs\.rmSync\(zipPath/, "update prep should never remove an existing final zip before successful staging");
+assert.match(prepareUpdateSource, /const zipStat = createValidatedUpdateZip\(appPath, zipPath, maxUpdateZipBytes\)/, "update prep should publish only through validated temporary staging");
+assert.ok(
+  prepareUpdateSource.indexOf("assertArtifactSize(zipStat.size, maxUpdateZipBytes") < prepareUpdateSource.indexOf("fs.writeFileSync(feedPath"),
+  "update prep should enforce its zip-size ceiling before publishing the release feed",
+);
+const oldLandingPageFixture = [
+  '<a href="/updates/darwin/arm64/Apexline-1.0.1-mac-arm64.zip">Top</a>',
+  '<a href="/updates/darwin/arm64/Apexline-1.0.2-mac-arm64.zip">Hero</a>',
+  '<a href="/updates/darwin/arm64/Apexline-1.0.3-mac-arm64.zip">Download</a>',
+  '<span class="badge-pill">Version 1.0.1</span>',
+  '<p>Download Version 1.0.2 for Apple Silicon macOS.</p>',
+  '<span class="meta">v1.0.3 · 135 MB</span>',
+  '<div class="req"><span class="rk">Version</span><span class="rv">1.0.3</span></div>',
+  '<a href="/updates/darwin/arm64/releases.json">Feed</a>',
+  '<a href="/updates/darwin/x64/Apexline-1.0.3-mac-x64.zip">Intel</a>',
+].join("\n");
+const replacedLandingPageFixture = replaceLandingPageVersion(oldLandingPageFixture, "2.3.4");
+assert.equal(
+  (replacedLandingPageFixture.match(/Apexline-2\.3\.4-mac-arm64\.zip/g) || []).length,
+  3,
+  "Update feed prep should replace every old-version macOS arm64 download link",
+);
+assert.doesNotMatch(replacedLandingPageFixture, /Apexline-1\.0\.[123]-mac-arm64\.zip/, "Update feed prep should leave no stale macOS arm64 download links");
+assert.match(replacedLandingPageFixture, /badge-pill">Version 2\.3\.4</, "Update feed prep should refresh the visible version badge");
+assert.match(replacedLandingPageFixture, /Download Version 2\.3\.4 for Apple Silicon/, "Update feed prep should refresh the visible download copy");
+assert.match(replacedLandingPageFixture, /class="meta">v2\.3\.4 · 135 MB/, "Update feed prep should refresh the visible version metadata");
+assert.match(replacedLandingPageFixture, /class="rk">Version<\/span><span class="rv">2\.3\.4</, "Update feed prep should refresh the visible version requirement");
+assert.match(replacedLandingPageFixture, /updates\/darwin\/arm64\/releases\.json/, "Update feed prep should preserve unrelated feed links");
+assert.match(replacedLandingPageFixture, /Apexline-1\.0\.3-mac-x64\.zip/, "Update feed prep should preserve unrelated architecture links");
 assert.match(updateSiteIndex, /Apexline for macOS/, "Apexline landing page should identify the app clearly");
 assert.match(updateSiteIndex, /<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml">/, "Apexline landing page should link the website favicon");
-assert.match(updateSiteIndex, new RegExp(`Apexline-${packageJson.version.replace(/\./g, "\\.")}-mac-arm64\\.zip`), "Apexline landing page should download the current macOS artifact");
+const deployedArm64ArtifactVersions = Array.from(
+  updateSiteIndex.matchAll(/\/updates\/darwin\/arm64\/Apexline-([0-9A-Za-z.+-]+)-mac-arm64\.zip/g),
+  (match) => match[1],
+);
+assert.equal(deployedArm64ArtifactVersions.length, 3, "Apexline landing page should expose exactly three macOS arm64 download links");
+assert.deepEqual(
+  deployedArm64ArtifactVersions,
+  Array(3).fill(packageJson.version),
+  "Every Apexline landing-page macOS arm64 download link should use the current package version",
+);
 assert.match(updateSiteIndex, /updates\/darwin\/arm64\/releases\.json/, "Apexline landing page should link the app update feed");
 assert.match(updateSiteIndex, /<div class="n">22<\/div><div class="l">Driver timing rows<\/div>/, "Apexline landing page should reflect the 22-driver timing field without implying guaranteed live tracking");
 assert.match(updateSiteIndex, /active F1 TV subscription/, "Apexline landing page should be explicit that streams require the user's F1 TV subscription");
-assert.match(updateSiteIndex, /not Apple Developer ID signed or notarized/, "Apexline landing page should explain why updates are manual downloads");
+assert.match(updateSiteIndex, /Developer ID signed and Apple notarized/, "Apexline landing page should accurately describe the signed and notarized 1.1.8 build");
+assert.match(updateSiteIndex, /Updates remain manual downloads from the public update feed/, "Apexline landing page should retain the manual-download update explanation");
+assert.doesNotMatch(updateSiteIndex, /not Apple Developer ID signed or notarized/, "Apexline landing page should not describe the signed 1.1.8 build as unsigned");
 assert.doesNotMatch(updateSiteIndex, /Live now|Free during beta|Apple Silicon &amp; Intel|menu bar live timing|24<\/div><div class="l">Grands Prix|broadcast-grade|exactly like the broadcast|private-repo safe|any combination of onboard cameras|Browser tabs needed/, "Apexline landing page should not publish prototype-only, unsupported, or over-polished marketing claims");
-[
+const landingScreenshotAssets = [
   "apexline-live-racing-current.png",
   "apexline-screen-track-map.png",
   "apexline-screen-ai-copilot-next-weekend.png",
@@ -281,12 +543,30 @@ assert.doesNotMatch(updateSiteIndex, /Live now|Free during beta|Apple Silicon &a
   "apexline-screen-schedule.png",
   "apexline-screen-leaderboards.png",
   "apexline-screen-weekend.png",
-].forEach((asset) => {
+];
+const landingScreenshotTags = updateSiteIndex.match(/<img\b[^>]*src="\.\/assets\/apexline-(?:live-racing-current|screen-[^"]+)\.png"[^>]*>/g) || [];
+assert.equal(landingScreenshotTags.length, 10, "Apexline landing page should reference exactly ten product screenshots");
+const liveScreenshotTag = landingScreenshotTags.find((tag) => tag.includes("apexline-live-racing-current.png"));
+assert.ok(liveScreenshotTag, "Apexline landing page should include the first visible Live Racing screenshot");
+assert.match(liveScreenshotTag, /\bloading="eager"/, "The first visible Live Racing screenshot should load eagerly");
+assert.match(liveScreenshotTag, /\bfetchpriority="high"/, "The first visible Live Racing screenshot should receive high fetch priority");
+assert.match(liveScreenshotTag, /\bdecoding="async"/, "The first visible Live Racing screenshot should decode asynchronously");
+const belowFoldScreenshotTags = landingScreenshotTags.filter((tag) => !tag.includes("apexline-live-racing-current.png"));
+assert.equal(belowFoldScreenshotTags.length, 9, "Apexline landing page should have nine below-fold screenshots");
+for (const tag of belowFoldScreenshotTags) {
+  assert.match(tag, /\bloading="lazy"/, "Below-fold screenshots should load lazily");
+  assert.match(tag, /\bdecoding="async"/, "Below-fold screenshots should decode asynchronously");
+  assert.doesNotMatch(tag, /\bfetchpriority="high"/, "Below-fold screenshots should not receive high fetch priority");
+}
+let landingScreenshotBytes = 0;
+landingScreenshotAssets.forEach((asset) => {
   const assetPath = path.join(root, "updates-site/public/assets", asset);
   assert.match(updateSiteIndex, new RegExp(asset.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${asset} should be referenced by the landing page`);
+  landingScreenshotBytes += fs.statSync(assetPath).size;
   const size = readPngSize(assetPath);
   assert.ok(size.width >= 3000 && size.height >= 1800, `${asset} should be a high-resolution screenshot`);
 });
+assert.ok(landingScreenshotBytes <= 17_160_049, `Landing-page product screenshots should not exceed 17,160,049 bytes (found ${landingScreenshotBytes})`);
 assert.equal(updateFeed.releases?.[0]?.updateTo?.url, `https://apexline.io/updates/darwin/arm64/Apexline-${packageJson.version}-mac-arm64.zip`, "Update feed should point at the public Apexline domain");
 assert.match(pitwallIndex, /Drivers\.jsx/, "Apexline app should load the drivers page component");
 assert.match(pitwallIndex, /Teams\.jsx/, "Apexline app should load the teams page component");
@@ -298,7 +578,10 @@ assert.match(mainProcess, /pitwall:updates:check/, "Electron should expose a nar
 assert.match(mainProcess, /pitwall:updates:install/, "Electron should expose a packaged-app update installer IPC handler");
 assert.match(mainProcess, /currentAppBundlePath/, "Update installer should locate the current macOS .app bundle before replacing it");
 assert.match(mainProcess, /downloadPitWallUpdate/, "Update installer should download the selected release inside the app instead of only opening a browser");
+assert.match(mainProcess, /assertValidUpdateZip|PKZip|git-lfs/, "Update installer should reject Git LFS pointers / non-zip downloads before ditto");
 assert.match(mainProcess, /"-x", "-k"/, "Update installer should extract the hosted zip with ditto before replacing the app");
+const prepareUpdate = fs.readFileSync(path.join(root, "scripts/prepare-vercel-update.cjs"), "utf8");
+assert.match(prepareUpdate, /0x50 && zipMagic\[1\] === 0x4b|PKZip|git-lfs/, "Update feed prep should refuse to publish LFS pointer files as zips");
 assert.match(mainProcess, /app\.quit\(\)/, "Update installer should quit the current app after scheduling replacement and relaunch");
 assert.match(mainProcess, /PITWALL_UPDATE_BASE_URL/, "Electron should read update feed hosting from the packaged app or environment");
 assert.doesNotMatch(mainProcess, /GITHUB_TOKEN|VERCEL_TOKEN/, "Update checks must not embed deployment or repository tokens");
@@ -325,7 +608,7 @@ assert.match(mainProcess, /pitwall:data:trackMapReplayTiming/, "Electron main sh
 assert.match(trackMapSource, /pitwall\.data\.trackMapReplayTiming/, "Track Map should call its dedicated replay timing client");
 assert.doesNotMatch(trackMapSource, /pitwall\.data\.replayTiming/, "Track Map should not reuse Live Racing replay timing IPC");
 assert.match(trackMapSource, /tm-replayprogress/, "Track Map should render a replay progress control next to the map selector");
-assert.match(trackMapSource, /const TRACK_MAP_REPLAY_DATA_POLL_MS = 270/, "Track Map replay data should poll at roughly 3.7 Hz instead of reloading every animation tick");
+assert.match(trackMapSource, /const TRACK_MAP_REPLAY_DATA_POLL_MS = 1000/, "Track Map replay data should promote elapsed state at roughly 1 Hz instead of every visual tick");
 assert.match(trackMapSource, /const activeTiming = replayActive\s*\?\s*\(Array\.isArray\(replay\.data\?\.timing\) \? replay\.data\.timing : \[\]\)\s*:\s*timing/, "Track Map replay loading should not render stale dashboard timing rows");
 assert.match(trackMapSource, /loading: !current\.data/, "Track Map replay polling should only show a loading state before the first replay snapshot");
 assert.match(trackMapSource, /raceRelative: true/, "Track Map replay should request race-relative official livetiming snapshots");
@@ -337,9 +620,9 @@ assert.match(trackMapSource, /TRACK_MAP_MOTION_TAU_MS = 200/, "Track Map replay 
 assert.match(trackMapSource, /TRACK_MAP_DEAD_RECKON_MAX_MS = 900/, "Track Map replay should dead-reckon through short data gaps so cars never stop-start between polls");
 assert.match(trackMapSource, /TRACK_MAP_OFFICIAL_TELEPORT_PX = 150/, "Track Map replay should snap instead of gliding across the map on seek-sized position jumps");
 assert.match(mainProcess, /function f1TimingInterpolatedPositionRowsAt/, "Track Map replay should interpolate official positions between archive packets instead of stepping per entry");
-assert.match(mainProcess, /trackPositionSample: f1TimingPositionSamplePoints\(sessionData\)/, "Track Map replay snapshots should include a session-wide position sample for stable map orientation");
+assert.match(mainProcess, /trackPositionSample: trackPositionInvariant\.sample/, "Track Map replay snapshots should include a memoized session-wide position sample for stable map orientation");
 assert.match(trackMapSource, /trackPositionSample/, "Track Map replay should lock projector orientation from the session-wide position sample");
-assert.match(trackMapSource, /Math\.floor\(\(elapsedSeconds \* 1000\) \/ TRACK_MAP_REPLAY_DATA_POLL_MS\)/, "Track Map replay fetch bucket should use the configured 3.7 Hz interval");
+assert.match(trackMapSource, /Math\.floor\(\(elapsedSeconds \* 1000\) \/ TRACK_MAP_REPLAY_DATA_POLL_MS\)/, "Track Map replay fetch bucket should use the configured one-second interval");
 assert.match(trackMapSource, /carsRef[\s\S]*projectorRef[\s\S]*requestAnimationFrame/, "Track Map replay animation should keep one RAF loop across data updates");
 assert.match(trackMapSource, /Math\.abs\(dTarget\) > TRACK_MAP_OFFICIAL_TELEPORT_PX/, "Track Map replay should trust official points and only snap when the target teleports");
 assert.match(trackMapSource, /path\.getPointAtLength\(\(sMod \/ trackTotal\) \* L\)/, "Track Map cars should always render on the track centerline via along-path motion");
@@ -365,7 +648,7 @@ assert.match(trackMapCircuitsSource, /bahrain:[\s\S]*Michael Schumacher/, "Bahra
 assert.match(trackMapCircuitsSource, /usa:[\s\S]*Big Red[\s\S]*Epstein/, "COTA Track Map should include named corners");
 assert.match(trackMapCircuitsSource, /abudhabi:[\s\S]*North Hairpin[\s\S]*Marsa Corner/, "Yas Marina Track Map should include named corners");
 assert.doesNotMatch(trackMapSource, /const live = timing\.length > 0 && Number\(data\.race\?\.lap\) > 0/, "Track Map live mode should not depend on a missing snapshot race lap field");
-assert.match(trackMapSource, /liveSession[\s\S]*const live = timing\.length > 0 && Boolean/, "Track Map should activate live mode from live timing rows and live session context");
+assert.match(trackMapSource, /liveSession[\s\S]*const live = \(Array\.isArray\(data\.timing\) \? data\.timing\.length : 0\) > 0 && Boolean/, "Track Map should activate live mode from live timing rows and live session context");
 assert.match(liveRacingSource, /function VolumeControl[\s\S]*aria-label="Volume level"[\s\S]*onInput=/, "Broadcast panes should expose an exact volume level control that updates continuously while dragging");
 assert.match(liveRacingSource, /\.pane:hover \.pane__controls,\s*\.pane:focus-within \.pane__controls \{ opacity: 1; \}/, "Pane controls should remain visible while the volume slider has focus during drag");
 assert.match(liveRacingSource, /\.pane__controls \{[^}]*z-index: 5/, "Pane controls should sit above broadcast pane chrome so the volume slider can receive drag events");
@@ -527,6 +810,296 @@ assert.match(settingsSource, /friendCode/, "Settings should show the user's shar
 assert.match(settingsSource, /friends-add-form[\s\S]*align-items:\s*end/, "Friends add-code controls should align the Add button with the input control");
 assert.match(settingsSource, /className="f1-login__fields friends-add-form"/, "Friends add-code row should use the centered form alignment");
 assert.match(settingsSource, /id: "account", label: "Account"/, "Settings should label the local profile and F1 TV section as Account");
+assert.match(settingsSource, /function createProfilePersistence/, "Settings should use an event-driven profile persistence controller");
+assert.doesNotMatch(
+  settingsSource,
+  /React\.useEffect\(\(\) => \{\s*updateProfile\(\{ videoQuality:/,
+  "Settings should not write the profile on mount or echo a loaded video quality back through IPC"
+);
+assert.match(
+  settingsSource,
+  /function setPref\(key, value\)[\s\S]*key === "videoQuality"[\s\S]*persistNow\(\{ videoQuality: value \}\)/,
+  "Settings should persist video quality only from the user preference event"
+);
+const createProfilePersistence = vm.runInNewContext(
+  `(${extractNamedFunction(settingsSource, "createProfilePersistence")})`,
+  { PROFILE_NAME_PERSIST_DELAY_MS: 300 }
+);
+{
+  let now = 0;
+  let nextTimerId = 1;
+  const timers = new Map();
+  const writes = [];
+  const fakeTimers = {
+    setTimeout(callback, delay) {
+      const id = nextTimerId++;
+      timers.set(id, { at: now + delay, callback });
+      return id;
+    },
+    clearTimeout(id) {
+      timers.delete(id);
+    },
+  };
+  const advance = (milliseconds) => {
+    now += milliseconds;
+    for (const [id, timer] of [...timers].sort((a, b) => a[1].at - b[1].at)) {
+      if (timer.at > now) continue;
+      timers.delete(id);
+      timer.callback();
+    }
+  };
+  const persistence = createProfilePersistence((patch) => writes.push(JSON.parse(JSON.stringify(patch))), fakeTimers);
+  assert.equal(writes.length, 0, "Settings profile persistence should not write during initial mount");
+  persistence.scheduleName("N");
+  advance(100);
+  persistence.scheduleName("Ne");
+  advance(100);
+  persistence.scheduleName("Neel");
+  advance(299);
+  assert.equal(writes.length, 0, "Settings should debounce a burst of profile-name edits for 300ms");
+  advance(1);
+  assert.deepEqual(writes, [{ name: "Neel" }], "Settings should persist only the latest name once after the debounce");
+  persistence.persistNow({ favoriteDrivers: ["NOR"] });
+  assert.deepEqual(writes.at(-1), { favoriteDrivers: ["NOR"] }, "Settings favorite changes should persist immediately");
+  persistence.scheduleName("Latest draft");
+  persistence.flush();
+  persistence.flush();
+  assert.deepEqual(writes.at(-1), { name: "Latest draft" }, "Settings unmount should flush the latest name draft");
+  assert.equal(writes.length, 3, "Settings unmount should flush a pending name exactly once");
+  advance(300);
+  assert.equal(writes.length, 3, "Settings should cancel the flushed debounce timer");
+}
+assert.match(settingsSource, /reader\.onload[\s\S]*persistNow\(\{ profileImageUrl: nextProfileImageUrl \}\)/, "Settings image selection should send an explicit immediate image patch");
+assert.match(settingsSource, /persistNow\(\{ profileImageUrl: "" \}\)[\s\S]*Clear photo/, "Settings image clearing should send an explicit immediate empty-image patch");
+assert.match(mainProcess, /function writeProfileFiles/, "Electron should persist large profile images separately from ordinary profile JSON");
+assert.match(mainProcess, /function readProfileFiles/, "Electron should merge separately persisted profile images on profile.get");
+assert.match(mainProcess, /function createSerialMutationQueue/, "Electron should serialize profile mutations through one resilient queue");
+{
+  const createSerialMutationQueue = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "createSerialMutationQueue")})`);
+  const enqueue = createSerialMutationQueue();
+  const order = [];
+  let stored = "old";
+  let rejectFirst;
+  const firstGate = new Promise((_resolve, reject) => { rejectFirst = reject; });
+  const writeA = enqueue(async () => {
+    order.push("A:start");
+    const before = stored;
+    stored = "A:partial";
+    try {
+      await firstGate;
+    } catch (error) {
+      stored = before;
+      order.push("A:rollback");
+      throw error;
+    }
+  });
+  const writeB = enqueue(async () => {
+    order.push("B:start");
+    assert.equal(stored, "old", "Queued profile write B should start only after A finishes its rollback");
+    stored = "B";
+    order.push("B:commit");
+    return stored;
+  });
+  await Promise.resolve();
+  assert.deepEqual(order, ["A:start"], "Overlapping profile write B should wait for A");
+  rejectFirst(new Error("simulated A failure"));
+  await assert.rejects(writeA, /simulated A failure/, "The failed queued mutation should reject its own caller");
+  assert.equal(await writeB, "B", "Profile write B should apply after failed write A");
+  assert.equal(stored, "B", "Write A rollback should complete before and never overwrite successful write B");
+  const writeC = enqueue(async () => {
+    order.push("C:commit");
+    stored = "C";
+    return stored;
+  });
+  assert.equal(await writeC, "C", "Profile mutation queue should continue after a rejection");
+  assert.deepEqual(order, ["A:start", "A:rollback", "B:start", "B:commit", "C:commit"], "Profile mutations should keep strict call order across failures");
+}
+assert.match(dataProviderSource, /function profilePatchIncludesImage/, "Renderer profile persistence should detect explicit image patches");
+assert.match(dataProviderSource, /function shouldMigrateProfileImage/, "Renderer profile startup should detect local profile-image migration");
+assert.match(dataProviderSource, /function normalizeProfilePatch/, "Renderer should normalize only fields owned by an update patch");
+assert.match(dataProviderSource, /function persistProfile\(profile, options = \{\}\)/, "Renderer profile persistence should support image-free ordinary IPC payloads");
+assert.match(dataProviderSource, /persistProfile\(next, \{ patch \}\)/, "Renderer updateProfile should send the original patch rather than a stale full profile");
+assert.match(dataProviderSource, /includeProfileImage: shouldMigrateProfileImage\(local, persisted\)/, "Renderer startup should include image IPC only for local-to-main migration");
+{
+  const localWrites = [];
+  const ipcPayloads = [];
+  const profilePersistence = vm.runInNewContext(`(() => {
+    function normalizeProfile(profile) { return { ...profile }; }
+    ${extractNamedFunction(dataProviderSource, "profilePatchIncludesImage")}
+    ${extractNamedFunction(dataProviderSource, "shouldMigrateProfileImage")}
+    ${extractNamedFunction(dataProviderSource, "normalizeProfilePatch")}
+    ${extractNamedFunction(dataProviderSource, "persistProfile")}
+    return { profilePatchIncludesImage, shouldMigrateProfileImage, normalizeProfilePatch, persistProfile };
+  })()`, {
+    localStorage: { setItem: (_key, value) => localWrites.push(JSON.parse(value)) },
+    window: { pitwall: { profile: { set: async (payload) => { ipcPayloads.push(JSON.parse(JSON.stringify(payload))); } } } },
+  });
+  const fullProfile = { name: "Neel", profileImageUrl: "data:image/png;base64,LARGE", favoriteDrivers: ["NOR"] };
+  profilePersistence.persistProfile(fullProfile);
+  await Promise.resolve();
+  assert.equal(localWrites[0].profileImageUrl, fullProfile.profileImageUrl, "Ordinary profile persistence should retain the image in localStorage");
+  assert.equal(Object.hasOwn(ipcPayloads[0], "profileImageUrl"), false, "Ordinary profile IPC should omit profileImageUrl");
+  profilePersistence.persistProfile(fullProfile, { includeProfileImage: true });
+  await Promise.resolve();
+  assert.equal(ipcPayloads[1].profileImageUrl, fullProfile.profileImageUrl, "Explicit image persistence should include profileImageUrl in IPC");
+  assert.equal(profilePersistence.profilePatchIncludesImage({ name: "Name only" }), false, "Name debounce patches should not include profile images");
+  assert.equal(profilePersistence.profilePatchIncludesImage({ profileImageUrl: "" }), true, "Image clears should count as explicit image patches");
+  assert.equal(
+    profilePersistence.shouldMigrateProfileImage({ profileImageUrl: fullProfile.profileImageUrl }, { profileImageUrl: "" }),
+    true,
+    "Startup should migrate a local image when main storage has none"
+  );
+  assert.equal(
+    profilePersistence.shouldMigrateProfileImage({ profileImageUrl: fullProfile.profileImageUrl }, { profileImageUrl: "data:image/png;base64,MAIN" }),
+    false,
+    "Startup should not resend an image already stored by main"
+  );
+  profilePersistence.persistProfile({ ...fullProfile, name: "A", favoriteDrivers: ["OLD"] }, { patch: { name: "A" } });
+  profilePersistence.persistProfile({ ...fullProfile, name: "STALE", favoriteDrivers: ["NOR"] }, { patch: { favoriteDrivers: ["NOR"] } });
+  await Promise.resolve();
+  assert.deepEqual(ipcPayloads[2], { name: "A" }, "Profile IPC patch A should not carry stale unrelated fields or an image");
+  assert.deepEqual(ipcPayloads[3], { favoriteDrivers: ["NOR"] }, "Profile IPC patch B should not overwrite the unrelated field updated by patch A");
+  profilePersistence.persistProfile(fullProfile, { patch: { profileImageUrl: fullProfile.profileImageUrl } });
+  await Promise.resolve();
+  assert.deepEqual(ipcPayloads[4], { profileImageUrl: fullProfile.profileImageUrl }, "An explicit image patch should be the only ordinary IPC payload carrying profileImageUrl");
+}
+assert.doesNotMatch(liveRacingSource, /profile\.set\(\{ \.\.\.profile, live(?:PanelSizes|CustomLayouts): normalized \}\)/, "Live Racing profile writes should not send stale full-profile snapshots");
+assert.match(liveRacingSource, /profile\.set\(\{ livePanelSizes: normalized \}\)/, "Live Racing panel-size persistence should send a true patch");
+assert.match(liveRacingSource, /profile\.set\(\{ liveCustomLayouts: normalized \}\)/, "Live Racing custom-layout persistence should send a true patch");
+{
+  const panelPayloadLiteral = liveRacingSource.match(/profile\.set\((\{ livePanelSizes: normalized \})\)/)?.[1];
+  const layoutPayloadLiteral = liveRacingSource.match(/profile\.set\((\{ liveCustomLayouts: normalized \})\)/)?.[1];
+  const staleProfile = { profileImageUrl: "data:image/png;base64,STALE", name: "Stale" };
+  const panelPayload = vm.runInNewContext(`(${panelPayloadLiteral})`, { normalized: { map: 420 }, profile: staleProfile });
+  const layoutPayload = vm.runInNewContext(`(${layoutPayloadLiteral})`, { normalized: { layouts: [] }, profile: staleProfile });
+  assert.deepEqual(JSON.parse(JSON.stringify(panelPayload)), { livePanelSizes: { map: 420 } }, "Live Racing panel-size runtime payload should contain only its patch");
+  assert.deepEqual(JSON.parse(JSON.stringify(layoutPayload)), { liveCustomLayouts: { layouts: [] } }, "Live Racing layout runtime payload should contain only its patch");
+  assert.equal(Object.hasOwn(panelPayload, "profileImageUrl") || Object.hasOwn(layoutPayload, "profileImageUrl"), false, "Live Racing patch payloads should never carry a stale image");
+}
+assert.match(mainProcess, /function profilePatchIncludesImage/, "Electron profile.set should detect whether its patch owns profileImageUrl");
+assert.match(mainProcess, /function shouldWriteProfileImage/, "Electron should migrate a legacy embedded image during an ordinary patch");
+assert.match(mainProcess, /writeProfileFiles\(profileFilePath\(\), profileImageFilePath\(\), next, \{ writeImage \}\)/, "Electron profile.set should leave separate image storage untouched for ordinary patches");
+{
+  const mainProfilePatchIncludesImage = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "profilePatchIncludesImage")})`);
+  const shouldWriteProfileImage = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "shouldWriteProfileImage")})`, { profilePatchIncludesImage: mainProfilePatchIncludesImage });
+  assert.equal(mainProfilePatchIncludesImage({ favoriteDrivers: ["NOR"] }), false, "Electron should treat ordinary profile.set input as an image-free patch");
+  assert.equal(mainProfilePatchIncludesImage({ profileImageUrl: "" }), true, "Electron should preserve explicit empty-image ownership before normalization");
+  assert.equal(shouldWriteProfileImage({ name: "Ordinary" }, { profileImageUrl: "data:image/png;base64,LEGACY" }, false), true, "An ordinary patch should migrate a legacy embedded image when no separate image exists");
+  assert.equal(shouldWriteProfileImage({ name: "Ordinary" }, { profileImageUrl: "data:image/png;base64,SAVED" }, true), false, "An ordinary patch should not rewrite an existing separate image");
+}
+{
+  const os = require("node:os");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "apexline-profile-"));
+  const profilePath = path.join(tempDir, "profile.json");
+  const imagePath = path.join(tempDir, "profile-image.txt");
+  const profilePersistenceSource = `(() => {
+    ${[
+      "profileTempPath",
+      "readProfileFileSnapshot",
+      "restoreProfileFileSnapshot",
+      "readProfileFiles",
+      "writeProfileFiles",
+    ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+    return { readProfileFiles, writeProfileFiles };
+  })()`;
+  const profilePersistence = vm.runInNewContext(profilePersistenceSource, { fs, path, process, Date, Math, Buffer });
+  const image = `data:image/png;base64,${"A".repeat(2 * 1024 * 1024 + 512)}`;
+  const saved = { name: "Round trip", profileImageUrl: image, favoriteDrivers: ["NOR"], favoriteTeams: [] };
+  try {
+    await profilePersistence.writeProfileFiles(profilePath, imagePath, saved);
+    const ordinaryProfile = JSON.parse(fs.readFileSync(profilePath, "utf8"));
+    assert.equal(Object.hasOwn(ordinaryProfile, "profileImageUrl"), false, "Ordinary profile JSON should omit the multi-megabyte image");
+    assert.equal(fs.readFileSync(imagePath, "utf8"), image, "Profile image payload should use its separate file");
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(await profilePersistence.readProfileFiles(profilePath, imagePath))),
+      saved,
+      "profile.get storage should merge the separate image without changing the renderer profile shape"
+    );
+    let ordinaryImageWrites = 0;
+    const ordinaryFs = {
+      ...fs,
+      promises: {
+        ...fs.promises,
+        writeFile: async (file, ...args) => {
+          if (String(file).includes("profile-image.txt")) ordinaryImageWrites += 1;
+          return fs.promises.writeFile(file, ...args);
+        },
+      },
+    };
+    const ordinaryPersistence = vm.runInNewContext(profilePersistenceSource, { fs: ordinaryFs, path, process, Date, Math, Buffer });
+    const imageBeforeOrdinaryWrite = fs.readFileSync(imagePath);
+    const imageMtimeBeforeOrdinaryWrite = fs.statSync(imagePath).mtimeMs;
+    await ordinaryPersistence.writeProfileFiles(profilePath, imagePath, { ...saved, name: "Name only" }, { writeImage: false });
+    assert.equal(ordinaryImageWrites, 0, "Ordinary profile writes should not write a profile-image temp or payload file");
+    assert.deepEqual(fs.readFileSync(imagePath), imageBeforeOrdinaryWrite, "Ordinary profile writes should preserve the separate image bytes");
+    assert.equal(fs.statSync(imagePath).mtimeMs, imageMtimeBeforeOrdinaryWrite, "Ordinary profile writes should preserve the separate image mtime");
+
+    const migratedImage = "data:image/png;base64,OLD";
+    fs.writeFileSync(profilePath, JSON.stringify({ name: "Migrated", profileImageUrl: migratedImage }));
+    fs.rmSync(imagePath);
+    const migrated = await profilePersistence.readProfileFiles(profilePath, imagePath);
+    assert.equal(migrated.profileImageUrl, migratedImage, "Profile migration should read an existing embedded image");
+    const profilePatchIncludesImage = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "profilePatchIncludesImage")})`);
+    const shouldWriteProfileImage = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "shouldWriteProfileImage")})`, { profilePatchIncludesImage });
+    const legacyWriteImage = shouldWriteProfileImage({ name: "Migrated name" }, migrated, fs.existsSync(imagePath));
+    await profilePersistence.writeProfileFiles(profilePath, imagePath, { ...migrated, name: "Migrated name" }, { writeImage: legacyWriteImage });
+    assert.equal(fs.readFileSync(imagePath, "utf8"), migratedImage, "Profile migration should move the embedded image on the next write");
+    assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(profilePath, "utf8")), "profileImageUrl"), false, "Migrated profile JSON should omit the embedded image");
+    assert.equal((await profilePersistence.readProfileFiles(profilePath, imagePath)).profileImageUrl, migratedImage, "Migrated image should survive the ordinary patch round trip");
+
+    fs.writeFileSync(profilePath, JSON.stringify({ name: "Legacy rollback", profileImageUrl: migratedImage }));
+    fs.rmSync(imagePath);
+    const legacyProfileBeforeFailure = fs.readFileSync(profilePath);
+    let legacyRenameCount = 0;
+    const failingLegacyFs = {
+      ...fs,
+      promises: {
+        ...fs.promises,
+        rename: async (...args) => {
+          legacyRenameCount += 1;
+          if (legacyRenameCount === 2) throw new Error("simulated legacy migration failure");
+          return fs.promises.rename(...args);
+        },
+      },
+    };
+    const failingLegacyPersistence = vm.runInNewContext(profilePersistenceSource, { fs: failingLegacyFs, path, process, Date, Math, Buffer });
+    await assert.rejects(
+      failingLegacyPersistence.writeProfileFiles(profilePath, imagePath, { ...migrated, name: "Must rollback" }, { writeImage: true }),
+      /simulated legacy migration failure/
+    );
+    assert.deepEqual(fs.readFileSync(profilePath), legacyProfileBeforeFailure, "Failed legacy migration should restore embedded profile JSON");
+    assert.equal(fs.existsSync(imagePath), false, "Failed legacy migration should remove its partially committed separate image");
+
+    await profilePersistence.writeProfileFiles(profilePath, imagePath, { ...migrated, profileImageUrl: "" });
+    assert.equal(fs.existsSync(imagePath), false, "Clearing a profile image should remove its separate payload file");
+
+    await profilePersistence.writeProfileFiles(profilePath, imagePath, saved);
+    const oldProfile = fs.readFileSync(profilePath);
+    const oldImage = fs.readFileSync(imagePath);
+    let renameCount = 0;
+    const failingFs = {
+      ...fs,
+      promises: {
+        ...fs.promises,
+        rename: async (...args) => {
+          renameCount += 1;
+          if (renameCount === 2) throw new Error("simulated profile commit failure");
+          return fs.promises.rename(...args);
+        },
+      },
+    };
+    const failingPersistence = vm.runInNewContext(profilePersistenceSource, { fs: failingFs, path, process, Date, Math, Buffer });
+    await assert.rejects(
+      failingPersistence.writeProfileFiles(profilePath, imagePath, { ...saved, name: "Must not replace old data", profileImageUrl: "data:image/png;base64,NEW" }),
+      /simulated profile commit failure/,
+      "Profile persistence should surface failed commits"
+    );
+    assert.deepEqual(fs.readFileSync(profilePath), oldProfile, "A failed profile commit should preserve the old profile JSON");
+    assert.deepEqual(fs.readFileSync(imagePath), oldImage, "A failed profile commit should restore the old image payload");
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
 assert.match(settingsSource, /PROFILE_IMAGE_MAX_BYTES = 2 \* 1024 \* 1024/, "Profile photos should allow uploads up to 2 MB");
 assert.match(settingsSource, /PNG, JPG, GIF, WebP, or SVG under 2 MB\./, "Profile photo helper text should show the 2 MB limit");
 assert.match(settingsSource, /<div className="f1-login__status">\s*\{\(f1SignedIn \|\| f1BrowserSignedIn\)[\s\S]*Sign out[\s\S]*<Badge tone=\{f1BadgeTone\} dot>\{f1BadgeLabel\}<\/Badge>/, "F1 TV sign-out should sit beside the ready badge");
@@ -570,6 +1143,607 @@ function extractNamedFunction(source, name) {
     if (depth === 0) return source.slice(start, index + 1);
   }
   throw new Error(`Could not extract ${name}`);
+}
+
+const boundedWorkSandbox = vm.runInNewContext(`(() => {
+  ${[
+    "mapWithConcurrencyStable",
+    "getOrCreateInFlightRefresh",
+    "buildLatestCarDataRequest",
+    "settleWithTimeout",
+    "createBoundedBufferAccumulator",
+  ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+  return { mapWithConcurrencyStable, getOrCreateInFlightRefresh, buildLatestCarDataRequest, settleWithTimeout, createBoundedBufferAccumulator };
+})()`, {
+  Buffer,
+  URL,
+  openF1ApiUrl: (_endpoint, params) => params,
+});
+
+let releaseSharedRefresh;
+let sharedRefreshRuns = 0;
+const refreshes = new Map();
+const sharedRefresh = () => {
+  sharedRefreshRuns += 1;
+  return new Promise((resolve) => { releaseSharedRefresh = resolve; });
+};
+const sharedA = boundedWorkSandbox.getOrCreateInFlightRefresh(refreshes, "2026", sharedRefresh);
+const sharedB = boundedWorkSandbox.getOrCreateInFlightRefresh(refreshes, "2026", sharedRefresh);
+assert.equal(sharedA, sharedB, "Same-season F1 TV library calls should share one in-flight refresh");
+assert.equal(sharedRefreshRuns, 1, "Same-season F1 TV library calls should start one refresh");
+releaseSharedRefresh("ready");
+assert.deepEqual(await Promise.all([sharedA, sharedB]), ["ready", "ready"]);
+assert.equal(refreshes.size, 0, "Completed F1 TV refreshes should clean up their own in-flight entry");
+let releaseSupersededRefresh;
+const superseded = boundedWorkSandbox.getOrCreateInFlightRefresh(
+  refreshes,
+  "2025",
+  () => new Promise((resolve) => { releaseSupersededRefresh = resolve; }),
+);
+const replacementRefresh = Promise.resolve("replacement");
+refreshes.set("2025", replacementRefresh);
+releaseSupersededRefresh("old");
+await superseded;
+assert.equal(refreshes.get("2025"), replacementRefresh, "Older F1 TV refresh cleanup should not delete a replacement promise");
+refreshes.delete("2025");
+
+let activeBoundedWork = 0;
+let peakBoundedWork = 0;
+const boundedResolvers = [];
+const stableDetailWork = boundedWorkSandbox.mapWithConcurrencyStable(
+  Array.from({ length: 8 }, (_, index) => index),
+  4,
+  async (index) => {
+    activeBoundedWork += 1;
+    peakBoundedWork = Math.max(peakBoundedWork, activeBoundedWork);
+    await new Promise((resolve) => boundedResolvers.push(resolve));
+    activeBoundedWork -= 1;
+    return index;
+  },
+);
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(peakBoundedWork, 4, "F1 TV/news detail work should cap concurrency at four");
+while (boundedResolvers.length) {
+  boundedResolvers.splice(0).forEach((resolve) => resolve());
+  await new Promise((resolve) => setImmediate(resolve));
+}
+assert.deepEqual(Array.from(await stableDetailWork), [0, 1, 2, 3, 4, 5, 6, 7], "Bounded detail work should preserve input order");
+
+const deadlineClock = { now: 0 };
+const deadlineWorkSandbox = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(mainProcess, "mapWithConcurrencyStableDeadline")}
+  return { mapWithConcurrencyStableDeadline };
+})()`, { setTimeout, clearTimeout });
+let activeDeadlineWork = 0;
+let peakDeadlineWork = 0;
+const deadlineStarts = [];
+const partialDeadlineResults = await deadlineWorkSandbox.mapWithConcurrencyStableDeadline(
+  Array.from({ length: 32 }, (_, index) => index),
+  4,
+  12000,
+  async (value, _index, remainingMs) => {
+    activeDeadlineWork += 1;
+    peakDeadlineWork = Math.max(peakDeadlineWork, activeDeadlineWork);
+    deadlineStarts.push({ value, startedAt: deadlineClock.now, remainingMs });
+    deadlineClock.now += Math.min(1000, remainingMs);
+    await Promise.resolve();
+    activeDeadlineWork -= 1;
+    return value;
+  },
+  () => deadlineClock.now,
+);
+assert.equal(peakDeadlineWork, 4, "Deadline-bound F1 TV detail work should retain the four-request concurrency cap");
+assert.ok(deadlineClock.now <= 12000, "F1 TV detail scheduling should stop by the overall 12-second deadline");
+assert.ok(partialDeadlineResults.length > 0 && partialDeadlineResults.length < 32, "Deadline-bound detail work should return partial results");
+assert.deepEqual(Array.from(partialDeadlineResults), Array.from({ length: partialDeadlineResults.length }, (_, index) => index), "Deadline-bound detail work should preserve stable partial order");
+assert.ok(deadlineStarts.every((item) => item.remainingMs <= 12000 - item.startedAt), "Each F1 TV detail request should receive no more than its remaining deadline");
+
+const hardDeadlineClock = { now: 0 };
+const hardDeadlineTimers = [];
+const hardDeadlineControls = [];
+const hardDeadlineUnhandled = [];
+const onHardDeadlineUnhandled = (error) => hardDeadlineUnhandled.push(error);
+process.on("unhandledRejection", onHardDeadlineUnhandled);
+const hardDeadlineWork = deadlineWorkSandbox.mapWithConcurrencyStableDeadline(
+  Array.from({ length: 8 }, (_, index) => index),
+  4,
+  12000,
+  (value) => new Promise((resolve, reject) => hardDeadlineControls.push({ value, resolve, reject })),
+  () => hardDeadlineClock.now,
+  (callback, delay) => {
+    hardDeadlineTimers.push({ callback, delay });
+    return hardDeadlineTimers.length;
+  },
+  () => {},
+);
+await Promise.resolve();
+assert.equal(hardDeadlineControls.length, 4, "Hard-deadline mapper should start at most four active CMS details");
+assert.equal(hardDeadlineTimers.length, 1, "Hard-deadline mapper should install one pool-level deadline timer");
+assert.equal(hardDeadlineTimers[0].delay, 12000, "Pool-level CMS deadline should be scheduled for the remaining 12 seconds");
+hardDeadlineClock.now = 12000;
+hardDeadlineTimers[0].callback();
+const hardDeadlineResult = await hardDeadlineWork;
+assert.deepEqual(Array.from(hardDeadlineResult), [], "Hard deadline should return a stable partial result without awaiting active details");
+assert.equal(hardDeadlineControls.length, 4, "Hard deadline should prevent scheduling additional CMS details");
+hardDeadlineControls[0].resolve(0);
+hardDeadlineControls[1].reject(new Error("late detail rejection"));
+hardDeadlineControls[2].resolve(2);
+hardDeadlineControls[3].reject(new Error("second late detail rejection"));
+await new Promise((resolve) => setImmediate(resolve));
+process.off("unhandledRejection", onHardDeadlineUnhandled);
+assert.deepEqual(Array.from(hardDeadlineResult), [], "Late CMS detail settlements should not mutate the returned partial result");
+assert.deepEqual(hardDeadlineUnhandled, [], "Late CMS detail rejections should remain handled after the pool deadline");
+
+const actualF1TvLibraryStats = { runs: 0, release: null };
+const actualF1TvLibrarySandbox = vm.runInNewContext(`(() => {
+  const f1TvLibraryRefreshes = new Map();
+  function f1TvLibraryCacheEntry() { return null; }
+  function refreshF1TvLibrary(year) {
+    actualF1TvLibraryStats.runs += 1;
+    return new Promise((resolve) => { actualF1TvLibraryStats.release = () => resolve({ season: year, races: [] }); });
+  }
+  ${extractNamedFunction(mainProcess, "getOrCreateInFlightRefresh")}
+  ${extractNamedFunction(mainProcess, "getF1TvLibrary")}
+  return { getF1TvLibrary };
+})()`, { actualF1TvLibraryStats });
+const actualLibraryA = actualF1TvLibrarySandbox.getF1TvLibrary({ season: 2026, forceRefresh: true });
+const actualLibraryB = actualF1TvLibrarySandbox.getF1TvLibrary({ season: 2026, forceRefresh: true });
+assert.equal(actualF1TvLibraryStats.runs, 1, "Actual F1 TV library path should start one refresh per season");
+actualF1TvLibraryStats.release();
+assert.deepEqual(
+  JSON.parse(JSON.stringify(await Promise.all([actualLibraryA, actualLibraryB]))),
+  [{ season: "2026", races: [] }, { season: "2026", races: [] }],
+  "Actual same-season F1 TV library calls should share the keyed refresh result",
+);
+
+const cmsDeadlineClock = { now: 0 };
+const cmsDeadlineStats = { active: 0, peak: 0, calls: [] };
+const cmsDeadlineSandbox = vm.runInNewContext(`(() => {
+  const F1TV_CMS_DETAIL_PAGE_LIMIT = 32;
+  const F1TV_CMS_DETAIL_TIMEOUT_MS = 3000;
+  const F1TV_CMS_DETAIL_CONCURRENCY = 4;
+  const F1TV_CMS_DETAIL_DEADLINE_MS = 12000;
+  const Date = { now: () => cmsDeadlineClock.now };
+  async function getF1TvPlaybackToken() { return ""; }
+  function f1TvPlaybackHeaders() { return {}; }
+  function f1TvCmsSeasonPageUrl() { return "season"; }
+  function f1TvCmsDetailPageUrisFromPage() { return Array.from({ length: 32 }, (_, index) => "detail-" + index); }
+  function f1TvCmsUrl(uri) { return uri; }
+  function f1TvCmsContentItemsFromPage(page) { return page.items || []; }
+  async function fetchF1TvCmsJson(target, _headers, timeoutMs) {
+    if (target === "season") return { items: [] };
+    cmsDeadlineStats.active += 1;
+    cmsDeadlineStats.peak = Math.max(cmsDeadlineStats.peak, cmsDeadlineStats.active);
+    cmsDeadlineStats.calls.push({ target, timeoutMs, startedAt: cmsDeadlineClock.now });
+    cmsDeadlineClock.now += Math.min(1000, timeoutMs);
+    await Promise.resolve();
+    cmsDeadlineStats.active -= 1;
+    return { items: [target] };
+  }
+  ${extractNamedFunction(mainProcess, "mapWithConcurrencyStable")}
+  ${extractNamedFunction(mainProcess, "mapWithConcurrencyStableDeadline")}
+  ${extractNamedFunction(mainProcess, "fetchF1TvCmsSeasonContent")}
+  return { fetchF1TvCmsSeasonContent };
+})()`, { cmsDeadlineClock, cmsDeadlineStats, setTimeout, clearTimeout });
+const cmsPartialItems = await cmsDeadlineSandbox.fetchF1TvCmsSeasonContent("2026");
+assert.equal(cmsDeadlineStats.peak, 4, "Actual F1 TV CMS detail path should cap production concurrency at four");
+assert.ok(cmsDeadlineClock.now <= 12000, "Actual F1 TV CMS detail scheduling should stop within 12 seconds");
+assert.ok(
+  cmsDeadlineStats.calls.every((call) => call.timeoutMs <= Math.max(0, 12000 - call.startedAt)),
+  "Actual F1 TV CMS detail timeouts should not exceed the remaining overall deadline",
+);
+assert.ok(cmsPartialItems.length > 0 && cmsPartialItems.length < 32, "Actual F1 TV CMS detail path should return partial results at the deadline");
+assert.deepEqual(
+  Array.from(cmsPartialItems),
+  Array.from({ length: cmsPartialItems.length }, (_, index) => `detail-${index}`),
+  "Actual F1 TV CMS detail path should preserve stable partial order",
+);
+
+const liveCarRange = boundedWorkSandbox.buildLatestCarDataRequest(
+  { session_key: 101, date_start: "2026-07-23T17:00:00.000Z", date_end: "2026-07-23T20:00:00.000Z" },
+  Date.parse("2026-07-23T18:00:00.000Z"),
+);
+const completedCarRange = boundedWorkSandbox.buildLatestCarDataRequest(
+  { session_key: 202, date_start: "2026-07-22T17:00:00.000Z", date_end: "2026-07-22T19:00:00.000Z" },
+  Date.parse("2026-07-23T18:00:00.000Z"),
+);
+for (const [range, endIso] of [
+  [liveCarRange, "2026-07-23T18:00:00.000Z"],
+  [completedCarRange, "2026-07-22T19:00:00.000Z"],
+]) {
+  assert.equal(Date.parse(range["date<"]) - Date.parse(range["date>"]), 120000, "Latest car_data requests should span exactly two minutes");
+  assert.equal(range["date<"], endIso, "Latest car_data requests should end at min(now, session.date_end)");
+}
+
+let timeoutCallback;
+let cancelCount = 0;
+let rejectLateReadiness;
+const pendingReadiness = new Promise((_resolve, reject) => { rejectLateReadiness = reject; });
+const readiness = boundedWorkSandbox.settleWithTimeout(
+  pendingReadiness,
+  5000,
+  (callback, delay) => {
+    assert.equal(delay, 5000, "Electron components readiness should use the five-second bound");
+    timeoutCallback = callback;
+    return 1;
+  },
+  () => { cancelCount += 1; },
+);
+timeoutCallback();
+assert.deepEqual(
+  JSON.parse(JSON.stringify(await readiness)),
+  { ok: false, timedOut: true },
+  "A never-settling Electron components promise should return degraded timeout status",
+);
+rejectLateReadiness(new Error("late failure"));
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(cancelCount, 0, "A timed-out readiness promise should not let late settlement mutate timer state");
+assert.match(
+  extractNamedFunction(mainProcess, "ensureElectronComponentsReady"),
+  /try\s*\{[\s\S]*components\.whenReady\(\)[\s\S]*\}\s*catch[\s\S]*degraded/,
+  "Synchronous Electron components readiness failures should also produce degraded status",
+);
+const componentTimers = [];
+let resolveLateComponents;
+const lateComponentsPromise = new Promise((resolve) => { resolveLateComponents = resolve; });
+const lateComponentsSandbox = vm.runInNewContext(`(() => {
+  let electronComponentsStatus = null;
+  let electronComponentsReadyGeneration = 0;
+  const ELECTRON_COMPONENTS_READY_TIMEOUT_MS = 5000;
+  const components = {
+    whenReady: () => lateComponentsPromise,
+    status: () => ({ ready: true, source: "late" }),
+  };
+  function writePitWallDebugLog() {}
+  ${extractNamedFunction(mainProcess, "settleWithTimeout")}
+  ${extractNamedFunction(mainProcess, "ensureElectronComponentsReady")}
+  return {
+    ensureElectronComponentsReady,
+    status: () => electronComponentsStatus,
+  };
+})()`, {
+  lateComponentsPromise,
+  setTimeout: (callback, delay) => {
+    componentTimers.push({ callback, delay });
+    return componentTimers.length;
+  },
+  clearTimeout: () => {},
+});
+const lateComponentsReadiness = lateComponentsSandbox.ensureElectronComponentsReady();
+assert.equal(componentTimers[0].delay, 5000, "Actual Electron readiness wiring should retain the five-second timer");
+componentTimers[0].callback();
+await lateComponentsReadiness;
+assert.equal(lateComponentsSandbox.status().degraded, true, "Timed-out Electron components should initially report degraded status");
+resolveLateComponents();
+await new Promise((resolve) => setImmediate(resolve));
+assert.deepEqual(
+  JSON.parse(JSON.stringify(lateComponentsSandbox.status())),
+  { ready: true, source: "late" },
+  "Late Electron components success should safely refresh status after degraded startup",
+);
+assert.match(
+  extractNamedFunction(mainProcess, "ensureElectronComponentsReady"),
+  /electronComponentsReadyGeneration[\s\S]*generation[\s\S]*components\.status/,
+  "Late Electron components completion should be identity-guarded against stale readiness invocations",
+);
+
+const MEDIA_LIMIT = 64 * 1024 * 1024;
+const atMediaLimit = boundedWorkSandbox.createBoundedBufferAccumulator(MEDIA_LIMIT);
+atMediaLimit.add(Buffer.alloc(MEDIA_LIMIT));
+assert.equal(atMediaLimit.finalize().byteLength, MEDIA_LIMIT, "Media buffering should accept the exact 64 MiB boundary");
+assert.equal(atMediaLimit.retainedChunkCount, 0, "Media accumulation should release chunks after finalization");
+let mediaAbortCount = 0;
+const aboveMediaLimit = boundedWorkSandbox.createBoundedBufferAccumulator(MEDIA_LIMIT, () => { mediaAbortCount += 1; });
+aboveMediaLimit.add(Buffer.alloc(MEDIA_LIMIT));
+assert.throws(() => aboveMediaLimit.add(Buffer.alloc(1)), /64 MiB|too large/i, "Media buffering should abort one byte above 64 MiB");
+assert.equal(mediaAbortCount, 1, "Over-limit media buffering should invoke its transport abort hook once");
+assert.equal(aboveMediaLimit.retainedChunkCount, 0, "Over-limit media accumulation should release buffered chunks");
+const reusableMediaChunk = Buffer.alloc(1024 * 1024);
+for (let index = 0; index < 200; index += 1) {
+  const accumulator = boundedWorkSandbox.createBoundedBufferAccumulator(MEDIA_LIMIT);
+  accumulator.add(reusableMediaChunk);
+  assert.equal(accumulator.finalize().byteLength, reusableMediaChunk.length);
+  assert.equal(accumulator.retainedChunkCount, 0, "Sequential media responses should retain no chunks after finalization");
+}
+const mediaRequestSandbox = vm.runInNewContext(`(() => {
+  const MAX_BUFFERED_MEDIA_BYTES = 64 * 1024 * 1024;
+  const F1TV_MEDIA_CDN_HOSTS = new Set(["f1prodlive.akamaized.net"]);
+  const F1TV_HOME_URL = "https://f1tv.formula1.com/";
+  ${[
+    "isF1TvMediaUrl",
+    "sanitizeProxyRequestHeaders",
+    "createBoundedBufferAccumulator",
+    "requestBuffer",
+    "bufferToArrayBuffer",
+  ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+  return { requestBuffer, bufferToArrayBuffer };
+})()`, {
+  Buffer,
+  URL,
+  process: { versions: { chrome: "120.0.0.0" } },
+  http: {},
+  https: {},
+});
+const { EventEmitter } = require("node:events");
+function mediaTransportFixture(headers, chunks) {
+  let requestDestroyed = false;
+  let responseDestroyed = false;
+  const response = new EventEmitter();
+  response.headers = headers;
+  response.statusCode = 200;
+  response.resume = () => {};
+  response.destroy = (error) => {
+    if (responseDestroyed) return;
+    responseDestroyed = true;
+    if (error) response.emit("error", error);
+  };
+  const request = new EventEmitter();
+  request.write = () => {};
+  request.destroy = (error) => {
+    if (requestDestroyed) return;
+    requestDestroyed = true;
+    if (error) request.emit("error", error);
+  };
+  request.end = () => {
+    fixture.transportCallback(response);
+    for (const chunk of chunks) {
+      if (responseDestroyed) break;
+      response.emit("data", chunk);
+    }
+    if (!responseDestroyed) response.emit("end");
+  };
+  const fixture = {
+    transportCallback: null,
+    transport: {
+      request(_parsed, _options, callback) {
+        fixture.transportCallback = callback;
+        return request;
+      },
+    },
+    requestDestroyed: () => requestDestroyed,
+    responseDestroyed: () => responseDestroyed,
+  };
+  return fixture;
+}
+const declaredOverflow = mediaTransportFixture({ "content-length": String(MEDIA_LIMIT + 1) }, []);
+await assert.rejects(
+  mediaRequestSandbox.requestBuffer("https://f1tv.formula1.com/declared.bin", { transport: declaredOverflow.transport }),
+  /64 MiB|too large/i,
+);
+assert.equal(declaredOverflow.requestDestroyed(), true, "Declared over-limit media should destroy the request");
+assert.equal(declaredOverflow.responseDestroyed(), true, "Declared over-limit media should destroy the response");
+const streamedOverflow = mediaTransportFixture({}, [Buffer.alloc(MEDIA_LIMIT), Buffer.alloc(1)]);
+await assert.rejects(
+  mediaRequestSandbox.requestBuffer("https://f1tv.formula1.com/streamed.bin", { transport: streamedOverflow.transport }),
+  /64 MiB|too large/i,
+);
+assert.equal(streamedOverflow.requestDestroyed(), true, "Streamed over-limit media should destroy the request");
+assert.equal(streamedOverflow.responseDestroyed(), true, "Streamed over-limit media should destroy the response");
+const pooledMediaBuffer = Buffer.from([9, 1, 2, 3, 8]).subarray(1, 4);
+const pooledArrayBuffer = mediaRequestSandbox.bufferToArrayBuffer(pooledMediaBuffer);
+assert.equal(pooledArrayBuffer.byteLength, 3, "Media ArrayBuffer conversion should expose only the Buffer subarray length");
+assert.deepEqual(Array.from(new Uint8Array(pooledArrayBuffer)), [1, 2, 3], "Media ArrayBuffer conversion should not expose pooled backing bytes");
+
+const replayCarDataSandbox = vm.runInNewContext(`(() => {
+  const REPLAY_CAR_DATA_CHUNK_MS = 120000;
+  const REPLAY_CAR_DATA_CACHE_MS = 300000;
+  const REPLAY_CAR_DATA_CACHE_LIMIT = 24;
+  let replayCarDataChunkCache = new Map();
+  ${[
+    "pruneBoundedMap",
+    "replayCarDataChunkStarts",
+    "getReplayCarDataChunk",
+    "getReplayCarDataSnapshot",
+  ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+  return {
+    getReplayCarDataSnapshot,
+    cacheSize: () => replayCarDataChunkCache.size,
+  };
+})()`, {
+  Date,
+  openF1ApiUrl: (_endpoint, params) => params,
+  replayRowDateMs: (row) => Date.parse(row?.date || ""),
+});
+let replayRequests = 0;
+let replayBytes = 0;
+const replayFetch = async (params) => {
+  replayRequests += 1;
+  replayBytes += 1024 * 1024;
+  const start = Date.parse(params["date>"]);
+  return Array.from({ length: 120 }, (_, index) => ({
+    session_key: params.session_key,
+    date: new Date(start + index * 1000).toISOString(),
+  }));
+};
+const replayStart = Date.parse("2026-07-23T18:00:00.000Z");
+for (let bucket = 0; bucket < 120; bucket += 1) {
+  const target = replayStart + bucket * 5000;
+  const rows = await replayCarDataSandbox.getReplayCarDataSnapshot("session-a", target, 2500, replayStart, {
+    fetchJson: replayFetch,
+    nowMs: 1000,
+  });
+  assert.ok(rows.every((row) => {
+    const time = Date.parse(row.date);
+    return time >= target + 2500 - 120000 && time < target + 2500 + 1000;
+  }), "Replay car_data cache should slice each five-second snapshot to its requested bounds");
+}
+assert.ok(replayRequests <= 6, "Ten replay minutes should use at most six aligned OpenF1 car_data chunks");
+assert.ok(replayBytes <= 6 * 1024 * 1024, "Ten replay minutes should fetch at most six synthetic MiB");
+const nonalignedReplayStart = Date.parse("2026-07-23T18:00:30.000Z");
+const nonalignedRequestsBefore = replayRequests;
+const nonalignedBytesBefore = replayBytes;
+for (let bucket = 0; bucket < 120; bucket += 1) {
+  const target = nonalignedReplayStart + bucket * 5000;
+  const rows = await replayCarDataSandbox.getReplayCarDataSnapshot("session-nonaligned", target, 2500, nonalignedReplayStart, {
+    fetchJson: replayFetch,
+    nowMs: 1000,
+  });
+  assert.ok(rows.every((row) => {
+    const time = Date.parse(row.date);
+    return time >= target + 2500 - 120000 && time < target + 2500 + 1000;
+  }), "Nonaligned replay chunks should preserve exact adjusted target slicing");
+}
+assert.equal(replayRequests - nonalignedRequestsBefore, 6, "Ten replay minutes from a nonaligned session start should use six OpenF1 car_data chunks");
+assert.equal(replayBytes - nonalignedBytesBefore, 6 * 1024 * 1024, "Nonaligned ten-minute replay should fetch six synthetic MiB");
+const priorOffsetRequests = replayRequests;
+await replayCarDataSandbox.getReplayCarDataSnapshot("session-nonaligned", nonalignedReplayStart, 7500, nonalignedReplayStart, {
+  fetchJson: replayFetch,
+  nowMs: 1000,
+});
+assert.ok(replayRequests > priorOffsetRequests, "Replay car_data cache should isolate different clock offsets within one session");
+const priorOriginRequests = replayRequests;
+await replayCarDataSandbox.getReplayCarDataSnapshot("session-nonaligned", nonalignedReplayStart, 2500, nonalignedReplayStart + 30000, {
+  fetchJson: replayFetch,
+  nowMs: 1000,
+});
+assert.ok(replayRequests > priorOriginRequests, "Replay car_data cache should isolate different chunk origins within one session and offset");
+const priorSessionRequests = replayRequests;
+await replayCarDataSandbox.getReplayCarDataSnapshot("session-b", replayStart, 2500, replayStart, { fetchJson: replayFetch, nowMs: 1000 });
+assert.ok(replayRequests > priorSessionRequests, "Replay car_data cache should not reuse chunks across sessions");
+const priorExpiryRequests = replayRequests;
+await replayCarDataSandbox.getReplayCarDataSnapshot("session-a", replayStart, 2500, replayStart, { fetchJson: replayFetch, nowMs: 301001 });
+assert.ok(replayRequests > priorExpiryRequests, "Expired replay car_data chunks should refetch");
+for (let index = 0; index < 30; index += 1) {
+  await replayCarDataSandbox.getReplayCarDataSnapshot(`bounded-session-${index}`, replayStart, 0, replayStart, { fetchJson: replayFetch, nowMs: 400000 });
+}
+assert.ok(replayCarDataSandbox.cacheSize() <= 24, "Replay car_data cache should remain bounded");
+
+let invariantBoundsBuilds = 0;
+let invariantTraceBuilds = 0;
+const trackMapInvariantSandbox = vm.runInNewContext(`(() => {
+  const f1TimingTrackMapInvariantCache = new WeakMap();
+  function f1TimingPositionBounds() { invariantBoundsBuilds += 1; return { minX: 0, maxX: 10, minY: 0, maxY: 10 }; }
+  function f1TimingPositionSamplePoints() { invariantTraceBuilds += 1; return [{ x: 0, y: 0 }, { x: 10, y: 10 }]; }
+  ${extractNamedFunction(mainProcess, "getTrackMapInvariantPositionData")}
+  return {
+    getTrackMapInvariantPositionData,
+    get invariantBoundsBuilds() { return invariantBoundsBuilds; },
+    get invariantTraceBuilds() { return invariantTraceBuilds; },
+  };
+})()`, {
+  invariantBoundsBuilds: 0,
+  invariantTraceBuilds: 0,
+});
+const immutablePositionEntries = [];
+const firstInvariant = trackMapInvariantSandbox.getTrackMapInvariantPositionData({ positionEntries: immutablePositionEntries }, 10);
+const secondInvariant = trackMapInvariantSandbox.getTrackMapInvariantPositionData({ positionEntries: immutablePositionEntries }, 20);
+assert.equal(firstInvariant, secondInvariant, "Track Map invariant position data should be reused while target time changes");
+assert.equal(trackMapInvariantSandbox.invariantBoundsBuilds, 1, "Track Map position bounds should build once per immutable entry set");
+assert.equal(trackMapInvariantSandbox.invariantTraceBuilds, 1, "Track Map driver trace should build once per immutable entry set");
+trackMapInvariantSandbox.getTrackMapInvariantPositionData({ positionEntries: [] });
+assert.equal(trackMapInvariantSandbox.invariantBoundsBuilds, 2, "Track Map invariant cache should not cross session entry identities");
+
+assert.match(trackMapSource, /function buildTrackMapInvariantModel/, "Track Map should isolate its circuit, facts, and replay-session model");
+assert.match(
+  trackMapSource,
+  /useMemo\(\(\) => buildTrackMapInvariantModel\(data, selectedRaceKey\), \[data\.schedule, data\.sessions, data\.race, timing\.length, selectedRaceKey\]\)/,
+  "Track Map should memoize invariant screen data independently of replay progress"
+);
+assert.match(trackMapSource, /function staticTrackMapPropsEqual/, "Track Map should expose a real memo comparator for static subtrees");
+assert.match(trackMapSource, /function staticTrackMapSessionControlsEqual/, "Track Map should ignore callback churn at its static session-control boundary");
+assert.match(trackMapSource, /React\.memo\(HeaderIdentity, staticTrackMapPropsEqual\)/, "Track Map should memoize static header identity");
+assert.match(trackMapSource, /React\.memo\(HeaderSessionControls, staticTrackMapSessionControlsEqual\)/, "Track Map should memoize replay session controls separately from progress");
+assert.match(trackMapSource, /React\.memo\(HeaderSessionStatus, staticTrackMapPropsEqual\)/, "Track Map should memoize header status separately from progress");
+assert.match(trackMapSource, /React\.memo\(CircuitFacts, staticTrackMapPropsEqual\)/, "Track Map should memoize circuit facts");
+assert.match(trackMapSource, /const layers = useMemo\(\(\) => \(\{ turns: true, names: true, sectors: true, start: true \}\), \[\]\);/, "Track Map should keep layer props stable across replay ticks");
+{
+  const staticTrackMapPropsEqual = vm.runInNewContext(`(${extractNamedFunction(trackMapSource, "staticTrackMapPropsEqual")})`);
+  const staticTrackMapSessionControlsEqual = vm.runInNewContext(`(${extractNamedFunction(trackMapSource, "staticTrackMapSessionControlsEqual")})`);
+  let staticHeaderRenders = 0;
+  let sessionControlRenders = 0;
+  let previousStaticProps = null;
+  let previousSessionProps = null;
+  const progressFrames = [];
+  for (let tick = 0; tick < 10; tick += 1) {
+    const staticProps = { round: 1, gp: "Australian Grand Prix", name: "Albert Park", loc: "Melbourne" };
+    const sessionProps = {
+      races: immutablePositionEntries,
+      selectedRaceKey: "1",
+      replayActive: true,
+      replayLoading: false,
+      canLoadReplay: false,
+      onSelectRace: () => tick,
+      onLoadReplay: () => tick,
+    };
+    if (!previousStaticProps || !staticTrackMapPropsEqual(previousStaticProps, staticProps)) {
+      staticHeaderRenders += 1;
+      previousStaticProps = staticProps;
+    }
+    if (!previousSessionProps || !staticTrackMapSessionControlsEqual(previousSessionProps, sessionProps)) {
+      sessionControlRenders += 1;
+      previousSessionProps = sessionProps;
+    }
+    progressFrames.push(tick / 10);
+  }
+  assert.equal(staticHeaderRenders, 1, "Ten replay ticks should cross the static header memo boundary only once");
+  assert.equal(sessionControlRenders, 1, "Ten replay ticks should skip session-control renders despite fresh callback closures");
+  assert.deepEqual(progressFrames, [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], "Dynamic Track Map progress should still render all ten 10Hz frames");
+}
+assert.match(trackMapSource, /const TRACK_MAP_REPLAY_TICK_MS = 100;/, "Track Map replay playback timing should remain at 10Hz");
+assert.match(trackMapSource, /function createReplayElapsedClock/, "Track Map should isolate visual replay time in a dedicated narrow clock");
+assert.match(trackMapSource, /function TrackMapDynamicReplayStage/, "Track Map should isolate dynamic replay rendering in a dedicated stage");
+{
+  const outerTrackMapSource = extractNamedFunction(trackMapSource.slice(trackMapSource.indexOf("function TrackMap()")), "TrackMap");
+  const dynamicReplayStageSource = extractNamedFunction(trackMapSource, "TrackMapDynamicReplayStage");
+  assert.doesNotMatch(outerTrackMapSource, /useState|setInterval|setReplay/, "Outer TrackMap should not own replay tick state or its interval");
+  assert.match(outerTrackMapSource, /<TrackMapDynamicReplayStage/, "Outer TrackMap should render the dedicated dynamic stage");
+  assert.match(dynamicReplayStageSource, /createReplayElapsedClock[\s\S]*TrackMapView[\s\S]*TimingTower/, "Dynamic replay stage should use the narrow elapsed clock beside map and timing data");
+  assert.doesNotMatch(dynamicReplayStageSource, /elapsedSeconds:\s*current\.elapsedSeconds \+ delta/, "Dynamic replay stage should not commit replay state on every visual tick");
+  const createReplayElapsedClock = vm.runInNewContext(
+    `(${extractNamedFunction(trackMapSource, "createReplayElapsedClock")})`,
+    { TRACK_MAP_REPLAY_TICK_MS: 100, TRACK_MAP_REPLAY_DATA_POLL_MS: 1000, Set }
+  );
+  let now = 0;
+  let intervalCallback = null;
+  let cleared = false;
+  let visualTicks = 0;
+  let mapRenders = 0;
+  let towerRenders = 0;
+  const commits = [];
+  const clock = createReplayElapsedClock(0, (elapsedSeconds, bucket) => {
+    commits.push({ elapsedSeconds, bucket });
+    mapRenders += 1;
+    towerRenders += 1;
+  }, {
+    now: () => now,
+    setInterval: (callback, delay) => {
+      assert.equal(delay, 100, "Narrow replay clock should retain the 100ms visual interval");
+      intervalCallback = callback;
+      return 42;
+    },
+    clearInterval: (id) => {
+      assert.equal(id, 42);
+      cleared = true;
+    },
+  });
+  clock.subscribe(() => { visualTicks += 1; });
+  clock.start();
+  for (let tick = 0; tick < 100; tick += 1) {
+    now += 100;
+    intervalCallback();
+  }
+  assert.equal(visualTicks, 100, "Narrow replay progress should render all 100 visual ticks");
+  assert.equal(commits.length, 10, "Ten seconds should promote elapsed state only at ten one-second data buckets");
+  assert.deepEqual(commits.map((entry) => entry.bucket), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "Elapsed state commits should follow exact data-poll buckets");
+  assert.equal(mapRenders, 10, "TrackMapView reconciliation should follow bucket commits, not 100ms visual ticks");
+  assert.equal(towerRenders, 10, "TimingTower reconciliation should follow bucket commits, not 100ms visual ticks");
+  clock.pause();
+  const pausedTicks = visualTicks;
+  now += 1000;
+  intervalCallback();
+  assert.equal(visualTicks, pausedTicks, "Paused replay should not advance the narrow clock");
+  clock.seek(42.35);
+  assert.equal(clock.getElapsedSeconds(), 42.35, "Seek should resynchronize the exact visual and promoted elapsed time");
+  assert.deepEqual(commits.at(-1), { elapsedSeconds: 42.35, bucket: 42 }, "Seek should immediately commit its exact IPC poll time");
+  clock.start();
+  for (let tick = 0; tick < 3; tick += 1) {
+    now += 100;
+    intervalCallback();
+  }
+  clock.pause();
+  assert.ok(Math.abs(commits.at(-1).elapsedSeconds - 42.65) < 1e-9, "Pause should promote the exact partial-bucket elapsed time");
+  clock.stop();
+  assert.equal(cleared, true, "Dynamic replay stage should clear its interval on unmount");
 }
 
 const f1TvTokenSandbox = vm.runInNewContext(`(() => {
@@ -676,6 +1850,162 @@ const sparseRecentFormMerge = mergeDataSandbox.mergeData({
 }, { driverForm: {}, formRounds: [] });
 assert.deepEqual(JSON.parse(JSON.stringify(sparseRecentFormMerge.driverForm.ANT || null)), [4, 2], "Renderer live-data merge should keep base recent form when a sparse refresh sends an empty driverForm");
 assert.deepEqual(JSON.parse(JSON.stringify(sparseRecentFormMerge.driverProfiles.ANT.form || null)), [4, 2], "Drivers tab profiles should keep recent form positions after a sparse refresh");
+const cachedNewsStories = [
+  { title: "Cached headline", url: "https://example.test/cached" },
+];
+assert.deepEqual(
+  JSON.parse(JSON.stringify(mergeDataSandbox.mergeData({ news: cachedNewsStories }, { news: [], enrichmentPending: true }).news)),
+  cachedNewsStories,
+  "Renderer live-data merge should preserve cached news while a core snapshot awaits enrichment",
+);
+const freshNewsStories = [
+  { title: "Fresh headline", url: "https://example.test/fresh" },
+];
+assert.deepEqual(
+  JSON.parse(JSON.stringify(mergeDataSandbox.mergeData({ news: cachedNewsStories }, { news: freshNewsStories, enrichmentPending: false }).news)),
+  freshNewsStories,
+  "Renderer live-data merge should replace cached news when fresh enrichment returns stories",
+);
+const liveDataNewsPreservationSandbox = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(mainProcess, "newsStorySortTime")}
+  ${extractNamedFunction(mainProcess, "selectNewsFeedStories")}
+  ${extractNamedFunction(mainProcess, "preserveSnapshotNews")}
+  ${extractNamedFunction(mainProcess, "liveDataEnrichmentErrors")}
+  return { preserveSnapshotNews, liveDataEnrichmentErrors };
+})()`);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(liveDataNewsPreservationSandbox.preserveSnapshotNews(
+    { news: cachedNewsStories },
+    { news: [], enrichmentPending: true },
+  ).news)),
+  cachedNewsStories,
+  "Main live-data cache should preserve last-known-good news when the core snapshot has no stories",
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(liveDataNewsPreservationSandbox.preserveSnapshotNews(
+    { news: cachedNewsStories },
+    { news: freshNewsStories, enrichmentPending: false },
+  ).news)),
+  freshNewsStories,
+  "Main live-data cache should replace cached news after a complete fresh enrichment",
+);
+const cachedNewsBatch = Array.from({ length: 24 }, (_, index) => ({
+  title: `Cached headline ${index}`,
+  url: `https://example.test/cached/${index}`,
+  source: index % 2 ? "Cached A" : "Cached B",
+  publishedAt: `2026-07-${String(22 - Math.floor(index / 2)).padStart(2, "0")}T${String(index % 2).padStart(2, "0")}:00:00Z`,
+}));
+const partialFreshNews = [
+  { ...cachedNewsBatch[0], title: "Fresh replacement for cached zero", publishedAt: "2026-07-23T12:00:00Z" },
+  ...Array.from({ length: 7 }, (_, index) => ({
+    title: `Fresh partial headline ${index}`,
+    url: `https://example.test/fresh-partial/${index}`,
+    source: "Fresh",
+    publishedAt: `2026-07-23T${String(11 - index).padStart(2, "0")}:00:00Z`,
+  })),
+];
+let boundedPartialNews = JSON.parse(JSON.stringify(liveDataNewsPreservationSandbox.preserveSnapshotNews(
+  { news: cachedNewsBatch },
+  { news: partialFreshNews, enrichmentPending: false },
+  { partial: true },
+).news));
+assert.equal(boundedPartialNews.length, 24, "Partially failed news enrichment should cap merged fresh and cached stories at 24");
+assert.equal(new Set(boundedPartialNews.map((story) => story.url)).size, 24, "Partially failed news enrichment should dedupe fresh and cached stories");
+assert.equal(boundedPartialNews.filter((story) => story.url === cachedNewsBatch[0].url).length, 1, "Fresh partial stories should replace duplicate cached URLs");
+for (let cycle = 0; cycle < 8; cycle += 1) {
+  const cycleStories = Array.from({ length: 6 }, (_, index) => ({
+    title: `Cycle ${cycle} headline ${index}`,
+    url: `https://example.test/cycle/${cycle}/${index}`,
+    source: "Fresh",
+    publishedAt: `2026-07-23T${String(20 - cycle).padStart(2, "0")}:${String(index).padStart(2, "0")}:00Z`,
+  }));
+  boundedPartialNews = JSON.parse(JSON.stringify(liveDataNewsPreservationSandbox.preserveSnapshotNews(
+    { news: boundedPartialNews },
+    { news: cycleStories, enrichmentPending: false },
+    { partial: true },
+  ).news));
+  assert.ok(boundedPartialNews.length <= 24, `Repeated partial-error news cycle ${cycle + 1} should remain capped at 24 stories`);
+  assert.equal(new Set(boundedPartialNews.map((story) => story.url)).size, boundedPartialNews.length, `Repeated partial-error news cycle ${cycle + 1} should remain deduplicated`);
+}
+const liveDataNewsEnrichmentPartial = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "liveDataNewsEnrichmentPartial")})`);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(liveDataNewsPreservationSandbox.liveDataEnrichmentErrors(
+    ["core failed"],
+    { errors: ["background failed"] },
+  ))),
+  ["core failed", "background failed"],
+  "Background enrichment source errors should propagate into the completed live snapshot",
+);
+assert.equal(liveDataNewsEnrichmentPartial({ failedKeys: ["openF1Intervals"] }), false, "Unrelated timing enrichment errors should not retain and grow the prior news feed");
+assert.equal(liveDataNewsEnrichmentPartial({ failedKeys: ["formula1News"] }), true, "A failed news source should retain last-known-good stories alongside fresh partial results");
+const refreshLiveDataEnrichmentSource = extractNamedFunction(mainProcess, "refreshLiveDataEnrichment");
+assert.match(refreshLiveDataEnrichmentSource, /liveDataEnrichmentErrors\(baseErrors,\s*enrichment\)[\s\S]*buildPitWallSnapshot\(raw,\s*enrichmentErrors/, "Background enrichment should pass combined core and background errors into the completed snapshot");
+assert.match(refreshLiveDataEnrichmentSource, /preserveSnapshotNews\(baseData,\s*data,\s*\{\s*partial:\s*liveDataNewsEnrichmentPartial\(enrichment\)\s*\}\)/, "Only failed news sources should trigger partial-feed preservation before cache and disk writes");
+assert.match(mainProcess, /preserveSnapshotNews\(liveDataCache\?\.data,\s*data\)[\s\S]*writeLiveSnapshotDiskCache\(data\)/, "Core live-data cache and disk writes should preserve cached news before background enrichment");
+const enrichmentControls = [];
+const enrichmentDiskWrites = [];
+const enrichmentNotifications = [];
+const overlappingEnrichmentSandbox = vm.runInNewContext(`(() => {
+  let liveDataEnrichmentRefresh = null;
+  const liveDataEnrichmentRefreshes = new Map();
+  let liveDataCache = { createdAt: 0, data: { fetchedAt: "A", enrichmentPending: true, news: [] } };
+  const LIVE_BACKGROUND_ENRICHMENT_URLS = {};
+  function liveBackgroundEnrichmentUrls() { return LIVE_BACKGROUND_ENRICHMENT_URLS; }
+  function fetchLiveDataEntries() {
+    return new Promise((resolve) => enrichmentControls.push({ resolve }));
+  }
+  async function fetchRecentDriverResults() { return null; }
+  async function buildPitWallSnapshot(raw, errors) {
+    return { fetchedAt: raw.snapshotId, enrichmentPending: false, news: [{ title: raw.snapshotId }], errors };
+  }
+  function liveDataEnrichmentErrors(baseErrors, enrichment) {
+    return [...baseErrors, ...(enrichment.errors || [])];
+  }
+  function liveDataNewsEnrichmentPartial() { return false; }
+  function preserveSnapshotNews(_baseData, data) { return data; }
+  function writeLiveSnapshotDiskCache(data) { enrichmentDiskWrites.push(data.fetchedAt); }
+  function notifyLiveDataUpdated() { enrichmentNotifications.push(liveDataCache.data.fetchedAt); }
+  function writePitWallDebugLog() {}
+  ${refreshLiveDataEnrichmentSource}
+  return {
+    refreshLiveDataEnrichment,
+    setCacheData(data) { liveDataCache = { createdAt: 0, data }; },
+    cacheData() { return liveDataCache.data; },
+    inFlightCount() { return liveDataEnrichmentRefreshes.size; },
+  };
+})()`, { enrichmentControls, enrichmentDiskWrites, enrichmentNotifications });
+const enrichmentA = overlappingEnrichmentSandbox.refreshLiveDataEnrichment(
+  { snapshotId: "A" },
+  [],
+  { fetchedAt: "A", enrichmentPending: true, news: [] },
+);
+overlappingEnrichmentSandbox.setCacheData({ fetchedAt: "B", enrichmentPending: true, news: [] });
+const enrichmentB = overlappingEnrichmentSandbox.refreshLiveDataEnrichment(
+  { snapshotId: "B" },
+  [],
+  { fetchedAt: "B", enrichmentPending: true, news: [] },
+);
+const duplicateEnrichmentB = overlappingEnrichmentSandbox.refreshLiveDataEnrichment(
+  { snapshotId: "B" },
+  [],
+  { fetchedAt: "B", enrichmentPending: true, news: [] },
+);
+assert.equal(enrichmentControls.length, 2, "A newer core snapshot should start its own background enrichment while the old snapshot is still in flight");
+assert.equal(enrichmentB, duplicateEnrichmentB, "Repeated requests for the same core snapshot should share one enrichment promise");
+enrichmentControls[0].resolve({ raw: { snapshotId: "A" }, errors: [] });
+await enrichmentA;
+assert.deepEqual(
+  JSON.parse(JSON.stringify(overlappingEnrichmentSandbox.cacheData())),
+  { fetchedAt: "B", enrichmentPending: true, news: [] },
+  "Old enrichment completion should not clear or overwrite the newer core snapshot",
+);
+assert.equal(overlappingEnrichmentSandbox.inFlightCount(), 1, "Old enrichment cleanup should leave the newer snapshot's promise registered");
+enrichmentControls[1].resolve({ raw: { snapshotId: "B" }, errors: [] });
+await enrichmentB;
+assert.equal(overlappingEnrichmentSandbox.cacheData().enrichmentPending, false, "The newer snapshot should clear pending after its own enrichment completes");
+assert.deepEqual(enrichmentDiskWrites, ["B"], "Only the current snapshot enrichment should write the live-data disk cache");
+assert.deepEqual(enrichmentNotifications, ["B"], "The newer snapshot should emit its own completion notification");
+assert.equal(overlappingEnrichmentSandbox.inFlightCount(), 0, "Each enrichment promise should remove only its own keyed in-flight entry");
 
 const liveSyncDefaultSandbox = vm.runInNewContext(`(() => {
   const DEFAULT_WORLD_SYNC_TARGET = 36;
@@ -798,8 +2128,10 @@ assert.match(liveRacingSource, /const LIVE_TIMING_STREAM_ALIGNMENT_DELAY_SECONDS
 assert.deepEqual(JSON.parse(JSON.stringify(liveTimingRequestSandbox.liveTimingRequestForMetrics({ targetLatency: 36, liveLatency: 37.9, videoTimeUtcMs: liveFrameUtcMs }, 36))), { targetLatencySeconds: 40.6, targetUtcMs: liveFrameUtcMs }, "Live timing should send the raw video playhead UTC; the measured feed latency is subtracted in the main process like MultiViewer");
 assert.deepEqual(JSON.parse(JSON.stringify(liveTimingRequestSandbox.liveTimingRequestForMetrics({ targetLatency: 36, liveLatency: 37.9, videoTimeUtcMs: liveFrameUtcMs, videoTimeAtMs: 5000 }, 36))), { targetLatencySeconds: 40.6, targetUtcMs: liveFrameUtcMs, videoTimeAtMs: 5000 }, "Live timing requests should carry the wall-clock instant the playhead was measured");
 assert.match(mainProcess, /const F1_TIMING_LIVE_STREAM_ALIGNMENT_SECONDS = 4\.6/, "Live timing should keep the empirical 4.6s F1 TV stream alignment floor");
-assert.match(mainProcess, /Math\.max\(feedLatencySeconds, F1_TIMING_LIVE_STREAM_ALIGNMENT_SECONDS\)/, "Live timing should align video-UTC targets by the measured feed latency with the stream offset as a floor");
+assert.match(mainProcess, /function f1LiveTimingStreamAlignmentSeconds/, "Live timing should peak-hold stream alignment so Q-session sample refresh cannot jump the tower ahead");
+assert.match(mainProcess, /F1_TIMING_LIVE_ALIGNMENT_DECAY_PER_MINUTE/, "Live timing alignment should only slowly decay toward a faster feed median");
 assert.match(mainProcess, /f1TimingArchiveSecondsForUtc\(sessionData, targetUtcMs\) - streamAlignmentSeconds/, "Live timing video-UTC targets should subtract the stream alignment in the main process");
+assert.match(liveRacingSource, /videoTimeAtMs: videoTimeUtcMs != null && Number\.isFinite\(measuredAtMs\) \? measuredAtMs : null/, "Live sync metrics should retain videoTimeAtMs so timing can extrapolate the playhead between reports");
 assert.deepEqual(JSON.parse(JSON.stringify(liveTimingRequestSandbox.liveTimingRequestForMetrics({ liveLatency: 32.1, targetLatency: 36 }, 36))), { targetLatencySeconds: 40.6 }, "Live timing should include the stream alignment delay when falling back to latency-based sampling");
 assert.equal(liveTimingRequestSandbox.liveTimingTargetUtcNow({ targetUtcMs: liveFrameUtcMs, videoTimeAtMs: 5000 }, 5500), liveFrameUtcMs + 500, "Live timing polls should extrapolate the video playhead between 750ms sync reports");
 assert.equal(liveTimingRequestSandbox.liveTimingTargetUtcNow({ targetUtcMs: liveFrameUtcMs, videoTimeAtMs: 5000 }, 15000), liveFrameUtcMs + 3000, "Live timing playhead extrapolation should stay clamped when sync reports stall");
@@ -827,7 +2159,33 @@ assert.match(liveRacingSource, /targetUtcMs: liveTimingTargetUtcNow\(timingSync,
 assert.match(liveRacingSource, /liveTimingSyncRef = React\.useRef\(liveTimingRequestForMetrics\(null, DEFAULT_WORLD_SYNC_TARGET\)\)/, "Initial live timing polling should include the same F1 timing offset before video sync metrics arrive");
 assert.match(liveRacingSource, /videoTimeUtcMs/, "Live sync metrics should carry the current video program-date timestamp for timing alignment");
 assert.match(liveRacingSource, /targetUtcMs/, "Live timing polling should request rows by video UTC when the player exposes it");
-assert.match(liveRacingSource, /videoTimeUtcMs: validVideoUtcMs\(metrics\.videoTimeUtcMs\)/, "Live sync metrics state should retain video UTC so timing can follow the actual player playhead");
+const recordSyncMetricsSandbox = vm.runInNewContext(`(() => {
+  let syncMetricsState = {};
+  function setSyncMetrics(update) {
+    syncMetricsState = update(syncMetricsState);
+  }
+  ${extractNamedFunction(liveRacingSource, "validVideoUtcMs")}
+  ${extractNamedFunction(liveRacingSource, "recordSyncMetrics")}
+  return { recordSyncMetrics, syncMetricsState: () => syncMetricsState };
+})()`);
+recordSyncMetricsSandbox.recordSyncMetrics("WORLD", {
+  targetLatency: 36,
+  liveLatency: 37.9,
+  playbackRate: 1,
+  delta: 1.9,
+  videoTimeUtcMs: liveFrameUtcMs,
+  videoTimeAtMs: liveFrameUtcMs + 100,
+});
+assert.equal(recordSyncMetricsSandbox.syncMetricsState().WORLD.videoTimeUtcMs, liveFrameUtcMs, "Live sync metrics state should retain video UTC so timing can follow the actual player playhead");
+recordSyncMetricsSandbox.recordSyncMetrics("WORLD", {
+  targetLatency: 36,
+  liveLatency: 37.9,
+  playbackRate: 1,
+  delta: 1.9,
+  videoTimeUtcMs: "not-a-video-timestamp",
+  videoTimeAtMs: liveFrameUtcMs + 200,
+});
+assert.equal(recordSyncMetricsSandbox.syncMetricsState().WORLD.videoTimeUtcMs, null, "Live sync metrics state should normalize invalid video UTC values to null");
 assert.match(liveRacingSource, /pitwall\.data\.liveTiming\(\{[\s\S]*source: "f1"[\s\S]*targetUtcMs/, "Live Racing live mode should pass the video UTC timing target through IPC");
 
 const f1LiveTimelineSandbox = vm.runInNewContext(`(() => {
@@ -1439,6 +2797,10 @@ assert.equal(
 );
 
 const newsParserSandbox = vm.runInNewContext(`(() => {
+  const NEWS_ARTICLE_CACHE_MS = 1000 * 60 * 15;
+  const NEWS_ARTICLE_CACHE_LIMIT = 128;
+  const NEWS_ARTICLE_CONCURRENCY = 4;
+  let newsArticleEnrichmentCache = new Map();
   const NEWS_SOURCES = [
     { key: "motorsportNews", name: "Motorsport.com", url: "https://www.motorsport.com/rss/f1/news/", type: "rss" },
     { key: "formula1News", name: "Formula 1", url: "https://www.formula1.com/en/latest/all.xml", type: "rss", articlePath: /\\/en\\/latest\\/article\\//i },
@@ -1473,12 +2835,26 @@ const newsParserSandbox = vm.runInNewContext(`(() => {
     "parseRss",
     "parseNewsHtml",
     "parseNewsSource",
+    "pruneBoundedMap",
+    "mapWithConcurrencyStable",
+    "newsArticleDetailsFromHtml",
+    "newsArticleDetailsMeaningful",
+    "getNewsArticleEnrichment",
     "enrichNewsStoryImages",
     "newsStorySortTime",
     "selectNewsFeedStories",
     "buildNewsFeed",
   ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
-  return { parseNewsHtml, parseNewsSource, extractArticleMetaImage, extractArticleMetaDate, extractArticleBody, enrichNewsStoryImages, buildNewsFeed };
+  return {
+    parseNewsHtml,
+    parseNewsSource,
+    extractArticleMetaImage,
+    extractArticleMetaDate,
+    extractArticleBody,
+    enrichNewsStoryImages,
+    buildNewsFeed,
+    cacheSize: () => newsArticleEnrichmentCache.size,
+  };
 })()`, { createHash: require("node:crypto").createHash, URL });
 const planetF1CardHtml = `
   <article>
@@ -1546,7 +2922,7 @@ assert.equal(
   "2026-06-07T17:06:00.000Z",
   "Formula 1 article fallback should preserve visible publish times when metadata is absent",
 );
-newsParserSandbox.enrichNewsStoryImages([
+await newsParserSandbox.enrichNewsStoryImages([
   {
     title: "Older source story",
     url: "https://example.com/older",
@@ -1569,7 +2945,7 @@ newsParserSandbox.enrichNewsStoryImages([
       "News enrichment should re-sort stories after discovering fresher article timestamps",
     );
   });
-newsParserSandbox.enrichNewsStoryImages([
+await newsParserSandbox.enrichNewsStoryImages([
   {
     title: "Lewis Hamilton achieves Ferrari impossible dream with emotional Barcelona GP breakthrough",
     url: "https://www.planetf1.com/news/lewis-hamilton-ferrari-impossible-dream-barcelona-gp-breakthrough",
@@ -1590,6 +2966,113 @@ newsParserSandbox.enrichNewsStoryImages([
       "PlanetF1 stories with image and time should still backfill missing tile descriptions from article text",
     );
   });
+let canonicalNewsFetches = 0;
+const canonicalNewsFetcher = async () => {
+  canonicalNewsFetches += 1;
+  return `<meta property="og:image" content="https://example.com/cached.webp">`;
+};
+const canonicalNewsStory = (url, title = "Canonical story") => ({
+  title,
+  url,
+  image: "",
+  publishedAt: "",
+  time: "recent",
+  lead: "",
+});
+await newsParserSandbox.enrichNewsStoryImages(
+  [canonicalNewsStory("https://example.com/article?utm_source=feed")],
+  1,
+  canonicalNewsFetcher,
+  1000,
+);
+await newsParserSandbox.enrichNewsStoryImages(
+  [canonicalNewsStory("https://example.com/article?ref=home")],
+  1,
+  canonicalNewsFetcher,
+  2000,
+);
+assert.equal(canonicalNewsFetches, 1, "Canonical news article URLs should reuse enrichment for 15 minutes");
+await newsParserSandbox.enrichNewsStoryImages(
+  [canonicalNewsStory("https://example.com/article")],
+  1,
+  canonicalNewsFetcher,
+  1000 + 15 * 60 * 1000,
+);
+assert.equal(canonicalNewsFetches, 2, "Expired news article enrichment should refetch");
+let emptyArticleFetches = 0;
+const emptyThenMeaningfulUrl = "https://example.com/empty-then-meaningful";
+await newsParserSandbox.enrichNewsStoryImages(
+  [canonicalNewsStory(emptyThenMeaningfulUrl, "Empty response story")],
+  1,
+  async () => {
+    emptyArticleFetches += 1;
+    return "<main><p>Checking your browser before accessing this article. Please enable JavaScript and cookies to continue.</p></main>";
+  },
+  2500,
+);
+const recoveredEmptyStory = canonicalNewsStory(emptyThenMeaningfulUrl, "Recovered response story");
+await newsParserSandbox.enrichNewsStoryImages(
+  [recoveredEmptyStory],
+  1,
+  async () => {
+    emptyArticleFetches += 1;
+    return "<article><p>Recovered meaningful article body after the empty anti-bot response.</p></article>";
+  },
+  2600,
+);
+assert.equal(emptyArticleFetches, 2, "Successful but empty/anti-bot news responses should not be cached for 15 minutes");
+assert.match(recoveredEmptyStory.lead, /Recovered meaningful article body/, "A second meaningful article response should enrich after an empty 200");
+let refusedNewsFetches = 0;
+await newsParserSandbox.enrichNewsStoryImages(
+  [canonicalNewsStory("https://example.com/refused")],
+  1,
+  async () => {
+    refusedNewsFetches += 1;
+    throw new Error("refused");
+  },
+  3000,
+);
+await newsParserSandbox.enrichNewsStoryImages(
+  [canonicalNewsStory("https://example.com/refused")],
+  1,
+  async () => {
+    refusedNewsFetches += 1;
+    return "<article><p>Recovered article body with enough useful detail for the news card.</p></article>";
+  },
+  4000,
+);
+assert.equal(refusedNewsFetches, 2, "Refused news article enrichment should not poison the cache");
+
+let activeNewsDetails = 0;
+let peakNewsDetails = 0;
+const newsDetailResolvers = [];
+const newsTitles = Array.from({ length: 8 }, (_, index) => `Story ${index}`);
+const boundedNewsWork = newsParserSandbox.enrichNewsStoryImages(
+  newsTitles.map((title, index) => canonicalNewsStory(`https://example.com/concurrency-${index}`, title)),
+  8,
+  async () => {
+    activeNewsDetails += 1;
+    peakNewsDetails = Math.max(peakNewsDetails, activeNewsDetails);
+    await new Promise((resolve) => newsDetailResolvers.push(resolve));
+    activeNewsDetails -= 1;
+    return "<article><p>Article body with enough useful detail for a stable news card description.</p></article>";
+  },
+  5000,
+);
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(peakNewsDetails, 4, "News article enrichment should cap detail concurrency at four");
+while (newsDetailResolvers.length) {
+  newsDetailResolvers.splice(0).forEach((resolve) => resolve());
+  await new Promise((resolve) => setImmediate(resolve));
+}
+assert.deepEqual((await boundedNewsWork).map((story) => story.title), newsTitles, "Concurrent news enrichment should preserve stable feed order");
+await newsParserSandbox.enrichNewsStoryImages(
+  Array.from({ length: 140 }, (_, index) => canonicalNewsStory(`https://example.com/bounded-cache-${index}`, `Bounded ${index}`)),
+  140,
+  async () => "<article><p>Bounded cache fixture article body with enough useful detail.</p></article>",
+  6000,
+);
+assert.ok(newsParserSandbox.cacheSize() <= 128, "News article enrichment cache should remain bounded");
 assert.match(mainProcess, /const baseNews = buildNewsFeed\(raw\)[\s\S]*options\.enrichmentPending[\s\S]*enrichNewsStoryImages\(baseNews\)/, "Initial live data snapshots should defer article metadata enrichment to the background pass");
 assert.deepEqual(
   JSON.parse(JSON.stringify(newsParserSandbox.parseNewsSource(`
@@ -1892,6 +3375,9 @@ const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
   const F1_TIMING_LIVE_FEED_LATENCY_MAX_SECONDS = 15;
   const F1_TIMING_LIVE_FEED_LATENCY_SAMPLE_LIMIT = 48;
   const F1_TIMING_LIVE_STREAM_ALIGNMENT_SECONDS = 4.6;
+  const F1_TIMING_LIVE_ALIGNMENT_DECAY_PER_MINUTE = 0.2;
+  const F1_TIMING_LIVE_ENTRY_SOFT_LIMIT = 1000;
+  const F1_TIMING_LIVE_ENTRY_KEEP = 700;
   const f1TimingTelemetrySampleCache = new WeakMap();
   const f1TimingPositionSampleCache = new WeakMap();
   const f1TimingStateCursorCache = new WeakMap();
@@ -1903,7 +3389,7 @@ const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
   function ensureF1TimingLiveClient() { return Promise.resolve(); }
   function setF1LiveTimingState(state) { f1LiveTimingState = state; }
   function getF1LiveTimingState() { return f1LiveTimingState; }
-  function setF1TimingSmokeNowMs(value) { f1TimingSmokeNowMs = Number.isFinite(Number(value)) ? Number(value) : null; }
+  function setF1TimingSmokeNowMs(value) { f1TimingSmokeNowMs = value == null ? null : Number.isFinite(Number(value)) ? Number(value) : null; }
   ${[
     "finiteNumber",
     "groupRowsByDriverNumber",
@@ -1933,7 +3419,10 @@ const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
     "f1TimingSegmentProgress",
     "f1TimingSegmentExtent",
     "f1TimingTrimLeadingOffSegments",
+    "f1TimingBackfillSegmentHoles",
     "f1TimingMergeSectorSegments",
+    "f1TimingSegmentMapFromValue",
+    "mergeF1TimingSegmentMap",
     "f1TimingLineSessionLap",
     "f1TimingDriverStatusFlags",
     "f1TimingSectorHistoryAt",
@@ -1945,9 +3434,11 @@ const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
     "f1TimingKnownCompoundsByNumber",
     "decodeF1TimingZPayload",
     "f1TimingLivePayload",
+    "compactF1TimingLiveEntries",
     "boundedF1TimingLiveEntries",
     "f1TimingLiveDataWithFeedTime",
     "f1LiveTimingFeedLatencySeconds",
+    "f1LiveTimingStreamAlignmentSeconds",
     "f1LiveTimingEntrySeconds",
     "applyF1TimingLiveFeed",
     "applyF1TimingSignalRMessage",
@@ -1964,14 +3455,301 @@ const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
     "f1TimingLapTimeline",
     "parseF1TimingSessionClock",
     "parseF1TimingArchiveRows",
+    "f1TimingLiveClientIsStale",
+    "closeF1TimingLiveClient",
+    "recoverStaleF1TimingLiveClient",
     "getF1LiveTimingSnapshot",
     "f1LiveTimingCatchUpRemainingSeconds",
     "resyncF1LiveTiming",
   ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
   function normalizeCompound(value) { return String(value || "").toLowerCase(); }
   function formatLapDuration(seconds) { return String(seconds); }
-  return { f1TimingSegments, f1TimingPositionRowsAt, getF1LiveTimingSnapshot, f1LiveTimingCatchUpRemainingSeconds, parseF1TimingArchiveRows, setF1LiveTimingState, getF1LiveTimingState, resyncF1LiveTiming, setF1TimingSmokeNowMs, applyF1TimingSignalRMessage };
+  return { f1TimingSegments, f1TimingPositionRowsAt, getF1LiveTimingSnapshot, f1LiveTimingCatchUpRemainingSeconds, parseF1TimingArchiveRows, setF1LiveTimingState, getF1LiveTimingState, resyncF1LiveTiming, setF1TimingSmokeNowMs, applyF1TimingSignalRMessage, compactF1TimingLiveEntries, mergeF1TimingDelta, f1TimingMergeSectorSegments, f1TimingBackfillSegmentHoles };
 })()`, { Buffer, zlib });
+const f1TimingLiveRecoverySandbox = vm.runInNewContext(`(() => {
+  const F1_TIMING_LIVE_STALE_MS = 25000;
+  const F1_TIMING_LIVE_CONNECT_RETRY_MS = 5000;
+  const F1_TIMING_LIVE_CLOSE_RETRY_MS = 2500;
+  let f1LiveTimingClient = null;
+  let f1LiveTimingState = null;
+  let signalCookieRequests = 0;
+  function requestF1TimingSignalRCookie() {
+    signalCookieRequests += 1;
+    return new Promise(() => {});
+  }
+  function requestF1TimingJsonPost() { throw new Error("negotiate should wait for the cookie fixture"); }
+  function getF1TvSubscriptionToken() { return ""; }
+  function createF1TimingWebSocket() { throw new Error("websocket should wait for negotiation"); }
+  function finiteNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+  function f1LiveTimingFeedLatencySeconds() { return 0; }
+  function f1LiveTimingStreamAlignmentSeconds() { return 4.6; }
+  function f1TimingArchiveSecondsForUtc(_sessionData, targetUtcMs) { return targetUtcMs / 1000; }
+  function parseF1TimingArchiveRows() {
+    return {
+      timing: [{ number: 1, code: "VER", telemetry: { speed: 300, gear: 8 } }],
+      weather: {},
+      sessionClock: {},
+      raceControlMessages: [],
+      diagnostics: {},
+    };
+  }
+  function f1TimingLiveTopicDiagnostics() { return {}; }
+  ${[
+    "f1TimingLiveClientIsStale",
+    "closeF1TimingLiveClient",
+    "recoverStaleF1TimingLiveClient",
+    "ensureF1TimingLiveClient",
+    "getF1LiveTimingSnapshot",
+  ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+  function setFixture(client, state) {
+    f1LiveTimingClient = client;
+    f1LiveTimingState = state;
+  }
+  return {
+    getF1LiveTimingSnapshot,
+    setFixture,
+    getClient: () => f1LiveTimingClient,
+    getSignalCookieRequests: () => signalCookieRequests,
+  };
+})()`, {
+  Buffer,
+  URL,
+});
+let staleSocketCloseCalls = 0;
+const staleTimingSocket = { close: () => { staleSocketCloseCalls += 1; } };
+const staleTimingClient = { connected: true, connecting: false, socket: staleTimingSocket };
+f1TimingLiveRecoverySandbox.setFixture(staleTimingClient, {
+  entriesByTopic: {},
+  lastMessageAt: Date.now() - 25001,
+  lastTopic: "TimingData",
+  lastError: "",
+});
+assert.equal(f1TimingLiveRecoverySandbox.getF1LiveTimingSnapshot(), null, "A stale live-timing snapshot should remain unavailable while recovery starts");
+assert.equal(staleSocketCloseCalls, 1, "The live-timing watchdog should close a connected socket after messages become stale");
+assert.equal(f1TimingLiveRecoverySandbox.getClient().connecting, true, "The live-timing watchdog should reset the stale client and immediately start reconnecting");
+assert.equal(f1TimingLiveRecoverySandbox.getSignalCookieRequests(), 1, "The live-timing watchdog should start exactly one reconnect attempt");
+f1TimingLiveRecoverySandbox.getF1LiveTimingSnapshot();
+assert.equal(f1TimingLiveRecoverySandbox.getSignalCookieRequests(), 1, "Repeated stale snapshot reads should not start reconnect storms");
+let freshSocketCloseCalls = 0;
+const freshTimingClient = { connected: true, connecting: false, socket: { close: () => { freshSocketCloseCalls += 1; } } };
+f1TimingLiveRecoverySandbox.setFixture(freshTimingClient, {
+  entriesByTopic: {},
+  lastMessageAt: Date.now(),
+  lastTopic: "TimingData",
+  lastError: "",
+});
+assert.ok(f1TimingLiveRecoverySandbox.getF1LiveTimingSnapshot(), "A fresh connected live-timing client should continue serving snapshots");
+assert.equal(f1TimingLiveRecoverySandbox.getClient(), freshTimingClient, "The live-timing watchdog should retain a fresh connected client");
+assert.equal(freshSocketCloseCalls, 0, "The live-timing watchdog should not close a fresh connected socket");
+const f1TimingReconnectGraceSandbox = vm.runInNewContext(`(() => {
+  const F1_TIMING_LIVE_STALE_MS = 25000;
+  const F1_TIMING_LIVE_CONNECT_RETRY_MS = 5000;
+  const F1_TIMING_LIVE_CLOSE_RETRY_MS = 2500;
+  const F1_TIMING_NEGOTIATE_URL = "https://example.test/negotiate";
+  const F1_TIMING_SIGNALR_URL = "wss://example.test/connect";
+  const F1_TIMING_SIGNALR_TOPICS = ["TimingData"];
+  let fixtureNowMs = 1000000;
+  Date.now = () => fixtureNowMs;
+  let f1LiveTimingClient = null;
+  let f1LiveTimingState = null;
+  let connectionAttempts = 0;
+  const sockets = [];
+  function requestF1TimingSignalRCookie() {
+    connectionAttempts += 1;
+    return Promise.resolve("");
+  }
+  function requestF1TimingJsonPost() { return Promise.resolve({ connectionId: \`fixture-\${connectionAttempts}\` }); }
+  function getF1TvSubscriptionToken() { return ""; }
+  function createF1TimingWebSocket() {
+    const socket = {
+      closeCount: 0,
+      send() {},
+      close() { this.closeCount += 1; },
+    };
+    sockets.push(socket);
+    return socket;
+  }
+  function finiteNumber(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+  function f1LiveTimingFeedLatencySeconds() { return 0; }
+  function f1LiveTimingStreamAlignmentSeconds() { return 4.6; }
+  function f1TimingArchiveSecondsForUtc(_sessionData, targetUtcMs) { return targetUtcMs / 1000; }
+  function parseF1TimingArchiveRows() { throw new Error("stale data should not be parsed during reconnect grace"); }
+  function f1TimingLiveTopicDiagnostics() { return {}; }
+  ${[
+    "f1TimingLiveClientIsStale",
+    "closeF1TimingLiveClient",
+    "recoverStaleF1TimingLiveClient",
+    "ensureF1TimingLiveClient",
+    "getF1LiveTimingSnapshot",
+  ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+  return {
+    getF1LiveTimingSnapshot,
+    setFixture(client, state) {
+      f1LiveTimingClient = client;
+      f1LiveTimingState = state;
+    },
+    advance(ms) { fixtureNowMs += ms; },
+    getClient: () => f1LiveTimingClient,
+    getConnectionAttempts: () => connectionAttempts,
+    getSocket: (index) => sockets[index],
+  };
+})()`, {
+  Buffer,
+  URL,
+  Date: { now: () => 1000000 },
+});
+const graceOldSocket = { closeCount: 0, close() { this.closeCount += 1; } };
+f1TimingReconnectGraceSandbox.setFixture(
+  { connected: true, connecting: false, socket: graceOldSocket },
+  {
+    entriesByTopic: {},
+    lastMessageAt: 1000000 - 25001,
+    lastTopic: "TimingData",
+    lastError: "",
+  },
+);
+assert.equal(f1TimingReconnectGraceSandbox.getF1LiveTimingSnapshot(), null, "Initial stale data should remain unavailable while its socket is replaced");
+for (let index = 0; index < 6; index += 1) await Promise.resolve();
+const graceReplacementSocket = f1TimingReconnectGraceSandbox.getSocket(0);
+assert.ok(graceReplacementSocket, "Stale live-timing recovery should create one replacement socket");
+graceReplacementSocket.onopen();
+assert.equal(f1TimingReconnectGraceSandbox.getF1LiveTimingSnapshot(), null, "Opening a replacement socket should not serve the previous socket's stale timing state");
+assert.equal(graceOldSocket.closeCount, 1, "The original stale socket should be closed exactly once");
+assert.equal(graceReplacementSocket.closeCount, 0, "A newly opened replacement socket should receive a message grace period before recovery");
+assert.equal(f1TimingReconnectGraceSandbox.getConnectionAttempts(), 1, "Polling during replacement grace should not start a second connection attempt");
+f1TimingReconnectGraceSandbox.advance(25001);
+assert.equal(f1TimingReconnectGraceSandbox.getF1LiveTimingSnapshot(), null, "A replacement that stays silent past the grace period should remain unavailable");
+assert.equal(graceReplacementSocket.closeCount, 1, "A replacement socket that remains silent beyond grace should be closed for recovery");
+assert.equal(f1TimingReconnectGraceSandbox.getConnectionAttempts(), 2, "One new recovery should be allowed after a replacement socket's message grace expires");
+f1TimingReconnectGraceSandbox.getF1LiveTimingSnapshot();
+assert.equal(f1TimingReconnectGraceSandbox.getConnectionAttempts(), 2, "Repeated polls during the second connection attempt should remain deduplicated");
+const f1TimingAttemptOwnershipSandbox = vm.runInNewContext(`(() => {
+  const F1_TIMING_LIVE_STALE_MS = 25000;
+  const F1_TIMING_LIVE_CONNECT_RETRY_MS = 5000;
+  const F1_TIMING_LIVE_CLOSE_RETRY_MS = 2500;
+  const F1_TIMING_NEGOTIATE_URL = "https://example.test/negotiate";
+  const F1_TIMING_SIGNALR_URL = "wss://example.test/connect";
+  const F1_TIMING_SIGNALR_TOPICS = ["TimingData"];
+  let f1LiveTimingClient = null;
+  let f1LiveTimingState = { entriesByTopic: {}, lastMessageAt: 0, lastTopic: "", lastError: "" };
+  let appliedMessages = 0;
+  const cookies = [];
+  const negotiations = [];
+  const tokens = [];
+  const sockets = [];
+  function deferred(list) {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    list.push({ promise, resolve, reject });
+    return promise;
+  }
+  function requestF1TimingSignalRCookie() { return deferred(cookies); }
+  function requestF1TimingJsonPost() { return deferred(negotiations); }
+  function getF1TvSubscriptionToken() { return deferred(tokens); }
+  function createF1TimingWebSocket() {
+    const socket = {
+      closeCount: 0,
+      sendCount: 0,
+      send() { this.sendCount += 1; },
+      close() { this.closeCount += 1; },
+    };
+    sockets.push(socket);
+    return socket;
+  }
+  function applyF1TimingSignalRMessage() { appliedMessages += 1; }
+  function finiteNumber(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+  ${[
+    "f1TimingLiveClientIsStale",
+    "closeF1TimingLiveClient",
+    "recoverStaleF1TimingLiveClient",
+    "resyncF1LiveTiming",
+    "ensureF1TimingLiveClient",
+  ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+  return {
+    startEnsure: () => ensureF1TimingLiveClient(),
+    resync: () => resyncF1LiveTiming(),
+    getClient: () => f1LiveTimingClient,
+    getCookieCount: () => cookies.length,
+    getNegotiationCount: () => negotiations.length,
+    getTokenCount: () => tokens.length,
+    getSocket: (index) => sockets[index],
+    getAppliedMessages: () => appliedMessages,
+    resolveCookie: (index, value = "") => cookies[index].resolve(value),
+    resolveNegotiation: (index, value) => negotiations[index].resolve(value),
+    rejectNegotiation: (index, error) => negotiations[index].reject(error),
+    resolveToken: (index, value = "") => tokens[index].resolve(value),
+  };
+})()`, {
+  Buffer,
+  URL,
+});
+const obsoleteCookieAttempt = f1TimingAttemptOwnershipSandbox.startEnsure();
+assert.equal(f1TimingAttemptOwnershipSandbox.getCookieCount(), 1, "The first live-timing connection attempt should pause at cookie discovery");
+f1TimingAttemptOwnershipSandbox.resync();
+const cookieReplacementClient = f1TimingAttemptOwnershipSandbox.getClient();
+assert.equal(f1TimingAttemptOwnershipSandbox.getCookieCount(), 2, "Manual resync should create a replacement while the obsolete cookie attempt is pending");
+f1TimingAttemptOwnershipSandbox.resolveCookie(0, "obsolete-cookie");
+for (let index = 0; index < 3; index += 1) await Promise.resolve();
+assert.equal(f1TimingAttemptOwnershipSandbox.getNegotiationCount(), 0, "An attempt replaced during cookie discovery should stop before negotiation");
+assert.equal(f1TimingAttemptOwnershipSandbox.getClient(), cookieReplacementClient, "An obsolete cookie attempt should not replace or mutate the newer global client");
+await obsoleteCookieAttempt;
+f1TimingAttemptOwnershipSandbox.resolveCookie(1, "replacement-cookie");
+for (let index = 0; index < 3; index += 1) await Promise.resolve();
+assert.equal(f1TimingAttemptOwnershipSandbox.getNegotiationCount(), 1, "The current replacement should advance to negotiation");
+f1TimingAttemptOwnershipSandbox.resync();
+const negotiationReplacementClient = f1TimingAttemptOwnershipSandbox.getClient();
+f1TimingAttemptOwnershipSandbox.resolveNegotiation(0, { connectionId: "obsolete-negotiate" });
+for (let index = 0; index < 3; index += 1) await Promise.resolve();
+assert.equal(f1TimingAttemptOwnershipSandbox.getTokenCount(), 0, "An attempt replaced during negotiation should stop before token or socket creation");
+assert.equal(f1TimingAttemptOwnershipSandbox.getClient(), negotiationReplacementClient, "An obsolete negotiated attempt should not overwrite the newer client");
+f1TimingAttemptOwnershipSandbox.resolveCookie(2, "current-cookie");
+for (let index = 0; index < 3; index += 1) await Promise.resolve();
+f1TimingAttemptOwnershipSandbox.resolveNegotiation(1, { connectionId: "current-negotiate" });
+for (let index = 0; index < 3; index += 1) await Promise.resolve();
+f1TimingAttemptOwnershipSandbox.resolveToken(0, "");
+for (let index = 0; index < 3; index += 1) await Promise.resolve();
+const ownedSocket = f1TimingAttemptOwnershipSandbox.getSocket(0);
+assert.ok(ownedSocket, "The current connection attempt should attach its socket");
+const obsoleteHandlers = {
+  open: ownedSocket.onopen,
+  message: ownedSocket.onmessage,
+  error: ownedSocket.onerror,
+  close: ownedSocket.onclose,
+};
+obsoleteHandlers.open();
+assert.equal(ownedSocket.sendCount, 2, "The current socket should send its handshake and subscription when opened");
+f1TimingAttemptOwnershipSandbox.resync();
+const handlerReplacementClient = f1TimingAttemptOwnershipSandbox.getClient();
+await obsoleteHandlers.message({ data: JSON.stringify({ type: 1 }) });
+obsoleteHandlers.error();
+obsoleteHandlers.close();
+obsoleteHandlers.open();
+assert.equal(f1TimingAttemptOwnershipSandbox.getClient(), handlerReplacementClient, "Handlers captured from an obsolete socket should not mutate the replacement client");
+assert.equal(f1TimingAttemptOwnershipSandbox.getAppliedMessages(), 0, "An obsolete socket message should not reach live timing state");
+assert.equal(ownedSocket.sendCount, 2, "An obsolete socket open handler should not send another handshake");
+f1TimingAttemptOwnershipSandbox.resolveCookie(3, "catch-cookie");
+for (let index = 0; index < 3; index += 1) await Promise.resolve();
+f1TimingAttemptOwnershipSandbox.resync();
+const catchReplacementClient = f1TimingAttemptOwnershipSandbox.getClient();
+f1TimingAttemptOwnershipSandbox.rejectNegotiation(2, new Error("obsolete negotiation failed"));
+for (let index = 0; index < 3; index += 1) await Promise.resolve();
+assert.equal(f1TimingAttemptOwnershipSandbox.getClient(), catchReplacementClient, "An obsolete attempt's catch path should not overwrite the replacement client");
+assert.equal(catchReplacementClient.connecting, true, "An obsolete attempt's catch path should leave the replacement connection active");
 assert.deepEqual(
   f1TimingRaceControlSandbox.f1TimingSegments({ Segments: [{ Status: 0 }, { Status: 2048 }, { Status: 0 }] }),
   ["off", "yellow"],
@@ -1981,6 +3759,54 @@ assert.deepEqual(
   JSON.parse(JSON.stringify(f1TimingRaceControlSandbox.f1TimingSegments({ Segments: { "2": { Status: 2048 } } }))),
   ["off", "off", "yellow"],
   "F1 timing mini sectors should preserve sparse live segment indexes instead of filling the first tick",
+);
+assert.deepEqual(
+  f1TimingRaceControlSandbox.f1TimingBackfillSegmentHoles(["off", "off", "yellow", "green"]),
+  ["yellow", "yellow", "yellow", "green"],
+  "Mini-sector holes before the latest active tick should backfill as yellow (sequential track order)",
+);
+assert.deepEqual(
+  Array.from(f1TimingRaceControlSandbox.f1TimingMergeSectorSegments(["yellow", "yellow"], ["off", "off", "green"])),
+  ["yellow", "yellow", "green"],
+  "Sparse later mini-sector ticks should not leave a grey hole between previous progress and the new tick",
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(
+    f1TimingRaceControlSandbox.mergeF1TimingDelta(
+      { Lines: { "4": { Sectors: { "0": { Segments: [{ Status: 2048 }, { Status: 2048 }, { Status: 2048 }] } } } } },
+      { Lines: { "4": { Sectors: { "0": { Segments: { "3": { Status: 2049 } } } } } } },
+    ).Lines["4"].Sectors["0"].Segments,
+  )),
+  {
+    "0": { Status: 2048 },
+    "1": { Status: 2048 },
+    "2": { Status: 2048 },
+    "3": { Status: 2049 },
+  },
+  "Sparse Segments object deltas must merge into prior Segments arrays instead of wiping them",
+);
+const sectorArrayThenSparseObjectSession = {
+  driverListEntries: [{ seconds: 0, data: { "4": { Tla: "NOR" } } }],
+  timingEntries: [
+    { seconds: 10, data: { Lines: { "4": { RacingNumber: "4", Position: 1, NumberOfLaps: 12, Sectors: {
+      "0": { Segments: [{ Status: 2048 }, { Status: 2048 }, { Status: 2048 }, { Status: 2048 }] },
+    } } } } },
+    { seconds: 11, data: { Lines: { "4": { RacingNumber: "4", Position: 1, NumberOfLaps: 12, Sectors: {
+      "0": { Segments: { "5": { Status: 2051 } } },
+    } } } } },
+  ],
+  timingAppEntries: [],
+  clockEntries: [],
+  sessionStatusEntries: [],
+  weatherEntries: [],
+  raceControlEntries: [],
+  lapCountEntries: [],
+  carDataEntries: [],
+};
+assert.deepEqual(
+  JSON.parse(JSON.stringify(f1TimingRaceControlSandbox.parseF1TimingArchiveRows(sectorArrayThenSparseObjectSession, 11, { preserveSectorProgress: true }).timing[0].sectors)),
+  { s1: ["yellow", "yellow", "yellow", "yellow", "yellow", "purple"], s2: [], s3: [] },
+  "Live mini sectors should keep earlier array ticks when a later sparse object tick arrives (no mid-bar greys)",
 );
 const raceControlSession = {
   driverListEntries: [],
@@ -2553,6 +4379,92 @@ assert.deepEqual(
   { s1: ["yellow", "yellow", "yellow", "yellow", "yellow", "yellow"], s2: ["yellow"], s3: [] },
   "Live Formula 1 mini sectors should suppress stale S3 ticks when the first merged live snapshot has only started S2",
 );
+// Live buffer overflow used to hard-drop the subscribe snapshot after ~1000
+// TimingData messages (~a few minutes). Sparse blank LastLapTime / partial
+// sector deltas then rebuilt empty last laps and broken mini-sectors.
+const liveBufferOverflowBaseMs = Date.parse("2026-06-09T19:50:00.000Z");
+f1TimingRaceControlSandbox.setF1TimingSmokeNowMs(liveBufferOverflowBaseMs + 1000 * 1010);
+f1TimingRaceControlSandbox.setF1LiveTimingState({
+  lastMessageAt: liveBufferOverflowBaseMs,
+  lastTopic: "TimingData",
+  lastError: "",
+  entriesByTopic: {
+    DriverList: [{ seconds: liveBufferOverflowBaseMs / 1000, data: { "63": { Tla: "RUS", RacingNumber: "63" } } }],
+    TimingData: [],
+    ExtrapolatedClock: [{ seconds: liveBufferOverflowBaseMs / 1000, data: { Utc: new Date(liveBufferOverflowBaseMs).toISOString(), Remaining: "00:50:00", Extrapolating: true } }],
+  },
+});
+f1TimingRaceControlSandbox.applyF1TimingSignalRMessage({
+  type: 1,
+  target: "feed",
+  arguments: [
+    "TimingData",
+    {
+      Lines: {
+        "63": {
+          RacingNumber: "63",
+          Position: 1,
+          LastLapTime: { Value: "1:08.123" },
+          BestLapTime: { Value: "1:07.456" },
+          NumberOfLaps: 4,
+          Sectors: {
+            "0": { Value: "21.100", Segments: [{ Status: 2048 }, { Status: 2048 }, { Status: 2048 }, { Status: 2048 }, { Status: 2048 }, { Status: 2048 }] },
+            "1": { Value: "22.200", Segments: [{ Status: 2048 }, { Status: 2048 }, { Status: 2048 }, { Status: 2048 }, { Status: 2048 }, { Status: 2048 }] },
+            "2": { Value: "24.823", Segments: [{ Status: 2048 }, { Status: 2048 }, { Status: 2048 }, { Status: 2048 }, { Status: 2048 }, { Status: 2048 }] },
+          },
+        },
+      },
+    },
+    new Date(liveBufferOverflowBaseMs).toISOString(),
+  ],
+});
+for (let index = 1; index <= 1005; index += 1) {
+  const feedUtc = new Date(liveBufferOverflowBaseMs + index * 1000).toISOString();
+  f1TimingRaceControlSandbox.setF1TimingSmokeNowMs(liveBufferOverflowBaseMs + index * 1000 + 200);
+  f1TimingRaceControlSandbox.applyF1TimingSignalRMessage({
+    type: 1,
+    target: "feed",
+    arguments: [
+      "TimingData",
+      {
+        Lines: {
+          "63": {
+            RacingNumber: "63",
+            Position: 1,
+            LastLapTime: { Value: "" },
+            BestLapTime: { Value: "" },
+            NumberOfLaps: 5,
+            Sectors: {
+              "0": { Value: "", Segments: { "0": { Status: 2048 }, "1": { Status: 2048 } } },
+              "1": { Value: "" },
+              "2": { Value: "" },
+            },
+          },
+        },
+      },
+      feedUtc,
+    ],
+  });
+}
+const overflowLiveState = f1TimingRaceControlSandbox.getF1LiveTimingState();
+assert.ok(
+  (overflowLiveState.entriesByTopic.TimingData || []).length < 900,
+  "Live TimingData buffer should compact once it exceeds the soft limit instead of retaining every sparse delta",
+);
+assert.equal(
+  (overflowLiveState.entriesByTopic.TimingData || [])[0]?.data?.Lines?.["63"]?.LastLapTime?.Value,
+  "1:08.123",
+  "Live TimingData compaction should fold the subscribe snapshot into a base entry so last-lap values survive",
+);
+const overflowLiveSnapshot = f1TimingRaceControlSandbox.getF1LiveTimingSnapshot();
+assert.equal(overflowLiveSnapshot.timing[0].lastLapDuration, 68.123, "Live timing after buffer compaction should still expose the completed last lap");
+assert.equal(overflowLiveSnapshot.timing[0].bestLapDuration, 67.456, "Live timing after buffer compaction should still expose the personal best lap");
+assert.ok(
+  (overflowLiveSnapshot.timing[0].sectors?.s1 || []).filter((tone) => tone && tone !== "off").length >= 2,
+  "Live mini-sectors after buffer compaction should keep progress rebuilt from the folded base",
+);
+f1TimingRaceControlSandbox.setF1TimingSmokeNowMs(null);
+
 const liveSignalRSeconds = Date.parse("2026-06-09T20:00:00.000Z") / 1000;
 f1TimingRaceControlSandbox.setF1LiveTimingState({
   lastMessageAt: Date.now(),
@@ -2678,9 +4590,35 @@ f1TimingRaceControlSandbox.setF1LiveTimingState({
 const latencyAlignedSnapshot = f1TimingRaceControlSandbox.getF1LiveTimingSnapshot({ targetUtcMs: Date.parse("2026-06-09T19:59:24.000Z") });
 assert.equal(latencyAlignedSnapshot.diagnostics.targetSeconds, Date.parse("2026-06-09T19:59:24.000Z") / 1000 - 6, "A slow timing feed should widen the alignment beyond the 4.6s floor, like MultiViewer's measured delay");
 assert.equal(latencyAlignedSnapshot.timing[0].pos, 2, "Measured feed latency should shift which timing row matches the playhead");
-f1TimingRaceControlSandbox.setF1LiveTimingState({ lastMessageAt: Date.now(), lastTopic: "TimingData", lastError: "", feedLatencySamples: [3, 3, 3], entriesByTopic: {} });
+// Simulate Q2→Q3: latency samples collapse from a slow median (~7.6s effective peak)
+// to a fast median under the 4.6s floor. Peak-hold must keep timing from jumping ~3s ahead.
+f1TimingRaceControlSandbox.setF1LiveTimingState({
+  lastMessageAt: Date.now(),
+  lastTopic: "TimingData",
+  lastError: "",
+  feedLatencySamples: [7.6, 7.5, 7.7],
+  streamAlignmentPeak: null,
+  streamAlignmentPeakAtMs: null,
+  entriesByTopic: {
+    DriverList: [{ seconds: liveUtcClockMs / 1000 - 60, data: { "1": { Tla: "VER", RacingNumber: "1" } } }],
+    ExtrapolatedClock: [{ seconds: liveUtcClockMs / 1000, data: { Utc: new Date(liveUtcClockMs).toISOString(), Remaining: "01:10:00", Extrapolating: true } }],
+    TimingData: [
+      { seconds: liveUtcClockMs / 1000 - 50, data: { Lines: { "1": { RacingNumber: "1", Position: 1 } } } },
+      { seconds: liveUtcClockMs / 1000 - 44, data: { Lines: { "1": { RacingNumber: "1", Position: 2 } } } },
+      { seconds: liveUtcClockMs / 1000 - 30, data: { Lines: { "1": { RacingNumber: "1", Position: 3 } } } },
+    ],
+  },
+});
+const peakAlignSnapshot = f1TimingRaceControlSandbox.getF1LiveTimingSnapshot({ targetUtcMs: Date.parse("2026-06-09T19:59:24.000Z") });
+assert.equal(peakAlignSnapshot.diagnostics.streamAlignmentSeconds, 7.6, "Live timing should raise stream alignment to the measured slow-feed median");
+f1TimingRaceControlSandbox.getF1LiveTimingState().feedLatencySamples = [1.1, 1.0, 1.2];
+const heldAlignSnapshot = f1TimingRaceControlSandbox.getF1LiveTimingSnapshot({ targetUtcMs: Date.parse("2026-06-09T19:59:24.000Z") });
+assert.equal(heldAlignSnapshot.diagnostics.streamAlignmentSeconds, 7.6, "After a Q-session latency-sample collapse, stream alignment should peak-hold instead of dropping to the 4.6s floor");
+assert.equal(heldAlignSnapshot.diagnostics.targetSeconds, Date.parse("2026-06-09T19:59:24.000Z") / 1000 - 7.6, "Peak-held alignment should keep the same playhead-relative target after sample refresh");
+f1TimingRaceControlSandbox.setF1LiveTimingState({ lastMessageAt: Date.now(), lastTopic: "TimingData", lastError: "", feedLatencySamples: [3, 3, 3], streamAlignmentPeak: 7.6, streamAlignmentPeakAtMs: Date.now(), entriesByTopic: {} });
 f1TimingRaceControlSandbox.resyncF1LiveTiming();
 assert.deepEqual(JSON.parse(JSON.stringify(f1TimingRaceControlSandbox.getF1LiveTimingState().feedLatencySamples)), [], "Manual resync should clear measured feed-latency samples so sync re-measures from scratch");
+assert.equal(f1TimingRaceControlSandbox.getF1LiveTimingState().streamAlignmentPeak, null, "Manual resync should clear peak-held stream alignment");
 assert.match(mainProcess, /ipcMain\.handle\("pitwall:data:liveTimingResync", \(\) => resyncF1LiveTiming\(\)\)/, "Main should expose a manual live timing resync IPC channel");
 assert.match(preload, /liveTimingResync: \(\) => ipcRenderer\.invoke\("pitwall:data:liveTimingResync"\)/, "Preload should expose manual live timing resync to the renderer");
 assert.match(liveRacingSource, />Resync timing<\/button>/, "The sync menu should offer a manual live timing resync button");
@@ -2859,6 +4797,172 @@ assert.match(mainProcess, /env\.EMAIL/, "OpenF1 credentials should be read from 
 assert.match(mainProcess, /OPENF1_SECOND_LIMIT = 6/, "OpenF1 request pacing should respect the documented 6 requests per second cap");
 assert.match(mainProcess, /OPENF1_MINUTE_LIMIT = 60/, "OpenF1 request pacing should respect the documented 60 requests per minute cap");
 assert.doesNotMatch(mainProcess, /Promise\.all\(\[\s*requestJson\(openF1ApiUrl\("drivers"[\s\S]*requestJson\(openF1ApiUrl\("car_data"/, "Replay timing should not fetch all OpenF1 endpoints in one parallel burst");
+
+const analyticsTerminalSandbox = vm.runInNewContext(`(() => {
+  ${[
+    "finiteNumber",
+    "f1TimingArchiveStartUtcMs",
+    "f1TimingArchiveSecondsForUtc",
+    "f1TimingSessionStartSeconds",
+    "f1TimingAnalyticsElapsedSeconds",
+  ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+  return { f1TimingAnalyticsElapsedSeconds };
+})()`);
+assert.equal(
+  analyticsTerminalSandbox.f1TimingAnalyticsElapsedSeconds({
+    selectedSession: { session_name: "Qualifying" },
+    sessionStatusEntries: [{ seconds: 100, data: { Status: "Started" } }],
+    timingEntries: [
+      { seconds: 120, data: { Lines: {} } },
+      { seconds: 880, data: { Lines: { "1": { Position: 1 } } } },
+      { seconds: "not-a-time", data: { Lines: {} } },
+    ],
+  }),
+  880,
+  "Short qualifying analytics should sample the last valid archive timing point instead of start plus 1,400 seconds",
+);
+assert.equal(
+  analyticsTerminalSandbox.f1TimingAnalyticsElapsedSeconds({
+    selectedSession: {
+      session_name: "Race",
+      date_end: "2026-07-05T14:30:00.000Z",
+    },
+    clockEntries: [{
+      seconds: 100,
+      data: { Utc: "2026-07-05T13:01:40.000Z" },
+    }],
+    timingEntries: [
+      { seconds: 5398, data: { Lines: { "1": { Position: 1 } } } },
+      { seconds: 6000, data: { Lines: { "1": { Position: 1 } } } },
+    ],
+  }),
+  5398,
+  "Normal race analytics should clamp the scheduled terminal time to the last valid timing point at or before it",
+);
+assert.equal(
+  analyticsTerminalSandbox.f1TimingAnalyticsElapsedSeconds({
+    selectedSession: {
+      session_name: "Race",
+      date_end: "2026-07-05T14:30:00.000Z",
+    },
+    clockEntries: [{
+      seconds: 100,
+      data: { Utc: "2026-07-05T13:01:40.000Z" },
+    }],
+    sessionStatusEntries: [{
+      seconds: 7600,
+      data: {
+        StatusSeries: [
+          { Utc: "2026-07-05T13:00:00.000Z", SessionStatus: "Started" },
+          { Utc: "2026-07-05T13:30:00.000Z", SessionStatus: "Aborted" },
+          { Utc: "2026-07-05T14:00:00.000Z", SessionStatus: "Started" },
+          { Utc: "2026-07-05T15:00:00.000Z", SessionStatus: "Finished" },
+        ],
+      },
+    }],
+    timingEntries: [
+      { seconds: 5398, data: { Lines: { "1": { Position: 1 } } } },
+      { seconds: 7198, data: { Lines: { "1": { Position: 1 } } } },
+      { seconds: 7600, data: { Lines: { "1": { Position: 1 } } } },
+    ],
+  }),
+  7198,
+  "Red-flagged race analytics should use the resumed session's final terminal marker instead of the scheduled end or an earlier abort",
+);
+assert.equal(
+  analyticsTerminalSandbox.f1TimingAnalyticsElapsedSeconds({
+    selectedSession: {
+      session_name: "Race",
+      date_end: "2026-07-05T15:00:00.000Z",
+    },
+    clockEntries: [{
+      seconds: 0,
+      data: { Utc: "2026-07-05T13:00:00.000Z" },
+    }],
+    sessionStatusEntries: [{
+      seconds: 3600,
+      data: {
+        StatusSeries: [
+          { Utc: "2026-07-05T13:00:00.000Z", SessionStatus: "Started" },
+          { Utc: "2026-07-05T14:00:00.000Z", SessionStatus: "Aborted" },
+        ],
+      },
+    }],
+    timingEntries: [
+      { seconds: 3598, data: { Lines: { "1": { Position: 1 } } } },
+      { seconds: 5000, data: { Lines: { "1": { Position: 1 } } } },
+    ],
+  }),
+  3598,
+  "Analytics should treat a final non-restarted Aborted status as terminal and select the last valid pre-abort timing point",
+);
+assert.equal(
+  analyticsTerminalSandbox.f1TimingAnalyticsElapsedSeconds({
+    selectedSession: {
+      session_name: "Race",
+      date_end: "2026-07-05T15:00:00.000Z",
+    },
+    clockEntries: [{
+      seconds: 0,
+      data: { Utc: "2026-07-05T13:00:00.000Z" },
+    }],
+    sessionStatusEntries: [
+      { seconds: 0, data: { Status: "Started" } },
+      { seconds: 3600, data: { Status: "Finished" } },
+    ],
+    timingEntries: [
+      { seconds: 3599, data: { Lines: { "1": { Position: 1 } } } },
+      { seconds: 5000, data: { Lines: { "1": { Position: 1 } } } },
+    ],
+  }),
+  3599,
+  "Time-limited race analytics should use the actual finished marker rather than the later scheduled session end",
+);
+assert.equal(
+  analyticsTerminalSandbox.f1TimingAnalyticsElapsedSeconds({
+    selectedSession: { session_name: "Race" },
+    sessionStatusEntries: [{
+      seconds: 3600,
+      data: { StatusSeries: [{ Utc: "2026-07-05T14:00:00.000Z", SessionStatus: "Finished" }] },
+    }],
+    timingEntries: [
+      { seconds: 3599, data: { Lines: { "1": { Position: 1 } } } },
+      { seconds: 5000, data: { Lines: { "1": { Position: 1 } } } },
+    ],
+  }),
+  3599,
+  "Analytics should use entry.seconds for terminal UTC markers when no finite archive clock exists",
+);
+assert.equal(
+  analyticsTerminalSandbox.f1TimingAnalyticsElapsedSeconds({
+    selectedSession: { session_name: "Race", date_end: "not-a-date" },
+    sessionStatusEntries: [{
+      seconds: "not-a-time",
+      data: { StatusSeries: [{ Utc: "also-not-a-date", SessionStatus: "Finished" }] },
+    }],
+    timingEntries: [
+      { seconds: -1, data: {} },
+      { seconds: 777, data: { Lines: { "1": { Position: 1 } } } },
+      { seconds: Number.POSITIVE_INFINITY, data: {} },
+    ],
+  }),
+  777,
+  "Malformed terminal metadata should fall back to the last finite non-negative timing archive point",
+);
+assert.equal(
+  analyticsTerminalSandbox.f1TimingAnalyticsElapsedSeconds({
+    selectedSession: { session_name: "Race", date_end: "not-a-date" },
+    sessionStatusEntries: [{ seconds: -5, data: { Status: "Finished" } }],
+    timingEntries: [{ seconds: "invalid", data: {} }],
+  }),
+  5200,
+  "Analytics should retain the conservative fallback only when no valid terminal metadata or timing point exists",
+);
+assert.doesNotMatch(
+  extractNamedFunction(mainProcess, "f1TimingAnalyticsElapsedSeconds"),
+  /\+\s*1400\b/,
+  "Analytics terminal sampling should never use a fixed session-start plus 1,400-second target",
+);
 
 const analyticsSandbox = vm.runInNewContext(`(() => {
   ${[
@@ -3559,7 +5663,19 @@ assert.match(mainProcess, /https:\/\/api\.openf1\.org\/v1\/championship_teams\?s
 assert.match(mainProcess, /fetchOfficialF1StandingsFallback\(raw, errors\)/, "Live data should fetch official Formula 1 standings when OpenF1 championship rows are unavailable");
 assert.match(mainProcess, /formula1\.com\/en\/results\/\$\{year\}\/\$\{kind\}/, "Official championship fallback should read Formula1.com results pages");
 const liveCoreDataUrlsBlock = mainProcess.match(/const LIVE_CORE_DATA_URLS = \{[\s\S]*?\n\};/)?.[0] || "";
-assert.match(liveCoreDataUrlsBlock, /openF1Weather[\s\S]*\.\.\.LIVE_NEWS_URLS/, "Initial live data snapshots should include fast display weather and news");
+assert.doesNotMatch(liveCoreDataUrlsBlock, /News|LIVE_NEWS_URLS/, "Initial live data snapshots should not wait for news sources");
+const liveBackgroundEnrichmentUrlsBlock = mainProcess.match(/const LIVE_BACKGROUND_ENRICHMENT_URLS = \{[\s\S]*?\n\};/)?.[0] || "";
+const liveBackgroundEnrichmentUrls = vm.runInNewContext(`(() => {
+  ${mainProcess.match(/const NEWS_SOURCES = \[[\s\S]*?\n\];/)?.[0] || ""}
+  ${mainProcess.match(/const LIVE_NEWS_URLS = [^\n]+;/)?.[0] || ""}
+  ${mainProcess.match(/const LIVE_TIMING_ENRICHMENT_URLS = \{[\s\S]*?\n\};/)?.[0] || ""}
+  ${liveBackgroundEnrichmentUrlsBlock}
+  return LIVE_BACKGROUND_ENRICHMENT_URLS;
+})()`);
+for (const newsKey of ["motorsportNews", "formula1News", "theRaceNews", "planetF1News"]) {
+  assert.ok(liveBackgroundEnrichmentUrls[newsKey], `Background live-data enrichment should include ${newsKey}`);
+}
+assert.match(mainProcess, /liveBackgroundEnrichmentUrls\(baseRaw\?\.openF1Sessions[\s\S]*fetchLiveDataEntries\(enrichmentUrls,\s*\{\s*priority:\s*"background"\s*\}\)/, "Background live-data enrichment should fetch the complete timing/news set with bounded latest-session telemetry");
 assert.doesNotMatch(liveCoreDataUrlsBlock, /f1api\.dev\/api\/current/, "Initial live data snapshots should not wait on slower F1 API standings endpoints");
 assert.doesNotMatch(liveCoreDataUrlsBlock, /api\.jolpi\.ca\/ergast\/f1\/current/, "Initial live data snapshots should not wait on slow Jolpica current endpoints");
 assert.match(mainProcess, /requestOpenF1Json\(`https:\/\/api\.openf1\.org\/v1\/meetings\?year=\$\{year\}`\)[\s\S]*requestOpenF1Json\(`https:\/\/api\.openf1\.org\/v1\/sessions\?year=\$\{year\}`\)[\s\S]*parseOpenF1Schedule\(meetings, sessions\)/, "Weekend library should use OpenF1 schedule data without waiting on Jolpica");
@@ -3595,6 +5711,24 @@ assert.match(preload, /notifications/, "Preload should expose reminder notificat
 assert.match(preload, /cancel: \(id\)/, "Preload should expose reminder cancellation helpers");
 assert.match(preload, /profile/, "Preload should expose persisted profile helpers");
 assert.match(preload, /snapshot: \(options = \{\}\)/, "Renderer should be able to request live F1 data snapshots with startup refresh options");
+const liveDataUpdateMessages = [];
+const liveDataUpdateNotificationSandbox = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(mainProcess, "notifyLiveDataUpdated")}
+  return { notifyLiveDataUpdated };
+})()`, {
+  BrowserWindow: {
+    getAllWindows: () => [
+      { isDestroyed: () => false, webContents: { send: (...args) => liveDataUpdateMessages.push(args) } },
+      { isDestroyed: () => true, webContents: { send: (...args) => liveDataUpdateMessages.push(args) } },
+    ],
+  },
+  liveDataUpdateMessages,
+});
+liveDataUpdateNotificationSandbox.notifyLiveDataUpdated();
+assert.deepEqual(liveDataUpdateMessages, [["pitwall:data:updated"]], "Background enrichment completion should notify active renderers without exposing snapshot data");
+assert.match(preload, /onUpdated:\s*\(callback\)[\s\S]*ipcRenderer\.on\("pitwall:data:updated"[\s\S]*removeListener\("pitwall:data:updated"/, "Preload should expose a narrow subscribe/unsubscribe API for completed live-data enrichment");
+assert.match(dataProviderSource, /data\?\.onUpdated\?\.\(\(\) => refreshData\(\)\)[\s\S]*unsubscribeDataUpdated\?\.\(\)/, "DataProvider should refresh after enrichment completion and remove its listener on cleanup");
+assert.match(extractNamedFunction(mainProcess, "refreshLiveDataEnrichment"), /writeLiveSnapshotDiskCache\(data\)[\s\S]*notifyLiveDataUpdated\(\)/, "Background enrichment should notify the renderer after updating cache and disk");
 
 const html = fs.readFileSync(path.join(root, "ui_kits/pitwall/index.html"), "utf8");
 const themeSource = fs.readFileSync(path.join(root, "ui_kits/pitwall/theme.js"), "utf8");
@@ -3609,12 +5743,132 @@ assert.match(html, /sync\.js/, "Renderer should load shared stream sync helpers"
 assert.match(html, /DataProvider/, "Renderer should wrap screens in the PitWall data provider");
 assert.doesNotMatch(html, /Good evening, Alex|Canadian GP · race weekend/, "Renderer chrome should not hardcode fake user or race copy");
 assert.match(dataProviderSource, /if \(!bypassInitialLiveDataGate\) refreshData\(\{ initial: true \}\)/, "Normal app startup should load the cached live snapshot first, then refresh newer races in the background");
+assert.doesNotMatch(extractNamedFunction(mainProcess, "getPitWallSnapshot"), /diskData[\s\S]*await ensureRecentDriverForm/, "Cached live snapshots should return without waiting for driver-form network enrichment");
 assert.match(fs.readFileSync(path.join(root, "electron/main.cjs"), "utf8"), /dist\/pitwall\/index\.html/, "Electron should prefer the precompiled renderer when available");
-const distHtmlPath = path.join(root, "dist/pitwall/index.html");
-if (fs.existsSync(distHtmlPath)) {
+const smokeTestSourceForRendererBudget = fs.readFileSync(__filename, "utf8");
+assert.doesNotMatch(
+  smokeTestSourceForRendererBudget,
+  /const distHtmlPath = path\.join\(root, "dist\/pitwall\/index\.html"\);\s*if \(fs\.existsSync\(distHtmlPath\)\)/,
+  "Parser-blocking renderer budgets should run from a self-contained fixture even when dist/pitwall is absent",
+);
+const rendererFixtureRoot = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "apexline-renderer-smoke-"));
+try {
+  const rendererFixtureScripts = path.join(rendererFixtureRoot, "scripts");
+  fs.mkdirSync(rendererFixtureScripts, { recursive: true });
+  fs.symlinkSync(path.join(root, "ui_kits"), path.join(rendererFixtureRoot, "ui_kits"), "dir");
+  fs.symlinkSync(path.join(root, "node_modules"), path.join(rendererFixtureRoot, "node_modules"), "dir");
+  fs.symlinkSync(path.join(root, "_ds_bundle.js"), path.join(rendererFixtureRoot, "_ds_bundle.js"), "file");
+  vm.runInNewContext(buildRendererSource, {
+    __dirname: rendererFixtureScripts,
+    console: { log() {} },
+    require,
+  }, { filename: "scripts/build-renderer.cjs" });
+
+  const distHtmlPath = path.join(rendererFixtureRoot, "dist/pitwall/index.html");
+  assert.ok(fs.existsSync(distHtmlPath), "Isolated renderer build should always produce an index for startup-budget checks");
   const distHtml = fs.readFileSync(distHtmlPath, "utf8");
   assert.doesNotMatch(distHtml, /text\/babel|@babel|babel\.min\.js/, "Compiled renderer should not use in-browser Babel");
   assert.match(distHtml, /AppShell\.js/, "Compiled renderer should load compiled screen scripts");
+  assert.match(distHtml, /react\/umd\/react\.production\.min\.js/, "Generated renderer should use production React");
+  assert.match(distHtml, /react-dom\/umd\/react-dom\.production\.min\.js/, "Generated renderer should use production ReactDOM");
+  assert.doesNotMatch(distHtml, /<script src="[^"]*(?:LiveRacing|hls|shaka)[^"]*"><\/script>/i, "Generated renderer should keep Live Racing and player runtimes off the parser-blocking startup path");
+  const parserBlockingSources = Array.from(distHtml.matchAll(/<script src="([^"]+)"><\/script>/g), (match) => match[1]);
+  assert.deepEqual(parserBlockingSources, [
+    "../../node_modules/react/umd/react.production.min.js",
+    "../../node_modules/react-dom/umd/react-dom.production.min.js",
+    "../../_ds_bundle.js",
+    "theme.js",
+    "data.js",
+    "sync.js",
+    "social.js",
+    "trackmap-circuits.js",
+    "DataProvider.js",
+    "AppShell.js",
+    "Dashboard.js",
+  ], "Generated dashboard should parser-block only on its initial browser-global resource allowlist");
+  const parserBlockingBytes = parserBlockingSources.reduce((total, sourcePath) => total + fs.statSync(path.resolve(path.dirname(distHtmlPath), sourcePath)).size, 0);
+  assert.ok(parserBlockingBytes < 1024 * 1024, `Initial parser-blocking dashboard scripts should stay below 1 MiB (received ${parserBlockingBytes} bytes)`);
+  let appendedRuntimeScripts = 0;
+  const runtimeScriptElements = [];
+  const runtimeScriptLoaderSandbox = vm.runInNewContext(`(() => {
+    const runtimeScriptPromises = new Map();
+    ${extractNamedFunction(distHtml, "loadRuntimeScript")}
+    return { loadRuntimeScript };
+  })()`, {
+    document: {
+      createElement: () => ({}),
+      head: { appendChild: (script) => {
+        appendedRuntimeScripts += 1;
+        runtimeScriptElements.push(script);
+      } },
+    },
+    set appendedRuntimeScripts(value) { appendedRuntimeScripts = value; },
+    runtimeScriptElements,
+  });
+  const firstRuntimeLoad = runtimeScriptLoaderSandbox.loadRuntimeScript("Weekend.js");
+  const duplicateRuntimeLoad = runtimeScriptLoaderSandbox.loadRuntimeScript("Weekend.js");
+  assert.equal(firstRuntimeLoad, duplicateRuntimeLoad, "Runtime script loader should cache one promise per non-initial resource");
+  assert.equal(appendedRuntimeScripts, 1, "Runtime script loader should append a requested resource only once");
+  runtimeScriptElements[0].onerror();
+  await assert.rejects(firstRuntimeLoad, /Unable to load Weekend\.js/, "Runtime script loader should reject failed resources");
+  const retriedRuntimeLoad = runtimeScriptLoaderSandbox.loadRuntimeScript("Weekend.js");
+  assert.notEqual(retriedRuntimeLoad, firstRuntimeLoad, "Runtime script loader should evict a failed promise so the same screen can retry in place");
+  assert.equal(appendedRuntimeScripts, 2, "Retrying a failed runtime script should append a new script element");
+  runtimeScriptElements[1].onload();
+  await retriedRuntimeLoad;
+  assert.match(distHtml, /loadRuntimeScript\([^)]*hls[^)]*\)[\s\S]*loadRuntimeScript\([^)]*shaka[^)]*\)[\s\S]*loadRuntimeScript\([^)]*LiveRacing/i, "Live navigation should load HLS and Shaka before entering Live Racing");
+  assert.match(distHtml, /loadedScreen !== screen[\s\S]*Loading/, "A non-dashboard initial route should render a loading state while its screen script loads");
+  assert.match(distHtml, /setLoadAttempt\([\s\S]*Retry/, "Failed lazy screens should offer an in-place retry that reruns the resource loader");
+  assert.match(distHtml, /screen === "live"[\s\S]*setScreen\("dashboard"\)[\s\S]*Back to dashboard/, "A failed direct Live route should offer a path back to the dashboard");
+  assert.match(distHtml, /delete window\.PW\[globalName\]/, "Generated renderer should clear stale _ds_bundle screen stubs before lazy loads");
+  assert.match(distHtml, /loadedScreenScripts/, "Generated renderer should track actually-loaded screen scripts instead of trusting pre-existing window.PW exports");
+  assert.doesNotMatch(
+    distHtml,
+    /if \(globalName && window\.PW\[globalName\]\) return Promise\.resolve\(\)/,
+    "Lazy screen loader must not skip News.js (etc.) just because _ds_bundle stamped a demo window.PW.News",
+  );
+  const screenLoaderSandbox = vm.runInNewContext(`(() => {
+    const runtimeScriptPromises = new Map();
+    const loadedScreenScripts = new Set(["dashboard"]);
+    const SCREEN_SCRIPTS = {
+      news: "News.js",
+      settings: "Settings.js",
+      live: "LiveRacing.js",
+    };
+    const SCREEN_GLOBALS = { news: "News", settings: "Settings" };
+    window.PW = {
+      News: function StaleNewsFromDsBundle() {},
+      Settings: function StaleSettingsFromDsBundle() {},
+      LiveRacing: function StaleLiveFromDsBundle() {},
+    };
+    for (const globalName of [...Object.values(SCREEN_GLOBALS), "LiveRacing"]) {
+      delete window.PW[globalName];
+    }
+    ${extractNamedFunction(distHtml, "loadRuntimeScript")}
+    ${extractNamedFunction(distHtml, "loadScreenResources")}
+    return { loadScreenResources, loadRuntimeScript, loadedScreenScripts, getPW: () => window.PW };
+  })()`, {
+    window: { PW: {} },
+    document: {
+      createElement: () => ({}),
+      head: {
+        appendChild: (script) => {
+          queueMicrotask(() => script.onload && script.onload());
+        },
+      },
+    },
+  });
+  assert.equal(typeof screenLoaderSandbox.getPW().News, "undefined", "Stale _ds_bundle News stub should be deleted before lazy load");
+  await screenLoaderSandbox.loadScreenResources("news");
+  assert.ok(screenLoaderSandbox.loadedScreenScripts.has("news"), "News navigation should record that News.js was loaded");
+  await screenLoaderSandbox.loadScreenResources("news");
+  assert.equal(
+    [...screenLoaderSandbox.loadedScreenScripts].filter((name) => name === "news").length,
+    1,
+    "Repeat News navigation should not reload after the real script is marked loaded",
+  );
+} finally {
+  fs.rmSync(rendererFixtureRoot, { recursive: true, force: true });
 }
 
 const kitDir = path.join(root, "ui_kits/pitwall");
@@ -3645,11 +5899,80 @@ const dataProviderStartupGateSandbox = vm.runInNewContext(`(() => {
 })()`);
 assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: true }), false, "Startup gate should not wait on article enrichment when the snapshot is already fresh");
 assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: false }), false, "Startup gate should open once news enrichment has settled");
-assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: true, sourceLabel: "Live data (refreshing)" }), true, "Startup gate should wait for a cached snapshot while the fresh news refresh is still running");
+assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: true, sourceLabel: "Live data (refreshing)" }), false, "Startup gate should paint cached data immediately while enrichment refreshes");
 assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: true, sourceLabel: "Live data", news: [{ title: "Fresh F1 headline" }] }), false, "Startup gate should open once the fresh base news feed is loaded without waiting for article enrichment");
+const dataProviderEnrichmentPollingSandbox = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(source["DataProvider.jsx"], "scheduleBackgroundEnrichmentPoll")}
+  return { scheduleBackgroundEnrichmentPoll };
+})()`);
+const enrichmentTimers = [];
+let enrichmentElapsedMs = 0;
+let enrichmentPollAttempts = 0;
+function scheduleEnrichmentPoll(attempt) {
+  dataProviderEnrichmentPollingSandbox.scheduleBackgroundEnrichmentPoll(
+    { enrichmentPending: true },
+    attempt,
+    (callback, delayMs) => {
+      enrichmentTimers.push({ callback, delayMs });
+      return enrichmentTimers.length;
+    },
+    (nextOptions) => {
+      enrichmentPollAttempts += 1;
+      scheduleEnrichmentPoll(nextOptions.enrichmentAttempt);
+    },
+  );
+}
+scheduleEnrichmentPoll(0);
+while (enrichmentTimers.length) {
+  const timer = enrichmentTimers.shift();
+  enrichmentElapsedMs += timer.delayMs;
+  timer.callback();
+}
+assert.equal(enrichmentPollAttempts, 4, "Background live-data enrichment should stop after four polling attempts");
+assert.equal(enrichmentElapsedMs, 10000, "Background live-data enrichment polling should stop after ten seconds");
+const connectionProbeStarts = [];
+let releaseAiConnectionProbe;
+let releaseF1TvConnectionProbe;
+let finalConnectionState;
+const dataProviderConnectionSandbox = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(source["DataProvider.jsx"], "refreshConnections")}
+  return { refreshConnections };
+})()`, {
+  window: {
+    pitwall: {
+      ai: {
+        authStatus: () => new Promise((resolve) => {
+          connectionProbeStarts.push("ai");
+          releaseAiConnectionProbe = resolve;
+        }),
+      },
+      f1tv: {
+        probeStatus: () => new Promise((resolve) => {
+          connectionProbeStarts.push("f1tv");
+          releaseF1TvConnectionProbe = resolve;
+        }),
+      },
+    },
+  },
+  setConnection: (value) => { finalConnectionState = value; },
+  connectionProbeStarts,
+  set releaseAiConnectionProbe(value) { releaseAiConnectionProbe = value; },
+  set releaseF1TvConnectionProbe(value) { releaseF1TvConnectionProbe = value; },
+  set finalConnectionState(value) { finalConnectionState = value; },
+});
+const pendingConnectionRefresh = dataProviderConnectionSandbox.refreshConnections();
+assert.deepEqual(connectionProbeStarts, ["ai", "f1tv"], "AI and F1 TV connection checks should both start before either resolves");
+releaseAiConnectionProbe({ codexConnected: true });
+releaseF1TvConnectionProbe({ authenticated: true });
+await pendingConnectionRefresh;
+assert.deepEqual(
+  JSON.parse(JSON.stringify(finalConnectionState)),
+  { aiConfigured: true, f1tvConnected: true },
+  "Concurrent connection checks should commit both resolved statuses",
+);
 assert.match(source["DataProvider.jsx"], /startup:\s*Boolean\(options\.initial\)/, "Initial snapshot requests should tell Electron to skip non-startup work on the critical path");
-assert.match(source["DataProvider.jsx"], /options\.initial[\s\S]*shouldWaitForStartupNews\(snapshot\)[\s\S]*return snapshot[\s\S]*setInitialDataReady\(true\)/, "DataProvider should keep startup loading visible only while cached startup news is refreshing");
-assert.doesNotMatch(source["DataProvider.jsx"], /STARTUP_NEWS_FORCE_AFTER_ATTEMPTS|refreshData\(\{ initial: true, forceRefresh \}\)/, "Startup news wait should poll the pending enrichment instead of force-refreshing and restarting it");
+assert.match(source["DataProvider.jsx"], /options\.initial[\s\S]*shouldWaitForStartupNews\(snapshot\)[\s\S]*return snapshot[\s\S]*setInitialDataReady\(true\)/, "DataProvider should open startup after its first cached or core snapshot while enrichment continues");
+assert.doesNotMatch(source["DataProvider.jsx"], /STARTUP_NEWS_FORCE_AFTER_ATTEMPTS|refreshData\(\{ initial: true, forceRefresh \}\)/, "Background enrichment polling should not force-refresh and restart the live-data request");
 const dataProviderRouteSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(source["DataProvider.jsx"], "shouldBypassInitialLiveDataGate")}
   return { shouldBypassInitialLiveDataGate };
@@ -3663,8 +5986,10 @@ assert.doesNotMatch(source["Weekend.jsx"], /OpenF1 and Jolpica/, "Weekend loadin
 const dashboardCountdownSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(source["Dashboard.jsx"], "dashboardSessionCandidate")}
   ${extractNamedFunction(source["Dashboard.jsx"], "dashboardNextSession")}
+  ${extractNamedFunction(source["Dashboard.jsx"], "dashboardHeroRace")}
+  ${extractNamedFunction(source["Dashboard.jsx"], "dashboardHeroSessions")}
   ${extractNamedFunction(source["Dashboard.jsx"], "dashboardCountdownLabel")}
-  return { dashboardNextSession, dashboardCountdownLabel };
+  return { dashboardNextSession, dashboardHeroRace, dashboardHeroSessions, dashboardCountdownLabel };
 })()`);
 const nextWeekendSession = dashboardCountdownSandbox.dashboardNextSession({
   race: { name: "Monaco Grand Prix", startsAt: "2026-06-07T13:00:00Z" },
@@ -3687,6 +6012,108 @@ const nextSameWeekendSession = dashboardCountdownSandbox.dashboardNextSession({
   schedule: [],
 });
 assert.equal(nextSameWeekendSession.session.kind, "Qualifying", "Dashboard countdown should advance to qualifying after Practice 3");
+const mismatchedDashboardData = {
+  race: {
+    name: "Monaco Grand Prix",
+    circuit: "Circuit de Monaco",
+    loc: "Monte Carlo",
+    round: 8,
+    startsAt: "2026-06-07T13:00:00Z",
+  },
+  sessions: [{ kind: "Race", status: "done", startsAt: "2026-06-07T13:00:00Z" }],
+  schedule: [{
+    name: "Barcelona Grand Prix",
+    circuit: "Circuit de Barcelona-Catalunya",
+    loc: "Montmeló",
+    round: 9,
+    startsAt: "2026-06-12T11:30:00Z",
+    status: "upcoming",
+    sessions: [{ kind: "Practice 1", status: "upcoming", startsAt: "2026-06-12T11:30:00Z" }],
+  }],
+};
+const mismatchedNextSession = dashboardCountdownSandbox.dashboardNextSession(mismatchedDashboardData);
+const owningHeroRace = dashboardCountdownSandbox.dashboardHeroRace(mismatchedDashboardData, mismatchedNextSession);
+assert.deepEqual(
+  JSON.parse(JSON.stringify({
+    name: owningHeroRace.name,
+    circuit: owningHeroRace.circuit,
+    loc: owningHeroRace.loc,
+    round: owningHeroRace.round,
+  })),
+  {
+    name: "Barcelona Grand Prix",
+    circuit: "Circuit de Barcelona-Catalunya",
+    loc: "Montmeló",
+    round: 9,
+  },
+  "Dashboard hero identity should come from the race owning the selected next session",
+);
+assert.match(source["Dashboard.jsx"], /Round \{heroRace\.round[\s\S]*hero__name">\{heroRace\.name[\s\S]*heroRace\.circuit,\s*heroRace\.loc/, "Dashboard hero should render the owning race's round, name, circuit, and location");
+assert.deepEqual(
+  Array.from(dashboardCountdownSandbox.dashboardHeroSessions(mismatchedDashboardData, mismatchedNextSession), (session) => session.kind),
+  ["Practice 1"],
+  "Dashboard hero session cards should come from the same race that owns the selected next session",
+);
+assert.deepEqual(
+  Array.from(
+    dashboardCountdownSandbox.dashboardHeroSessions(
+      mismatchedDashboardData,
+      { ...mismatchedNextSession, race: { ...mismatchedNextSession.race, sessions: [] } },
+    ),
+    (session) => session.kind,
+  ),
+  ["Race"],
+  "Dashboard hero session cards should fall back to the current session list when the owning race has no sessions",
+);
+assert.match(source["Dashboard.jsx"], /heroSessions\.length\s*\?\s*heroSessions\.map/, "Dashboard should render the resolved owning-race session cards");
+const completedDashboardData = {
+  race: {
+    name: "Latest Completed Grand Prix",
+    circuit: "Completed Circuit",
+    loc: "Finished City",
+    round: 8,
+    startsAt: "2026-06-07T13:00:00Z",
+  },
+  sessions: [{ kind: "Race", status: "done", startsAt: "2026-06-07T13:00:00Z" }],
+  schedule: [{
+    name: "Latest Completed Grand Prix",
+    status: "done",
+    startsAt: "2026-06-07T13:00:00Z",
+    sessions: [{ kind: "Race", status: "done", startsAt: "2026-06-07T13:00:00Z" }],
+  }],
+};
+const completedNextSession = dashboardCountdownSandbox.dashboardNextSession(completedDashboardData);
+assert.equal(completedNextSession, null, "Dashboard should not treat a completed race's historical start time as an upcoming session");
+assert.equal(
+  dashboardCountdownSandbox.dashboardHeroRace(completedDashboardData, completedNextSession).name,
+  "Latest Completed Grand Prix",
+  "Dashboard should retain the latest race identity when no future session exists",
+);
+const raceOnlyUpcomingData = {
+  race: {
+    name: "Future Race-Only Grand Prix",
+    circuit: "Future Circuit",
+    loc: "Future City",
+    round: 10,
+    status: "upcoming",
+    startsAt: "2099-07-30T13:00:00Z",
+  },
+  sessions: [],
+  schedule: [],
+};
+const raceOnlyNextSession = dashboardCountdownSandbox.dashboardNextSession(raceOnlyUpcomingData);
+assert.equal(raceOnlyNextSession?.race?.name, "Future Race-Only Grand Prix", "Dashboard should retain an upcoming race-level candidate when detailed sessions are unavailable");
+assert.equal(raceOnlyNextSession?.session, null, "A race-level-only countdown candidate should not fabricate a session");
+assert.equal(raceOnlyNextSession?.startsAt, "2099-07-30T13:00:00Z", "A race-level-only countdown should use the future race start");
+assert.equal(
+  dashboardCountdownSandbox.dashboardNextSession({
+    race: { ...raceOnlyUpcomingData.race, status: "done", startsAt: "2026-06-07T13:00:00Z" },
+    sessions: [],
+    schedule: [],
+  }),
+  null,
+  "A completed race-level candidate should remain excluded from the countdown",
+);
 
 const liveRacingSmartSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(source["LiveRacing.jsx"], "sessionFlagFromClock")}
@@ -4526,7 +6953,7 @@ assert.match(source["Settings.jsx"], /pw-settings/, "Settings should persist app
 assert.match(source["Settings.jsx"], /VIDEO_QUALITY_OPTIONS[\s\S]*value: "max"[\s\S]*value: "high"[\s\S]*value: "medium"[\s\S]*value: "low"/, "Settings should expose Max, High, Medium, and Low video quality choices");
 assert.match(source["Settings.jsx"], /videoQuality: "medium"/, "Settings should default video quality to Medium for roughly 100 Mbps connections");
 assert.match(source["Settings.jsx"], /SegmentedControl[\s\S]*value=\{appPrefs\.videoQuality\}[\s\S]*VIDEO_QUALITY_OPTIONS/, "Settings should persist the selected video quality through app preferences");
-assert.match(source["Settings.jsx"], /updateProfile\(\{[\s\S]*videoQuality: appPrefs\.videoQuality/, "Settings should persist video quality through the Electron profile for app reopen");
+assert.match(source["Settings.jsx"], /key === "videoQuality"[\s\S]*persistNow\(\{ videoQuality: value \}\)/, "Settings should persist user-selected video quality through the Electron profile for app reopen");
 assert.match(source["Settings.jsx"], /applyThemePreference/, "Settings should apply the selected theme through one token helper");
 assert.match(source["Settings.jsx"], /id: "updates"/, "Settings should expose update status");
 assert.match(source["Settings.jsx"], /window\.pitwall\?\.updates/, "Settings should use the Electron update IPC API");
@@ -4557,6 +6984,59 @@ assert.match(source["AppShell.jsx"], /profile\.profileImageUrl/, "App shell shou
 assert.match(source["DataProvider.jsx"], /text\.length > 3 \* 1024 \* 1024/, "Renderer profile normalization should preserve 2 MB profile photos after base64 encoding");
 assert.match(mainProcess, /text\.length > 3 \* 1024 \* 1024/, "Electron profile normalization should preserve 2 MB profile photos after base64 encoding");
 assert.match(mainProcess, /profileImageUrl/, "Electron profile persistence should keep the user profile picture URL");
+assert.match(source["News.jsx"], /React\.useMemo\(\(\) => deriveNewsStories\(D\?\.news\), \[D\?\.news\]\)/, "News should memoize normalized stories by the live news array");
+assert.match(source["News.jsx"], /React\.useMemo\(\(\) => deriveNewsFilters\(stories\), \[stories\]\)/, "News should memoize filter options by normalized stories");
+assert.match(source["News.jsx"], /React\.useMemo\(\(\) => deriveFilteredNewsStories\(stories, filter, query\), \[stories, filter, query\]\)/, "News should memoize filtered stories by stories, filter, and query");
+assert.match(source["News.jsx"], /React\.useMemo\(\(\) => deriveSavedNewsStories\(stories, bookmarks\), \[stories, bookmarks\]\)/, "News should memoize saved stories by stories and bookmarks");
+assert.match(source["News.jsx"], /React\.useMemo\(\(\) => deriveTrendingNewsStories\(stories\), \[stories\]\)/, "News should memoize trending rows by stories");
+assert.match(source["News.jsx"], /\.item\s*\{[^}]*content-visibility:\s*auto;[^}]*contain-intrinsic-size:\s*350px;/, "Repeated News cards should skip offscreen layout with a stable intrinsic size");
+{
+  const newsDerivations = vm.runInNewContext(`(() => {
+    ${[
+      "deriveNewsStories",
+      "deriveNewsFilters",
+      "deriveFilteredNewsStories",
+      "deriveSavedNewsStories",
+      "deriveTrendingNewsStories",
+    ].map((name) => extractNamedFunction(source["News.jsx"], name)).join("\n")}
+    return { deriveNewsStories, deriveNewsFilters, deriveFilteredNewsStories, deriveSavedNewsStories, deriveTrendingNewsStories };
+  })()`);
+  const slots = new Map();
+  const counts = { stories: 0, filters: 0, filtered: 0, saved: 0, trending: 0 };
+  const memo = (name, factory, dependencies) => {
+    const previous = slots.get(name);
+    if (previous && dependencies.length === previous.dependencies.length && dependencies.every((value, index) => value === previous.dependencies[index])) {
+      return previous.value;
+    }
+    counts[name] += 1;
+    const value = factory();
+    slots.set(name, { dependencies, value });
+    return value;
+  };
+  const renderNewsDerivations = (news, filter, query, bookmarks) => {
+    const stories = memo("stories", () => newsDerivations.deriveNewsStories(news), [news]);
+    const filters = memo("filters", () => newsDerivations.deriveNewsFilters(stories), [stories]);
+    const filtered = memo("filtered", () => newsDerivations.deriveFilteredNewsStories(stories, filter, query), [stories, filter, query]);
+    const saved = memo("saved", () => newsDerivations.deriveSavedNewsStories(stories, bookmarks), [stories, bookmarks]);
+    const trending = memo("trending", () => newsDerivations.deriveTrendingNewsStories(stories), [stories]);
+    return { stories, filters, filtered, saved, trending };
+  };
+  const news = [
+    { id: "one", title: "McLaren update", tag: "Teams", source: "F1" },
+    { id: "two", title: "Race preview", tag: "Preview", source: "Apexline" },
+  ];
+  const bookmarks = ["two"];
+  const firstNewsDerivations = renderNewsDerivations(news, "All", "", bookmarks);
+  const secondNewsDerivations = renderNewsDerivations(news, "All", "", bookmarks);
+  assert.deepEqual(counts, { stories: 1, filters: 1, filtered: 1, saved: 1, trending: 1 }, "Unchanged News inputs should reuse every memoized derivation");
+  assert.equal(firstNewsDerivations.stories, secondNewsDerivations.stories, "Unchanged News data should preserve the normalized stories identity");
+  assert.equal(firstNewsDerivations.filtered, secondNewsDerivations.filtered, "Unchanged News filter/query should preserve filtered stories identity");
+  renderNewsDerivations(news, "All", "mclaren", bookmarks);
+  assert.deepEqual(counts, { stories: 1, filters: 1, filtered: 2, saved: 1, trending: 1 }, "Changing only the News query should recompute only the filtered list");
+  renderNewsDerivations(news, "All", "mclaren", ["one"]);
+  assert.deepEqual(counts, { stories: 1, filters: 1, filtered: 2, saved: 2, trending: 1 }, "Changing bookmarks should recompute only saved stories");
+  assert.equal(firstNewsDerivations.trending.length, news.length, "News trending derivation should not truncate stories");
+}
 assert.match(source["News.jsx"], /readerStory/, "News should keep story reading inside the app");
 assert.match(source["News.jsx"], /news-reader/, "News should render a comfortable in-app article reader");
 assert.match(source["News.jsx"], /\.news-reader\s*\{[^}]*place-items:\s*center[^}]*padding:\s*var\(--space-9\)/, "News reader should center the article panel in a full-screen backdrop");
@@ -5180,7 +7660,7 @@ assert.match(mainProcess, /segments_sector_1/, "Timing parser should read OpenF1
 assert.match(mainProcess, /date_start/, "Replay timing should align OpenF1 lap rows by date_start");
 assert.match(mainProcess, /duration_sector_1/, "Replay timing should derive lap durations from OpenF1 sector durations when needed");
 assert.match(mainProcess, /carDataOffsetMs/, "Replay timing should compensate for OpenF1 car_data clock offsets");
-assert.match(mainProcess, /targetMs \+ carDataOffsetMs/, "Replay telemetry windows should use the adjusted OpenF1 car_data clock");
+assert.match(mainProcess, /getReplayCarDataSnapshot[\s\S]{0,500}Number\(targetMs\) \+ Number\(carDataOffsetMs/, "Replay telemetry windows should use the adjusted OpenF1 car_data clock");
 assert.match(mainProcess, /bestLapDuration/, "Timing rows should include best lap duration");
 assert.match(mainProcess, /replayOpenF1Cache/, "Replay timing should cache full OpenF1 session data instead of polling every video bucket");
 assert.match(mainProcess, /getReplayOpenF1SessionData/, "Replay timing should reuse fetched OpenF1 replay session data");
@@ -5302,6 +7782,10 @@ assert.match(mainProcess, /predictions:[\s\S]*winner[\s\S]*podium[\s\S]*leaderbo
 assert.match(mainProcess, /const AI_PROVIDER_TIMEOUT_MS = 90000/, "Daily AI projection providers should get a longer timeout than normal JSON posts");
 assert.match(mainProcess, /requestTextPost\(targetUrl, body,\s*\{[\s\S]*Accept[\s\S]*\}, AI_PROVIDER_TIMEOUT_MS\)/, "Codex streaming responses should use the AI provider timeout");
 assert.match(mainProcess, /requestJsonPost\(GROK_CHAT_COMPLETIONS_URL, body, \{ Authorization: `Bearer \$\{tokens\.accessToken\}` \}, AI_PROVIDER_TIMEOUT_MS\)/, "Grok AI responses should use the AI provider timeout");
+assert.match(mainProcess, /id: "grok-4\.6"/, "AI model list should include Grok 4.6");
+assert.match(mainProcess, /DEFAULT_GROK_MODEL = "grok-4\.6"/, "Default Grok model should be Grok 4.6");
+assert.match(source["Settings.jsx"], /grok:grok-4\.6/, "Settings should offer Grok 4.6");
+assert.doesNotMatch(source["Settings.jsx"], /label: "Grok 4\.5"/, "Settings should not keep Grok 4.5 as a selectable model");
 const sanitizeAiErrorForProjection = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "sanitizeAiError")})`);
 assert.equal(
   sanitizeAiErrorForProjection(new Error("Timeout for https://chatgpt.com/backend-api/codex/responses")),
@@ -5331,7 +7815,6 @@ assert.match(mainProcess, /stintMode:[\s\S]*"none"[\s\S]*required: \["kind", "st
 assert.match(mainProcess, /projected tyre_strategy stints[\s\S]*not present projected stints as actual telemetry/, "AI prompt should permit labelled projected race-strategy stints without calling them actual telemetry");
 assert.match(mainProcess, /COPILOT_INSIGHTS_SCHEMA_VERSION = 13/, "Daily Copilot cache schema should invalidate stale pages after recent-form and tyre-alert cleanup changes");
 assert.match(mainProcess, /LIVE_SNAPSHOT_CACHE_VERSION = 4/, "Live snapshot cache should invalidate stale no-form or sparse-standings snapshots");
-assert.match(mainProcess, /diskData[\s\S]*ensureRecentDriverForm\(\{\}, data\)/, "Disk-cache snapshots should backfill recent form before first paint when rich schedule data is already cached");
 assert.match(mainProcess, /pageId === "current-weekend"[\s\S]*buildWeekendPerformanceContext\(data, currentRaceWeekend/, "Current weekend projections should receive recent-race pace and circuit history alongside live FP/qualifying session data");
 assert.match(mainProcess, /projectedPoints: \{ type: "number" \}/, "AI prediction candidates should carry an AI-computed projected season points field");
 assert.match(mainProcess, /projected FINAL season points total/, "Championship prompts should ask the AI to compute projected final season points");
@@ -5581,3 +8064,9 @@ for (const file of fs.readdirSync(kitDir).filter((name) => name.endsWith(".jsx")
 }
 
 console.log("Apexline smoke checks passed");
+}
+
+runSmokeChecks().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

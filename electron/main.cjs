@@ -148,6 +148,8 @@ const GROK_TOKEN_URL = "https://auth.x.ai/oauth2/token";
 const GROK_CHAT_COMPLETIONS_URL = "https://api.x.ai/v1/chat/completions";
 const GROK_SCOPE = "openid profile email offline_access grok-cli:access api:access";
 const CODEX_MODELS = [
+  { id: "gpt-6-sol", label: "GPT-6 Sol", tier: "" },
+  { id: "gpt-6-luna", label: "GPT-6 Luna", tier: "" },
   { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", tier: "" },
   { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", tier: "" },
   { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", tier: "" },
@@ -11264,7 +11266,7 @@ function responsesBody(model, options = {}) {
     },
     max_output_tokens: 900,
   };
-  if (/^gpt-5\.(5|6)/.test(model)) {
+  if (/^gpt-5\.(5|6)/.test(model) || /^gpt-6-/.test(model)) {
     body.reasoning = { effort: "low" };
     delete body.max_output_tokens;
   }

@@ -37,6 +37,8 @@
     };
   }
   const AI_MODEL_OPTIONS = [
+    { value: "codex:gpt-6-sol", label: "GPT-6 Sol" },
+    { value: "codex:gpt-6-luna", label: "GPT-6 Luna" },
     { value: "codex:gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { value: "codex:gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { value: "codex:gpt-5.6-luna", label: "GPT-5.6 Luna" },
@@ -66,6 +68,7 @@
     .set__navitem:hover { background: var(--surface-hover); color: var(--text-primary); }
     .set__navitem[data-active="true"] { background: var(--accent-quiet); color: var(--text-strong); }
     .set__col { display: flex; flex-direction: column; gap: var(--space-9); max-width: 720px; }
+    .pw-seg--models { flex-wrap: wrap; max-width: 100%; }
     .row { display: flex; align-items: center; gap: var(--space-7); padding: var(--space-7) 0; border-bottom: 1px solid var(--border-subtle); }
     .row:last-child { border-bottom: 0; }
     .row__txt { flex: 1; min-width: 0; }
@@ -702,7 +705,7 @@
 
               <Card title="Preferred model" subtitle="Used for battle detection, strategy & projections">
                 <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-                  <SegmentedControl value={model} onChange={setModel} accent options={AI_MODEL_OPTIONS} />
+                  <SegmentedControl className="pw-seg--models" value={model} onChange={setModel} accent options={AI_MODEL_OPTIONS} />
                   <span style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
                     Structured JSON output mode · teaching system prompt enabled.
                   </span>

@@ -30,6 +30,8 @@ assert.match(mainProcess, /preferred === "codex"/, "AI router should honor Codex
 assert.match(mainProcess, /preferred === "grok"/, "AI router should honor Grok as a preferred provider");
 assert.doesNotMatch(mainProcess, /preferred === "openai"|preferred === "anthropic"|Add an OpenAI\/Anthropic API key/, "AI router should not offer removed API-key providers");
 assert.doesNotMatch(mainProcess, /gpt-5\.4/, "AI model list should not include GPT-5.4 or GPT-5.4 mini");
+assert.match(mainProcess, /id: "gpt-6-sol"/, "AI model list should include GPT-6 Sol");
+assert.match(mainProcess, /id: "gpt-6-luna"/, "AI model list should include GPT-6 Luna");
 assert.match(mainProcess, /id: "gpt-5\.6-sol"/, "AI model list should include GPT-5.6 Sol");
 assert.match(mainProcess, /id: "gpt-5\.6-terra"/, "AI model list should include GPT-5.6 Terra");
 assert.match(mainProcess, /id: "gpt-5\.6-luna"/, "AI model list should include GPT-5.6 Luna");
@@ -41,6 +43,7 @@ assert.match(mainProcess, /Driver skill overall/, "Projection prompts should inc
 assert.match(mainProcess, /The model decides how to weigh these sources/, "Projection prompts should leave source weighting to the model");
 assert.match(mainProcess, /reasoning:\s*\{\s*effort:\s*"low"\s*\}/, "Codex GPT-5 models should use low reasoning effort");
 assert.match(mainProcess, /\^gpt-5\\\.\(5\|6\)/, "Reasoning effort should apply to GPT-5.5/5.6 models");
+assert.match(mainProcess, /\^gpt-6-/, "Reasoning effort should apply to GPT-6 models");
 assert.match(mainProcess, /id: "grok-4\.6"/, "AI model list should include Grok 4.6");
 assert.match(mainProcess, /DEFAULT_GROK_MODEL = "grok-4\.6"/, "Default Grok model should be Grok 4.6");
 assert.doesNotMatch(mainProcess, /grok-4\.3/, "AI model list should not include Grok 4.3");
@@ -72,11 +75,16 @@ assert.match(settings, /function ProviderLogo/, "Settings should render brand pr
 assert.match(settings, /M9\.205 8\.658/, "Settings should include the ChatGPT\/OpenAI logo path");
 assert.match(settings, /m557\.09 211\.99 8\.31 326\.37/, "Settings should include the xAI\/Grok logo path");
 assert.doesNotMatch(settings, /GPT-5\.4|gpt-5\.4/, "Settings should not offer GPT-5.4 or GPT-5.4 mini");
+assert.match(settings, /GPT-6 Sol/, "Settings should show GPT-6 Sol as a model option");
+assert.match(settings, /GPT-6 Luna/, "Settings should show GPT-6 Luna as a model option");
 assert.match(settings, /GPT-5\.5/, "Settings should show GPT-5.5 as a model option");
 assert.match(settings, /GPT-5\.6 Sol/, "Settings should show GPT-5.6 Sol as a model option");
 assert.match(settings, /GPT-5\.6 Terra/, "Settings should show GPT-5.6 Terra as a model option");
 assert.match(settings, /GPT-5\.6 Luna/, "Settings should show GPT-5.6 Luna as a model option");
+assert.match(settings, /codex:gpt-6-sol/, "Settings should use the gpt-6-sol model id");
+assert.match(settings, /codex:gpt-6-luna/, "Settings should use the gpt-6-luna model id");
 assert.match(settings, /codex:gpt-5\.5/, "Settings should use the gpt-5.5 model id");
+assert.match(settings, /pw-seg--models/, "Settings model picker should wrap the longer model list");
 assert.match(settings, /codex:gpt-5\.6-sol/, "Settings should use the gpt-5.6-sol model id");
 assert.match(settings, /codex:gpt-5\.6-terra/, "Settings should use the gpt-5.6-terra model id");
 assert.match(settings, /codex:gpt-5\.6-luna/, "Settings should use the gpt-5.6-luna model id");

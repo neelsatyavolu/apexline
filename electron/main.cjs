@@ -150,13 +150,10 @@ const GROK_SCOPE = "openid profile email offline_access grok-cli:access api:acce
 const CODEX_MODELS = [
   { id: "gpt-6-sol", label: "GPT-6 Sol", tier: "" },
   { id: "gpt-6-luna", label: "GPT-6 Luna", tier: "" },
-  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", tier: "" },
-  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", tier: "" },
-  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", tier: "" },
-  { id: "gpt-5.5", label: "GPT-5.5", tier: "" },
 ];
-const DEFAULT_CODEX_MODEL = "gpt-5.5";
+const DEFAULT_CODEX_MODEL = "gpt-6-sol";
 const GROK_MODELS = [
+  { id: "grok-4.7", label: "Grok 4.7", tier: "" },
   { id: "grok-4.6", label: "Grok 4.6", tier: "" },
 ];
 const DEFAULT_GROK_MODEL = "grok-4.6";
@@ -960,6 +957,7 @@ async function setUserProfile(profile) {
 function normalizePreferredAiModel(value) {
   let text = String(value || "").trim();
   if (text === "grok:grok-4.5") text = "grok:grok-4.6";
+  if (/^codex:gpt-5\.(?:5|6)(?:-|$)/.test(text)) text = `codex:${DEFAULT_CODEX_MODEL}`;
   if (text === "local") return "local";
   const [provider, ...modelParts] = text.split(":");
   const model = modelParts.join(":");
@@ -11266,7 +11264,7 @@ function responsesBody(model, options = {}) {
     },
     max_output_tokens: 900,
   };
-  if (/^gpt-5\.(5|6)/.test(model) || /^gpt-6-/.test(model)) {
+  if (/^gpt-6-/.test(model)) {
     body.reasoning = { effort: "low" };
     delete body.max_output_tokens;
   }
@@ -11358,7 +11356,7 @@ async function askGrok(options = {}) {
     temperature: 0.4,
     max_tokens: 1200,
   };
-  if (model === "grok-4.6") body.reasoning = { effort: "high" };
+  if (model === "grok-4.7" || model === "grok-4.6") body.reasoning = { effort: "high" };
   const raw = await requestJsonPost(GROK_CHAT_COMPLETIONS_URL, body, { Authorization: `Bearer ${tokens.accessToken}` }, AI_PROVIDER_TIMEOUT_MS);
   return normalizeAiResult("grok", grokText(raw), raw, options.task);
 }

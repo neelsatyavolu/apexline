@@ -7782,8 +7782,10 @@ assert.match(mainProcess, /predictions:[\s\S]*winner[\s\S]*podium[\s\S]*leaderbo
 assert.match(mainProcess, /const AI_PROVIDER_TIMEOUT_MS = 90000/, "Daily AI projection providers should get a longer timeout than normal JSON posts");
 assert.match(mainProcess, /requestTextPost\(targetUrl, body,\s*\{[\s\S]*Accept[\s\S]*\}, AI_PROVIDER_TIMEOUT_MS\)/, "Codex streaming responses should use the AI provider timeout");
 assert.match(mainProcess, /requestJsonPost\(GROK_CHAT_COMPLETIONS_URL, body, \{ Authorization: `Bearer \$\{tokens\.accessToken\}` \}, AI_PROVIDER_TIMEOUT_MS\)/, "Grok AI responses should use the AI provider timeout");
+assert.match(mainProcess, /id: "grok-4\.7"/, "AI model list should include Grok 4.7");
 assert.match(mainProcess, /id: "grok-4\.6"/, "AI model list should include Grok 4.6");
 assert.match(mainProcess, /DEFAULT_GROK_MODEL = "grok-4\.6"/, "Default Grok model should be Grok 4.6");
+assert.match(source["Settings.jsx"], /grok:grok-4\.7/, "Settings should offer Grok 4.7");
 assert.match(source["Settings.jsx"], /grok:grok-4\.6/, "Settings should offer Grok 4.6");
 assert.doesNotMatch(source["Settings.jsx"], /label: "Grok 4\.5"/, "Settings should not keep Grok 4.5 as a selectable model");
 const sanitizeAiErrorForProjection = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "sanitizeAiError")})`);

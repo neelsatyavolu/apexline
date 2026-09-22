@@ -6,7 +6,7 @@
   const AI_MODEL_STORAGE = "pw-ai-model";
   const SYNC_STORAGE_KEY = "pw-sync-settings";
   const DEFAULT_WORLD_SYNC_TARGET = 36;
-  const DEFAULT_AI_MODEL = "codex:gpt-5.5";
+  const DEFAULT_AI_MODEL = "codex:gpt-6-sol";
   const PROFILE_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
   const PROFILE_NAME_PERSIST_DELAY_MS = 300;
 
@@ -39,14 +39,12 @@
   const AI_MODEL_OPTIONS = [
     { value: "codex:gpt-6-sol", label: "GPT-6 Sol" },
     { value: "codex:gpt-6-luna", label: "GPT-6 Luna" },
-    { value: "codex:gpt-5.6-sol", label: "GPT-5.6 Sol" },
-    { value: "codex:gpt-5.6-terra", label: "GPT-5.6 Terra" },
-    { value: "codex:gpt-5.6-luna", label: "GPT-5.6 Luna" },
-    { value: "codex:gpt-5.5", label: "GPT-5.5" },
+    { value: "grok:grok-4.7", label: "Grok 4.7" },
     { value: "grok:grok-4.6", label: "Grok 4.6" },
   ];
   function normalizeSavedAiModel(value) {
-    const saved = value === "grok:grok-4.5" ? "grok:grok-4.6" : value;
+    let saved = value === "grok:grok-4.5" ? "grok:grok-4.6" : value;
+    if (/^codex:gpt-5\.(?:5|6)(?:-|$)/.test(saved)) saved = DEFAULT_AI_MODEL;
     return AI_MODEL_OPTIONS.some((option) => option.value === saved) ? saved : "";
   }
   const VIDEO_QUALITY_OPTIONS = [

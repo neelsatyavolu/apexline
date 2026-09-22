@@ -1,5 +1,9 @@
 # Apexline Agent Guide
 
+## Shared Codex/Grok integration
+
+Use [shared-ai-auth](https://github.com/neelsatyavolu/shared-ai-auth) for OAuth protocol helpers and the live `models.json` catalog. Apexline keeps its localhost callback listener and Keychain entries. The optional project blacklist is `HIDDEN_MODELS` in `electron/main.cjs`; new models show by default. Keep token and callback values out of logs.
+
 Apexline is an Electron macOS F1 companion app. The renderer is React in
 `ui_kits/pitwall`, the Electron main process is `electron/main.cjs`, and the
 renderer bridge is `electron/preload.cjs`. Build, package, and smoke-test

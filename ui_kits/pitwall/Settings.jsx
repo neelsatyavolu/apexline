@@ -36,16 +36,10 @@
       },
     };
   }
-  const AI_MODEL_OPTIONS = [
-    { value: "codex:gpt-6-sol", label: "GPT-6 Sol" },
-    { value: "codex:gpt-6-luna", label: "GPT-6 Luna" },
-    { value: "grok:grok-4.7", label: "Grok 4.7" },
-    { value: "grok:grok-4.6", label: "Grok 4.6" },
-  ];
   function normalizeSavedAiModel(value) {
     let saved = value === "grok:grok-4.5" ? "grok:grok-4.6" : value;
     if (/^codex:gpt-5\.(?:5|6)(?:-|$)/.test(saved)) saved = DEFAULT_AI_MODEL;
-    return AI_MODEL_OPTIONS.some((option) => option.value === saved) ? saved : "";
+    return /^(codex|grok):[a-z0-9][a-z0-9.-]*$/.test(saved) ? saved : "";
   }
   const VIDEO_QUALITY_OPTIONS = [
     { value: "max", label: "Max" },
@@ -259,6 +253,10 @@
       catch { return DEFAULT_PREFS; }
     });
     const [oauthStatus, setOauthStatus] = React.useState({ codexConnected: false, grokConnected: false });
+    const aiModelOptions = [
+      ...(oauthStatus.codexModels || []).map((entry) => ({ value: `codex:${entry.id}`, label: entry.label })),
+      ...(oauthStatus.grokModels || []).map((entry) => ({ value: `grok:${entry.id}`, label: entry.label })),
+    ];
     const [oauthBusy, setOauthBusy] = React.useState("");
     const [oauthCode, setOauthCode] = React.useState("");
     const [oauthCodeBusy, setOauthCodeBusy] = React.useState(false);
@@ -703,7 +701,7 @@
 
               <Card title="Preferred model" subtitle="Used for battle detection, strategy & projections">
                 <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-                  <SegmentedControl className="pw-seg--models" value={model} onChange={setModel} accent options={AI_MODEL_OPTIONS} />
+                  <SegmentedControl className="pw-seg--models" value={model} onChange={setModel} accent options={aiModelOptions} />
                   <span style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
                     Structured JSON output mode · teaching system prompt enabled.
                   </span>

@@ -218,6 +218,9 @@ assert.deepEqual(runtimeFiles, [
   "hls.js/LICENSE",
   "shaka-player/dist/shaka-player.compiled.js",
   "shaka-player/LICENSE",
+  "@neelsatyavolu/shared-ai-auth/package.json",
+  "@neelsatyavolu/shared-ai-auth/index.cjs",
+  "@neelsatyavolu/shared-ai-auth/models.json",
 ], "macOS packaging should use an explicit production runtime and license allowlist");
 const runtimeBytes = runtimeFiles.reduce((total, relativePath) => {
   const sourcePath = path.join(root, "node_modules", relativePath);
@@ -7782,11 +7785,12 @@ assert.match(mainProcess, /predictions:[\s\S]*winner[\s\S]*podium[\s\S]*leaderbo
 assert.match(mainProcess, /const AI_PROVIDER_TIMEOUT_MS = 90000/, "Daily AI projection providers should get a longer timeout than normal JSON posts");
 assert.match(mainProcess, /requestTextPost\(targetUrl, body,\s*\{[\s\S]*Accept[\s\S]*\}, AI_PROVIDER_TIMEOUT_MS\)/, "Codex streaming responses should use the AI provider timeout");
 assert.match(mainProcess, /requestJsonPost\(GROK_CHAT_COMPLETIONS_URL, body, \{ Authorization: `Bearer \$\{tokens\.accessToken\}` \}, AI_PROVIDER_TIMEOUT_MS\)/, "Grok AI responses should use the AI provider timeout");
-assert.match(mainProcess, /id: "grok-4\.7"/, "AI model list should include Grok 4.7");
-assert.match(mainProcess, /id: "grok-4\.6"/, "AI model list should include Grok 4.6");
+const sharedModelCatalog = require("@neelsatyavolu/shared-ai-auth").bundledModels;
+assert.ok(sharedModelCatalog.grok.some((model) => model.id === "grok-4.7"), "AI model list should include Grok 4.7");
+assert.ok(sharedModelCatalog.grok.some((model) => model.id === "grok-4.6"), "AI model list should include Grok 4.6");
+assert.match(mainProcess, /sharedAuth\.loadModels/, "AI model list should refresh from the shared catalog");
 assert.match(mainProcess, /DEFAULT_GROK_MODEL = "grok-4\.6"/, "Default Grok model should be Grok 4.6");
-assert.match(source["Settings.jsx"], /grok:grok-4\.7/, "Settings should offer Grok 4.7");
-assert.match(source["Settings.jsx"], /grok:grok-4\.6/, "Settings should offer Grok 4.6");
+assert.match(source["Settings.jsx"], /oauthStatus\.grokModels/, "Settings should offer the shared Grok model list");
 assert.doesNotMatch(source["Settings.jsx"], /label: "Grok 4\.5"/, "Settings should not keep Grok 4.5 as a selectable model");
 const sanitizeAiErrorForProjection = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "sanitizeAiError")})`);
 assert.equal(

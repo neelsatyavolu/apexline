@@ -10,6 +10,7 @@ const tls = require("node:tls");
 const { pathToFileURL } = require("node:url");
 const vm = require("node:vm");
 const zlib = require("node:zlib");
+const sharedAuth = require("@neelsatyavolu/shared-ai-auth");
 
 let appPackage = {};
 try {
@@ -135,28 +136,22 @@ const MAX_BUFFERED_MEDIA_BYTES = 64 * 1024 * 1024;
 const DATA_CACHE_MS = 1000 * 60 * 3;
 const COPILOT_INSIGHT_RETRY_MS = 1000 * 60 * 10;
 const AI_PROVIDER_TIMEOUT_MS = 90000;
-const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
-const CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback";
-const CODEX_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
-const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
+const CODEX_REDIRECT_URI = sharedAuth.providers.codex.redirectUri;
 const CODEX_BACKEND_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
-const CODEX_SCOPE = "openid profile email offline_access";
-const GROK_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
-const GROK_REDIRECT_URI = "http://127.0.0.1:56121/callback";
-const GROK_AUTHORIZE_URL = "https://auth.x.ai/oauth2/authorize";
-const GROK_TOKEN_URL = "https://auth.x.ai/oauth2/token";
+const GROK_REDIRECT_URI = sharedAuth.providers.grok.redirectUri;
 const GROK_CHAT_COMPLETIONS_URL = "https://api.x.ai/v1/chat/completions";
-const GROK_SCOPE = "openid profile email offline_access grok-cli:access api:access";
-const CODEX_MODELS = [
-  { id: "gpt-6-sol", label: "GPT-6 Sol", tier: "" },
-  { id: "gpt-6-luna", label: "GPT-6 Luna", tier: "" },
-];
 const DEFAULT_CODEX_MODEL = "gpt-6-sol";
-const GROK_MODELS = [
-  { id: "grok-4.7", label: "Grok 4.7", tier: "" },
-  { id: "grok-4.6", label: "Grok 4.6", tier: "" },
-];
 const DEFAULT_GROK_MODEL = "grok-4.6";
+const HIDDEN_MODELS = { codex: [], grok: [] };
+let modelCatalog = sharedAuth.bundledModels;
+let modelRefreshAt = 0;
+async function visibleAiModels(provider) {
+  if (Date.now() >= modelRefreshAt) {
+    modelCatalog = await sharedAuth.loadModels({ fallback: modelCatalog });
+    modelRefreshAt = Date.now() + 5 * 60_000;
+  }
+  return sharedAuth.selectModels(modelCatalog, provider, HIDDEN_MODELS[provider]);
+}
 const MAX_CAPTURED_STREAMS = 48;
 const NEWS_SOURCES = [
   {
@@ -961,8 +956,8 @@ function normalizePreferredAiModel(value) {
   if (text === "local") return "local";
   const [provider, ...modelParts] = text.split(":");
   const model = modelParts.join(":");
-  if (provider === "codex" && knownModel(model, CODEX_MODELS, "") === model) return text;
-  if (provider === "grok" && knownModel(model, GROK_MODELS, "") === model) return text;
+  if ((provider === "codex" || provider === "grok") &&
+      knownModel(model, sharedAuth.selectModels(modelCatalog, provider, HIDDEN_MODELS[provider]), "") === model) return text;
   return "";
 }
 
@@ -1668,172 +1663,14 @@ function requestTextPost(targetUrl, body, headers = {}, timeout = 20000) {
   });
 }
 
-function requestFormPost(targetUrl, params, headers = {}, timeout = 20000) {
-  return new Promise((resolve, reject) => {
-    const payload = params.toString();
-    const endpoint = new URL(targetUrl);
-    const req = https.request({
-      method: "POST",
-      hostname: endpoint.hostname,
-      path: `${endpoint.pathname}${endpoint.search}`,
-      headers: {
-        "Accept": "application/json",
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Content-Length": Buffer.byteLength(payload),
-        "User-Agent": "Apexline/1.0 (+https://github.com/neelsatyavolu/apexline)",
-        ...headers,
-      },
-      timeout,
-    }, (res) => {
-      let text = "";
-      res.setEncoding("utf8");
-      res.on("data", (chunk) => { text += chunk; });
-      res.on("end", () => {
-        let json = null;
-        try { json = text ? JSON.parse(text) : {}; }
-        catch {
-          reject(new Error(`Invalid JSON from ${endpoint.hostname}`));
-          return;
-        }
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          reject(new Error(json?.error_description || json?.error || `HTTP ${res.statusCode} for ${targetUrl}`));
-          return;
-        }
-        resolve(json);
-      });
-    });
-    req.on("timeout", () => req.destroy(new Error(`Timeout for ${targetUrl}`)));
-    req.on("error", reject);
-    req.write(payload);
-    req.end();
-  });
-}
-
-function base64url(buffer) {
-  return buffer.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function generatePkce() {
-  const verifier = base64url(randomBytes(64));
-  return {
-    verifier,
-    challenge: base64url(createHash("sha256").update(verifier).digest()),
-    state: base64url(randomBytes(32)),
-  };
-}
-
-function buildCodexAuthorizeUrl(challenge, state) {
-  const params = new URLSearchParams({
-    response_type: "code",
-    client_id: CODEX_CLIENT_ID,
-    redirect_uri: CODEX_REDIRECT_URI,
-    scope: CODEX_SCOPE,
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-    state,
-    id_token_add_organizations: "true",
-    codex_cli_simplified_flow: "true",
-    originator: "codex_cli_rs",
-  });
-  return `${CODEX_AUTHORIZE_URL}?${params.toString()}`;
-}
-
-function buildGrokAuthorizeUrl(challenge, state) {
-  const params = new URLSearchParams({
-    response_type: "code",
-    client_id: GROK_CLIENT_ID,
-    redirect_uri: GROK_REDIRECT_URI,
-    scope: GROK_SCOPE,
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-    state,
-  });
-  return `${GROK_AUTHORIZE_URL}?${params.toString()}`;
-}
-
-function decodeCodexAccountId(idToken) {
-  if (!idToken) return "";
-  const parts = String(idToken).split(".");
-  if (parts.length < 2) return "";
-  try {
-    const payload = Buffer.from(parts[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
-    const claims = JSON.parse(payload);
-    const orgs = claims?.["https://api.openai.com/auth"]?.organizations;
-    if (Array.isArray(orgs) && orgs.length) {
-      const account = orgs.find((org) => org?.is_default) || orgs[0];
-      return String(account?.id || "");
-    }
-    return String(claims?.sub || "");
-  } catch {
-    return "";
-  }
-}
-
-function tokenExpiry(expiresIn, skewSeconds = 90) {
-  return Date.now() + Math.max(30, Number(expiresIn || 3600) - skewSeconds) * 1000;
-}
-
-async function exchangeCodexCode(code, verifier) {
-  const json = await requestFormPost(CODEX_TOKEN_URL, new URLSearchParams({
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: CODEX_REDIRECT_URI,
-    client_id: CODEX_CLIENT_ID,
-    code_verifier: verifier,
-  }));
-  return {
-    accessToken: json.access_token,
-    refreshToken: json.refresh_token,
-    idToken: json.id_token,
-    accountId: decodeCodexAccountId(json.id_token),
-    expiresAt: tokenExpiry(json.expires_in, 60),
-  };
-}
-
-async function refreshCodexTokens(refreshToken, accountId = "") {
-  const json = await requestFormPost(CODEX_TOKEN_URL, new URLSearchParams({
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-    client_id: CODEX_CLIENT_ID,
-    scope: CODEX_SCOPE,
-  }));
-  return {
-    accessToken: json.access_token,
-    refreshToken: json.refresh_token,
-    idToken: json.id_token,
-    accountId: decodeCodexAccountId(json.id_token) || accountId,
-    expiresAt: tokenExpiry(json.expires_in, 60),
-  };
-}
-
-async function exchangeGrokCode(code, verifier, redirectUri = GROK_REDIRECT_URI) {
-  const json = await requestFormPost(GROK_TOKEN_URL, new URLSearchParams({
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: redirectUri,
-    client_id: GROK_CLIENT_ID,
-    code_verifier: verifier,
-  }));
-  return {
-    accessToken: json.access_token,
-    refreshToken: json.refresh_token,
-    expiresAt: tokenExpiry(json.expires_in, 120),
-  };
-}
-
-async function refreshGrokTokens(refreshToken) {
-  const json = await requestFormPost(GROK_TOKEN_URL, new URLSearchParams({
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-    client_id: GROK_CLIENT_ID,
-    scope: GROK_SCOPE,
-  }));
-  return {
-    accessToken: json.access_token,
-    refreshToken: json.refresh_token || refreshToken,
-    expiresAt: tokenExpiry(json.expires_in, 120),
-  };
-}
+// Protocol details are shared; Apexline keeps its loopback callback and Keychain storage.
+const generatePkce = sharedAuth.generatePkce;
+const buildCodexAuthorizeUrl = (challenge, state) => sharedAuth.authorizeUrl("codex", { challenge, state });
+const buildGrokAuthorizeUrl = (challenge, state) => sharedAuth.authorizeUrl("grok", { challenge, state });
+const exchangeCodexCode = (code, verifier) => sharedAuth.exchangeCode("codex", code, verifier);
+const refreshCodexTokens = (refreshToken, accountId = "") => sharedAuth.refreshTokens("codex", refreshToken, { previous: { refreshToken, accountId } });
+const exchangeGrokCode = (code, verifier) => sharedAuth.exchangeCode("grok", code, verifier);
+const refreshGrokTokens = (refreshToken) => sharedAuth.refreshTokens("grok", refreshToken);
 
 function parseOAuthCodeInput(value, expectedState = "") {
   const text = String(value || "").trim();
@@ -1956,16 +1793,18 @@ function knownModel(model, models, fallback) {
 }
 
 async function getAiAuthStatus() {
-  const [codexSession, grokSession] = await Promise.all([
+  const [codexSession, grokSession, codexModels, grokModels] = await Promise.all([
     getActiveOAuthSession("codex"),
     getActiveOAuthSession("grok"),
+    visibleAiModels("codex"),
+    visibleAiModels("grok"),
   ]);
   return {
     codexConnected: Boolean(codexSession),
     grokConnected: Boolean(grokSession),
-    codexModels: CODEX_MODELS,
+    codexModels,
     defaultCodexModel: DEFAULT_CODEX_MODEL,
-    grokModels: GROK_MODELS,
+    grokModels,
     defaultGrokModel: DEFAULT_GROK_MODEL,
   };
 }
@@ -11331,7 +11170,7 @@ async function requestCodexResponsesStream(targetUrl, body, headers = {}) {
 async function askCodex(options = {}) {
   const tokens = await getActiveOAuthSession("codex");
   if (!tokens) throw new Error("Connect ChatGPT (Codex) in Settings first.");
-  const model = knownModel(options.model, CODEX_MODELS, DEFAULT_CODEX_MODEL);
+  const model = knownModel(options.model, await visibleAiModels("codex"), DEFAULT_CODEX_MODEL);
   const headers = {
     Authorization: `Bearer ${tokens.accessToken}`,
     originator: "codex_cli_rs",
@@ -11346,7 +11185,7 @@ async function askCodex(options = {}) {
 async function askGrok(options = {}) {
   const tokens = await getActiveOAuthSession("grok");
   if (!tokens) throw new Error("Connect Grok in Settings first.");
-  const model = knownModel(options.model, GROK_MODELS, DEFAULT_GROK_MODEL);
+  const model = knownModel(options.model, await visibleAiModels("grok"), DEFAULT_GROK_MODEL);
   const body = {
     model,
     messages: [

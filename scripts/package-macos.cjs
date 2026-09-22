@@ -34,6 +34,9 @@ function packagedRuntimeFiles() {
     "hls.js/LICENSE",
     "shaka-player/dist/shaka-player.compiled.js",
     "shaka-player/LICENSE",
+    "@neelsatyavolu/shared-ai-auth/package.json",
+    "@neelsatyavolu/shared-ai-auth/index.cjs",
+    "@neelsatyavolu/shared-ai-auth/models.json",
   ];
 }
 

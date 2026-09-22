@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@babel/standalone": "^7.29.0",
+    "@neelsatyavolu/shared-ai-auth": "https://codeload.github.com/neelsatyavolu/shared-ai-auth/tar.gz/c1e7c0ac87717d27bc33f591795e37175ce02ee6",
     "@vercel/postgres": "^0.10.0",
     "hls.js": "^1.6.13",
     "react": "^18.3.1",

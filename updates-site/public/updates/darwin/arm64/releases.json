@@ -1,14 +1,14 @@
 {
-  "currentRelease": "1.1.9",
+  "currentRelease": "1.1.10",
   "releases": [
     {
-      "version": "1.1.9",
+      "version": "1.1.10",
       "updateTo": {
-        "version": "1.1.9",
-        "pub_date": "2026-08-12T23:16:34.315Z",
-        "notes": "Apexline 1.1.9 — News tab load fix, live timing mid-session alignment, timing-buffer compaction, lazy-screen stub handling, and data-loading performance fixes. Developer ID signed and notarized.",
-        "name": "Apexline 1.1.9",
-        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.9-mac-arm64.zip"
+        "version": "1.1.10",
+        "pub_date": "2026-09-22T19:06:38.053Z",
+        "notes": "Apexline 1.1.10",
+        "name": "Apexline 1.1.10",
+        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.10-mac-arm64.zip"
       }
     }
   ]

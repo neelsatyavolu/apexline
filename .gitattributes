@@ -1,1 +1,0 @@
-updates-site/public/updates/darwin/arm64/*.zip filter=lfs diff=lfs merge=lfs -text

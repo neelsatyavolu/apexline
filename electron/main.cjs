@@ -7719,10 +7719,11 @@ function shouldRetryDailyCopilotInsights(cached, today, nowMs = Date.now(), retr
 }
 
 async function fetchLiveDataEntries(urls, options = {}) {
+  const timeout = Number(options.timeout) > 0 ? Number(options.timeout) : 8500;
   const entries = await Promise.all(Object.entries(urls).map(async ([key, url]) => {
     const isXml = key.endsWith("News");
     try {
-      return { key, value: isXml ? await requestText(url) : await requestMaybeOpenF1Json(url, 8500, { priority: options.priority }) };
+      return { key, value: isXml ? await requestText(url, timeout) : await requestMaybeOpenF1Json(url, timeout, { priority: options.priority }) };
     } catch (error) {
       return { key, error };
     }
@@ -7821,9 +7822,9 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
     raceWinners = raceWinners.concat(carriedWinners);
     effectiveSchedule = applyScheduleWinners(effectiveSchedule, raceWinners);
   }
-  // First paint: a single Ergast call returns every round's winner. Runs in both passes but is
-  // cached, and is skipped entirely once every done round already has a winner.
-  if (effectiveSchedule.some((race) => race.status === "done" && !race.winner)) {
+  // Historical winners are not needed to open the dashboard. Skip on the startup
+  // first-pass so race/standings/news are not blocked by an extra Ergast round-trip.
+  if (!options.deferOptional && effectiveSchedule.some((race) => race.status === "done" && !race.winner)) {
     const seasonWinners = parseRaceWinners(await fetchSeasonRaceWinners(), fallbackData.drivers);
     if (seasonWinners.length) {
       raceWinners = raceWinners.concat(seasonWinners);
@@ -7880,10 +7881,12 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
     totalRounds: effectiveSchedule.length,
   };
   const standingsRound = driverResult.seasonSummary.round || currentRaceWeekend(effectiveSchedule)?.rnd || 0;
-  const previousStandings = await fetchPreviousChampionshipStandings(driverResult.seasonSummary.season, standingsRound, {
-    drivers: championshipRowsNeedPreviousDeltas(standings),
-    constructors: championshipRowsNeedPreviousDeltas(constructors),
-  });
+  const previousStandings = options.deferOptional
+    ? {}
+    : await fetchPreviousChampionshipStandings(driverResult.seasonSummary.season, standingsRound, {
+      drivers: championshipRowsNeedPreviousDeltas(standings),
+      constructors: championshipRowsNeedPreviousDeltas(constructors),
+    });
   standings = applyChampionshipPositionDeltas(standings, previousStandings.standings, "code");
   constructors = applyChampionshipPositionDeltas(constructors, previousStandings.constructors, "abbr");
   const strategyContext = buildStrategyContext({
@@ -8050,14 +8053,18 @@ async function ensureRecentDriverForm(raw, data) {
 
 async function refreshLiveDataSnapshot(options = {}) {
   const deferCopilot = Boolean(options.startup);
-  const { raw, errors } = await fetchLiveDataEntries(LIVE_CORE_DATA_URLS);
+  const includeNews = Boolean(options.startup || options.forceRefresh);
+  const urls = includeNews ? { ...LIVE_CORE_DATA_URLS, ...LIVE_NEWS_URLS } : LIVE_CORE_DATA_URLS;
+  const { raw, errors } = await fetchLiveDataEntries(urls, { timeout: includeNews ? 4500 : 8500 });
   await fetchOfficialF1StandingsFallback(raw, errors);
   let data = await buildPitWallSnapshot(raw, errors, {
     includeWeekendWeatherFallback: false,
     enrichmentPending: true,
+    deferOptional: includeNews,
   });
   data = preserveSnapshotNews(liveDataCache?.data, data);
-  await ensureRecentDriverForm(raw, data);
+  data.startupReady = true;
+  if (!includeNews) await ensureRecentDriverForm(raw, data);
   if (deferCopilot) {
     data.copilot = liveDataCache?.data?.copilot || null;
   } else {
@@ -8081,17 +8088,27 @@ async function refreshLiveDataSnapshot(options = {}) {
   return data;
 }
 
+function startLiveDataRefresh(options = {}) {
+  if (!liveDataRefresh || options.forceCopilotRefresh || options.forceCopilotPageId) {
+    liveDataRefresh = refreshLiveDataSnapshot(options).finally(() => { liveDataRefresh = null; });
+  }
+  return liveDataRefresh;
+}
+
 async function getPitWallSnapshot(options = {}) {
   if (options?.forceRefresh) {
-    if (!liveDataRefresh || options.forceCopilotRefresh || options.forceCopilotPageId) {
-      liveDataRefresh = refreshLiveDataSnapshot(options).finally(() => { liveDataRefresh = null; });
+    return startLiveDataRefresh(options);
+  }
+  if (options?.startup) {
+    if (liveDataCache?.data?.startupReady && Date.now() - liveDataCache.createdAt < DATA_CACHE_MS) {
+      return liveDataCache.data;
     }
-    return liveDataRefresh;
+    return startLiveDataRefresh({ ...options, startup: true });
   }
   if (liveDataCache && Date.now() - liveDataCache.createdAt < DATA_CACHE_MS) return liveDataCache.data;
   const diskData = readLiveSnapshotDiskCache();
   if (diskData) {
-    const data = { ...diskData, sourceLabel: "Live data (refreshing)", enrichmentPending: true };
+    const data = { ...diskData, sourceLabel: "Live data (refreshing)", enrichmentPending: true, startupReady: false };
     liveDataCache = { createdAt: Date.now(), data };
     if (!liveDataRefresh) {
       liveDataRefresh = refreshLiveDataSnapshot()
@@ -12303,6 +12320,12 @@ app.whenReady().then(async () => {
   if (await runWeekendRecapDiagnosticAndQuit()) return null;
   if (await runF1TvDiagnosticAndQuit()) return null;
   installApplicationMenu();
+  void getOpenF1AccessToken()
+    .catch(() => "")
+    .then(() => startLiveDataRefresh({ startup: true }))
+    .catch((error) => {
+      writePitWallDebugLog("live-data.startup-warmup-failed", { message: error?.message || "Startup live data warmup failed" });
+    });
   return createWindow();
 });
 

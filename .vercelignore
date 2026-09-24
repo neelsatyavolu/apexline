@@ -10,3 +10,4 @@ Tests
 .DS_Store
 .env
 .env.*
+updates-site/public/updates/**/*.zip

@@ -5,11 +5,16 @@ macOS builds. It also hosts the website and the serverless APIs in `api/` (OpenF
 
 Release flow:
 
-1. Set `apexline.updateBaseUrl` in the root `package.json` to the production
-   Vercel domain for this project, or export `APEXLINE_UPDATE_BASE_URL`.
-2. Run `/opt/homebrew/bin/npm run package:mac`.
-3. Run `/opt/homebrew/bin/npm run release:update-feed`.
-4. Deploy this folder to Vercel.
+1. Bump `version` in the root `package.json`, commit and push to `main`.
+2. Run `./scripts/release-macos.sh`. It builds, signs and notarizes the app,
+   writes the zip and `releases.json`, and publishes the zip as the GitHub
+   Release `v<version>`.
+3. Commit and push `updates-site/public` (the feed and landing page). Vercel
+   deploys `main` automatically.
+
+Zips are not committed. `vercel.json` redirects
+`/updates/darwin/arm64/Apexline-<version>-mac-arm64.zip` to the matching
+GitHub Release asset, so download and update URLs never change.
 
 The app checks:
 

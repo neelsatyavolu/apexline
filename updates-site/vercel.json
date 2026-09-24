@@ -2,6 +2,18 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": null,
   "outputDirectory": "public",
+  "redirects": [
+    {
+      "source": "/updates/darwin/arm64/Apexline-:version-mac-arm64.zip",
+      "destination": "https://github.com/neelsatyavolu/apexline/releases/download/v:version/Apexline-:version-mac-arm64.zip",
+      "permanent": false
+    },
+    {
+      "source": "/updates/darwin/arm64/PitWall-:version-mac-arm64.zip",
+      "destination": "https://github.com/neelsatyavolu/apexline/releases/download/v:version/PitWall-:version-mac-arm64.zip",
+      "permanent": false
+    }
+  ],
   "headers": [
     {
       "source": "/updates/(.*)",

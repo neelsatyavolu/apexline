@@ -26,3 +26,6 @@ pnpm-debug.log*
 .grok/
 .vercel/
 .playwright-mcp/
+
+# Release zips are published as GitHub Release assets, not committed
+updates-site/public/updates/**/*.zip

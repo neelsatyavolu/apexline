@@ -578,6 +578,15 @@ assert.match(mainProcess, /downloadPitWallUpdate/, "Update installer should down
 assert.match(mainProcess, /assertValidUpdateZip|PKZip|git-lfs/, "Update installer should reject Git LFS pointers / non-zip downloads before ditto");
 assert.match(mainProcess, /"-x", "-k"/, "Update installer should extract the hosted zip with ditto before replacing the app");
 const prepareUpdate = fs.readFileSync(path.join(root, "scripts/prepare-vercel-update.cjs"), "utf8");
+const updateSiteVercelConfig = JSON.parse(fs.readFileSync(path.join(root, "updates-site/vercel.json"), "utf8"));
+const zipRedirect = (updateSiteVercelConfig.redirects || []).find((rule) => rule.source === "/updates/darwin/arm64/Apexline-:version-mac-arm64.zip");
+assert.ok(zipRedirect, "apexline.io should redirect macOS zip URLs so update feed links never change");
+assert.equal(zipRedirect.destination, "https://github.com/neelsatyavolu/apexline/releases/download/v:version/Apexline-:version-mac-arm64.zip", "Zip redirects should point at the matching GitHub Release asset");
+assert.equal(zipRedirect.permanent, false, "Zip redirects should stay temporary so hosting can move again");
+const releaseScript = fs.readFileSync(path.join(root, "scripts/release-macos.sh"), "utf8");
+assert.match(releaseScript, /gh release create "v\$VERSION" "\$ZIP"/, "Release script should publish the zip as a GitHub Release");
+assert.match(fs.readFileSync(path.join(root, ".gitignore"), "utf8"), /updates-site\/public\/updates\/\*\*\/\*\.zip/, "Release zips should not be committed");
+
 assert.match(prepareUpdate, /0x50 && zipMagic\[1\] === 0x4b|PKZip|git-lfs/, "Update feed prep should refuse to publish LFS pointer files as zips");
 assert.match(mainProcess, /app\.quit\(\)/, "Update installer should quit the current app after scheduling replacement and relaunch");
 assert.match(mainProcess, /PITWALL_UPDATE_BASE_URL/, "Electron should read update feed hosting from the packaged app or environment");

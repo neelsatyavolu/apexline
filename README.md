@@ -15,14 +15,13 @@ own active F1 TV subscription.
 Requires macOS on Apple silicon and a current Node.js LTS release.
 
 ```bash
-GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/neelsatyavolu/apexline.git
+git clone https://github.com/neelsatyavolu/apexline.git
 cd apexline
 npm install
 npm start
 ```
 
-`GIT_LFS_SKIP_SMUDGE=1` skips the release zips in `updates-site/public/updates`,
-which you don't need to run the app. `npm start` builds the renderer into `dist/pitwall` and launches Electron.
+`npm start` builds the renderer into `dist/pitwall` and launches Electron.
 `npm test` runs the smoke tests.
 
 ## Configuration

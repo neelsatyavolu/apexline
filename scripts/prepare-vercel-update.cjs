@@ -120,4 +120,4 @@ fs.writeFileSync(landingPagePath, replaceLandingPageVersion(landingPage, version
 console.log(`Wrote ${path.relative(root, zipPath)} (${(zipStat.size / (1024 * 1024)).toFixed(1)} MB)`);
 console.log(`Wrote ${path.relative(root, feedPath)}`);
 console.log(`Updated ${path.relative(root, landingPagePath)}`);
-console.log("Reminder: Vercel must receive the real zip bytes (not a Git LFS pointer). Deploy from a working tree after git lfs pull, or exclude *.zip from LFS for this path.");
+console.log("Reminder: zips are served from GitHub Releases. Publish this one with ./scripts/release-macos.sh --publish-only before pushing the feed.");

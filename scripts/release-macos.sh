@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # Official macOS release build for Apexline:
 #   CastLabs VMP → Developer ID codesign → notarize + staple → update feed zip
+#   → GitHub Release asset (apexline.io/updates/*.zip redirects there)
 #
 # Usage:
 #   ./scripts/release-macos.sh              # sign + notarize + prepare feed
 #   ./scripts/release-macos.sh --no-notarize
 #   ./scripts/release-macos.sh --feed-only  # only run release:update-feed (app already built)
 #   ./scripts/release-macos.sh --skip-feed  # package/sign only
+#   ./scripts/release-macos.sh --publish-only  # only upload the zip to GitHub Releases
 #
 # Prerequisites:
 #   - 1Password CLI signed in (op account list)
 #   - CastLabs EVS Python module for VMP (python3 -m castlabs_evs.vmp)
 #   - Xcode CLT (codesign, notarytool, stapler)
+#   - GitHub CLI signed in (gh auth status), version bump pushed to origin/main
 # Credentials: ~/Documents/GitHub/APPLE_SIGNING.md
 
 set -euo pipefail
@@ -24,6 +27,7 @@ NODE="${NODE:-/opt/homebrew/bin/node}"
 NOTARIZE="yes"
 DO_PACKAGE=1
 DO_FEED=1
+DO_PUBLISH=1
 
 usage() {
   cat <<'EOF'
@@ -33,6 +37,7 @@ Official Apexline macOS release (Developer ID + notarize + update feed).
   ./scripts/release-macos.sh --no-notarize
   ./scripts/release-macos.sh --feed-only
   ./scripts/release-macos.sh --skip-feed
+  ./scripts/release-macos.sh --publish-only
 
 Env:
   APEXLINE_RELEASE_NOTES   notes string for releases.json
@@ -47,8 +52,9 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --no-notarize) NOTARIZE="no"; shift ;;
     --with-notarize|--notarize) NOTARIZE="yes"; shift ;;
-    --feed-only) DO_PACKAGE=0; DO_FEED=1; shift ;;
-    --skip-feed) DO_FEED=0; shift ;;
+    --feed-only) DO_PACKAGE=0; DO_FEED=1; DO_PUBLISH=0; shift ;;
+    --skip-feed) DO_FEED=0; DO_PUBLISH=0; shift ;;
+    --publish-only) DO_PACKAGE=0; DO_FEED=0; DO_PUBLISH=1; shift ;;
     -h|--help) usage 0 ;;
     *) echo "Unknown option: $1" >&2; usage 1 ;;
   esac
@@ -114,10 +120,29 @@ fi
 if [ "$DO_FEED" = "1" ]; then
   echo "Preparing Vercel update feed + zip…"
   "$NPM" run release:update-feed
+fi
+
+if [ "$DO_PUBLISH" = "1" ]; then
+  # Zips are not committed. apexline.io/updates/darwin/arm64/*.zip redirects to
+  # the matching GitHub Release asset, so publish it before the feed goes live.
+  VERSION="$("$NODE" -p "require('./package.json').version")"
+  ZIP="$ROOT/updates-site/public/updates/darwin/arm64/Apexline-$VERSION-mac-arm64.zip"
+  [ -f "$ZIP" ] || { echo "error: $ZIP not found; run the feed step first." >&2; exit 1; }
+  git fetch -q origin main
+  if gh release view "v$VERSION" >/dev/null 2>&1; then
+    echo "Replacing zip on GitHub release v$VERSION…"
+    gh release upload "v$VERSION" "$ZIP" --clobber
+  else
+    echo "Publishing GitHub release v$VERSION…"
+    gh release create "v$VERSION" "$ZIP" \
+      --target "$(git rev-parse origin/main)" \
+      --title "Apexline $VERSION" \
+      --notes "${APEXLINE_RELEASE_NOTES:-Apexline $VERSION for Apple silicon Macs. Download the zip, unzip it and drag Apexline to Applications.}" \
+      --latest
+  fi
   echo ""
-  echo "Next: deploy the updates site, e.g."
-  echo "  /usr/bin/env CI=1 /opt/homebrew/bin/vercel deploy updates-site --prod -y"
-  echo "Then confirm public JSON:"
+  echo "Next: commit and push updates-site/public (releases.json + index.html)."
+  echo "Vercel deploys main automatically; then confirm:"
   echo "  https://apexline.io/updates/darwin/arm64/releases.json"
 fi
 

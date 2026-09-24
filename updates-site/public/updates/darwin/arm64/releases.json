@@ -1,14 +1,14 @@
 {
-  "currentRelease": "1.1.10",
+  "currentRelease": "1.1.11",
   "releases": [
     {
-      "version": "1.1.10",
+      "version": "1.1.11",
       "updateTo": {
-        "version": "1.1.10",
-        "pub_date": "2026-09-22T19:06:38.053Z",
-        "notes": "Apexline 1.1.10",
-        "name": "Apexline 1.1.10",
-        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.10-mac-arm64.zip"
+        "version": "1.1.11",
+        "pub_date": "2026-09-24T00:57:48.230Z",
+        "notes": "Faster startup with an immediate loading screen. Watch parties and OpenF1 data now go through authenticated Apexline services. Downloads are served from GitHub Releases.",
+        "name": "Apexline 1.1.11",
+        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.11-mac-arm64.zip"
       }
     }
   ]

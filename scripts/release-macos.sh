@@ -135,10 +135,10 @@ if [ "$DO_PUBLISH" = "1" ]; then
     exit 1
   fi
   if gh release view "v$VERSION" >/dev/null 2>&1; then
-    echo "Replacing zip on GitHub release v$VERSION…"
+    echo "Replacing zip on GitHub release v${VERSION}…"
     gh release upload "v$VERSION" "$ZIP" --clobber
   else
-    echo "Publishing GitHub release v$VERSION…"
+    echo "Publishing GitHub release v${VERSION}…"
     gh release create "v$VERSION" "$ZIP" \
       --target "$BUILT_FROM" \
       --title "Apexline $VERSION" \

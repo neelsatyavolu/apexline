@@ -11,6 +11,7 @@ const { pathToFileURL } = require("node:url");
 const vm = require("node:vm");
 const zlib = require("node:zlib");
 const sharedAuth = require("@neelsatyavolu/shared-ai-auth");
+const { createUsageStats } = require("./usage-stats.cjs");
 
 let appPackage = {};
 try {
@@ -83,6 +84,13 @@ if (!fs.existsSync(PITWALL_USER_DATA) && fs.existsSync(LEGACY_PITWALL_USER_DATA)
   } catch {}
 }
 app.setPath("userData", PITWALL_USER_DATA);
+const usageStats = createUsageStats({
+  userDataDir: PITWALL_USER_DATA,
+  version: appVersion(),
+  channel: app.isPackaged ? "release" : "dev",
+  osVersion: process.getSystemVersion?.() || os.release(),
+  arch: process.arch,
+});
 
 const KEYCHAIN_SERVICE = "Apexline";
 const LEGACY_KEYCHAIN_SERVICE = "PitWall";
@@ -1105,6 +1113,8 @@ ipcMain.handle("pitwall:external:open", (_event, targetUrl) => {
   shell.openExternal(url);
   return true;
 });
+ipcMain.handle("pitwall:usageStats:get", () => ({ enabled: usageStats.getEnabled() }));
+ipcMain.handle("pitwall:usageStats:set", (_event, enabled) => ({ enabled: usageStats.setEnabled(enabled === true) }));
 ipcMain.handle("pitwall:updates:check", () => checkPitWallUpdates());
 ipcMain.handle("pitwall:updates:open", (_event, targetUrl) => {
   const url = String(targetUrl || "");
@@ -12320,6 +12330,7 @@ app.whenReady().then(async () => {
   if (await runWeekendRecapDiagnosticAndQuit()) return null;
   if (await runF1TvDiagnosticAndQuit()) return null;
   installApplicationMenu();
+  usageStats.start();
   void getOpenF1AccessToken()
     .catch(() => "")
     .then(() => startLiveDataRefresh({ startup: true }))

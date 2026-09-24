@@ -132,6 +132,7 @@
     { id: "appearance", label: "Appearance", icon: "layers" },
     { id: "notifications", label: "Notifications", icon: "bell" },
     { id: "updates", label: "Updates", icon: "arrowDown" },
+    { id: "privacy", label: "Privacy", icon: "key" },
     { id: "layouts", label: "Layout defaults", icon: "grid" },
   ];
   const DEFAULT_PREFS = {
@@ -274,6 +275,7 @@
     const [updateBusy, setUpdateBusy] = React.useState(false);
     const [f1LiveLatencyDraft, setF1LiveLatencyDraft] = React.useState(() => String(appPrefs.f1LiveLatency));
     const [modelPrefReady, setModelPrefReady] = React.useState(false);
+    const [usageStatsEnabled, setUsageStatsEnabled] = React.useState(true);
 
     React.useEffect(() => {
       let active = true;
@@ -504,6 +506,22 @@
     React.useEffect(() => {
       checkForUpdates();
     }, []);
+
+    React.useEffect(() => {
+      let mounted = true;
+      window.pitwall?.usageStats?.get?.()
+        .then((status) => mounted && setUsageStatsEnabled(status?.enabled !== false))
+        .catch(() => {});
+      return () => { mounted = false; };
+    }, []);
+
+    async function changeUsageStats(enabled) {
+      setUsageStatsEnabled(enabled);
+      try {
+        const status = await window.pitwall?.usageStats?.set?.(enabled);
+        if (status) setUsageStatsEnabled(status.enabled !== false);
+      } catch {}
+    }
 
     async function connectOAuthProvider(provider) {
       const auth = aiAuth();
@@ -959,6 +977,12 @@
                   </div>
                 </div>
               )}
+            </Card>
+          )}
+
+          {sec === "privacy" && (
+            <Card title="Privacy" subtitle="What Apexline sends about itself">
+              <div className="row"><div className="row__txt"><div className="row__t">Share anonymous usage stats</div><div className="row__s">Sends a daily ping with a random install ID, app version and OS version. No personal data.</div></div><Switch checked={usageStatsEnabled} onChange={changeUsageStats} /></div>
             </Card>
           )}
 

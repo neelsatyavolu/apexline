@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<title>Privacy · Apexline</title>
+<meta name="description" content="What the Apexline app and apexline.io send, what they don't, and how to turn off anonymous usage stats.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css">
+<script defer src="https://analytics.n3el.dev/p.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :root { --page-max: 760px; --gutter: clamp(16px, 4vw, 40px); }
+  body {
+    margin: 0;
+    background: var(--bg-app);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: var(--lh-normal);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  :focus-visible { outline: 2px solid var(--blue-400); outline-offset: 3px; border-radius: 6px; }
+  .wrap { width: 100%; max-width: var(--page-max); margin: 0 auto; padding: 0 var(--gutter); }
+  .site-header { border-bottom: 1px solid var(--border-subtle); }
+  .site-header .wrap { height: 60px; display: flex; align-items: center; }
+  .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+  .brand svg { width: 26px; height: 26px; }
+  .brand span { font: 800 19px/1 var(--font-display); letter-spacing: .02em; }
+  .brand span b { color: var(--blue-500); font-weight: inherit; }
+  main { padding: clamp(48px, 8vw, 88px) 0 0; }
+  h1 { margin: 0; font: 800 clamp(40px, 6vw, 64px)/.98 var(--font-display); letter-spacing: -.02em; }
+  .lede { margin: 16px 0 0; color: var(--text-secondary); font-size: 18px; line-height: 1.55; }
+  h2 { margin: 48px 0 12px; font: 700 24px/1.15 var(--font-display); }
+  p, li { color: var(--text-secondary); font-size: 16.5px; line-height: 1.6; }
+  ul { padding-left: 20px; }
+  li + li { margin-top: 6px; }
+  code { font: 500 14.5px/1 var(--font-mono); color: var(--text-primary); }
+  .site-footer { margin-top: clamp(64px, 9vw, 104px); padding: 32px 0 48px; border-top: 1px solid var(--border-subtle); color: var(--text-tertiary); font-size: 14px; }
+  .site-footer nav { display: flex; flex-wrap: wrap; gap: 20px; }
+  .site-footer a { text-decoration: none; }
+  .site-footer a:hover { color: var(--text-primary); }
+</style>
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="Apexline home">
+      <svg viewBox="0 0 124 124" fill="none" aria-hidden="true"><rect x="2" y="2" width="120" height="120" rx="28" fill="#13161d" stroke="#2c3340"/><rect x="34" y="28" width="14" height="68" rx="5" fill="#f4f6fb"/><rect x="56" y="34" width="40" height="13" rx="4" fill="#2d7bff"/><circle cx="104" cy="40.5" r="4.5" fill="#2d7bff"/><rect x="56" y="55.5" width="50" height="13" rx="4" fill="#f4f6fb"/><rect x="56" y="77" width="32" height="13" rx="4" fill="#7c8597"/></svg>
+      <span>APEX<b>LINE</b></span>
+    </a>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>Privacy</h1>
+  <p class="lede">Apexline counts installs and page views anonymously so the developer knows how many people use it. It has no ads, no cookies and no personal tracking.</p>
+
+  <h2>The app</h2>
+  <p>Once a day, Apexline sends an anonymous usage ping to <code>analytics.n3el.dev</code>, a stats service run by the Apexline developer. The ping contains:</p>
+  <ul>
+    <li>a random install ID created on your Mac (not linked to you or your accounts)</li>
+    <li>the Apexline version, macOS version and chip type</li>
+    <li>whether it is a release or development build</li>
+  </ul>
+  <p>The service also notes your country from the connection. Your IP address is not stored.</p>
+  <p>To turn it off, open <strong>Settings → Privacy</strong> and switch off <strong>Share anonymous usage stats</strong>. Apexline then sends nothing.</p>
+
+  <h2>This website</h2>
+  <p>apexline.io uses a small cookieless script from <code>analytics.n3el.dev</code> to count page views and download clicks. It records the page address (without query strings), the referring site, your country and a rough device and browser type. It sets no cookies, stores nothing in your browser and can't link your visits across days.</p>
+
+  <h2>What is never collected</h2>
+  <ul>
+    <li>No names, emails, F1 TV or AI account details, passwords or tokens.</li>
+    <li>No IP addresses are stored, and no cookies are used.</li>
+    <li>Nothing about what you watch, your files or your settings.</li>
+  </ul>
+  <p>Raw stats are deleted after about 13 months.</p>
+
+  <h2>Other services the app talks to</h2>
+  <ul>
+    <li><strong>F1 TV and Formula 1 live timing</strong>, when you sign in and watch. Your F1 TV and AI sign-ins stay on your Mac.</li>
+    <li><strong>OpenF1 and news feeds</strong>, for timing, results and headlines.</li>
+    <li><strong>ChatGPT (Codex) or Grok</strong>, only if you connect one for AI Copilot.</li>
+    <li><strong>apexline.io</strong>, for update checks, the OpenF1 proxy, and friends and watch parties. Friends and watch parties store your display name, friend code and watch-party chat messages.</li>
+  </ul>
+
+  <h2>Questions</h2>
+  <p>Apexline is open source, so you can read exactly what it sends on <a href="https://github.com/neelsatyavolu/apexline">GitHub</a>. Questions or requests: <a href="https://github.com/neelsatyavolu/apexline/issues">open an issue</a>.</p>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <nav aria-label="Footer">
+      <a href="/">Home</a>
+      <a href="https://github.com/neelsatyavolu/apexline">GitHub</a>
+      <a href="https://github.com/neelsatyavolu/apexline/issues">Issues</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

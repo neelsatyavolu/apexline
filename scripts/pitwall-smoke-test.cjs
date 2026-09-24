@@ -8079,7 +8079,87 @@ for (const file of fs.readdirSync(kitDir).filter((name) => name.endsWith(".jsx")
   Babel.transform(code, { presets: ["react"], filename: file });
 }
 
+await runUsageStatsChecks();
+
 console.log("Apexline smoke checks passed");
+}
+
+async function runUsageStatsChecks() {
+  const root = path.resolve(__dirname, "..");
+  const { createUsageStats, HEARTBEAT_URL, CHECK_INTERVAL_MS, REQUEST_TIMEOUT_MS } = require("../electron/usage-stats.cjs");
+  const mainSource = fs.readFileSync(path.join(root, "electron/main.cjs"), "utf8");
+  const preloadSource = fs.readFileSync(path.join(root, "electron/preload.cjs"), "utf8");
+  const settings = fs.readFileSync(path.join(root, "ui_kits/pitwall/Settings.jsx"), "utf8");
+  assert.equal(HEARTBEAT_URL, "https://analytics.n3el.dev/v1/heartbeat");
+  assert.equal(CHECK_INTERVAL_MS, 60 * 60 * 1000, "Usage heartbeat should re-check hourly for long-running sessions");
+  assert.equal(REQUEST_TIMEOUT_MS, 10000, "Usage heartbeat should time out after 10 seconds");
+  assert.match(mainSource, /channel: app\.isPackaged \? "release" : "dev"/, "Unpackaged builds should report the dev channel");
+  assert.match(mainSource, /installApplicationMenu\(\);\s*usageStats\.start\(\);/, "Usage heartbeat should start after diagnostics, without blocking startup");
+  assert.match(mainSource, /pitwall:usageStats:set/, "Main process should own the usage stats opt-out");
+  assert.match(preloadSource, /usageStats: \{[\s\S]*pitwall:usageStats:get[\s\S]*pitwall:usageStats:set/, "Preload should expose a narrow usage stats bridge");
+  assert.match(settings, /Share anonymous usage stats/, "Settings should expose the usage stats opt-out");
+  assert.match(settings, /Switch checked=\{usageStatsEnabled\} onChange=\{changeUsageStats\}/, "Usage stats switch should persist through the Electron bridge");
+
+  const userDataDir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "apexline-usage-stats-"));
+  const calls = [];
+  let day = "2026-09-23T10:00:00Z";
+  let respond = () => ({ ok: true, status: 204 });
+  const stats = createUsageStats({
+    userDataDir,
+    version: "1.2.3",
+    channel: "release",
+    osVersion: "26.0.1",
+    arch: "x64",
+    now: () => new Date(day),
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init, body: JSON.parse(init.body) });
+      return respond();
+    },
+  });
+  try {
+    assert.equal(stats.getEnabled(), true, "Usage stats should default on");
+    assert.equal(await stats.sendIfDue(), "sent");
+    assert.equal(calls.length, 1);
+    const { url, init, body } = calls[0];
+    assert.equal(url, HEARTBEAT_URL);
+    assert.equal(init.method, "POST");
+    assert.ok(init.signal, "Heartbeat should carry a timeout signal");
+    assert.deepEqual(Object.keys(body).sort(), ["arch", "channel", "install_id", "os_version", "platform", "product", "version"], "Heartbeat should send only the contract fields");
+    assert.equal(body.product, "apexline");
+    assert.equal(body.platform, "macos");
+    assert.equal(body.version, "1.2.3");
+    assert.equal(body.os_version, "26.0");
+    assert.equal(body.arch, "x86_64");
+    assert.equal(body.channel, "release");
+    assert.match(body.install_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/, "Install ID should be a random UUID v4");
+    assert.equal(await stats.sendIfDue(), "already-sent", "Heartbeat should send at most once per UTC day");
+    assert.equal(calls.length, 1);
+
+    day = "2026-09-24T00:30:00Z";
+    respond = () => ({ ok: false, status: 500 });
+    assert.equal(await stats.sendIfDue(), "failed");
+    respond = () => { throw new Error("offline"); };
+    assert.equal(await stats.sendIfDue(), "failed", "Network failures should stay silent");
+    respond = () => ({ ok: true, status: 204 });
+    assert.equal(await stats.sendIfDue(), "sent", "A failed day should be retried on the next check");
+    assert.equal(calls.at(-1).body.install_id, body.install_id, "Install ID should persist across sends");
+
+    day = "2026-09-25T09:00:00Z";
+    assert.equal(stats.setEnabled(false), false);
+    assert.equal(stats.getEnabled(), false);
+    const before = calls.length;
+    assert.equal(await stats.sendIfDue(), "disabled", "Opted-out installs should send nothing");
+    assert.equal(calls.length, before);
+
+    const freshDir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "apexline-usage-optout-"));
+    const optedOut = createUsageStats({ userDataDir: freshDir, version: "1.2.3", channel: "dev", osVersion: "26.0", arch: "arm64", fetchImpl: async () => { throw new Error("should not send"); } });
+    optedOut.setEnabled(false);
+    assert.equal(await optedOut.sendIfDue(), "disabled");
+    assert.equal(JSON.parse(fs.readFileSync(optedOut.statePath, "utf8")).installId, "", "Opting out before the first send should not create an install ID");
+    fs.rmSync(freshDir, { recursive: true, force: true });
+  } finally {
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+  }
 }
 
 runSmokeChecks().catch((error) => {

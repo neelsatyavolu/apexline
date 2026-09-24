@@ -37,6 +37,18 @@ change where data comes from:
 AI Copilot signs in with your own ChatGPT (Codex) or Grok account from
 Settings. F1 TV and AI credentials are stored locally on your Mac.
 
+## Privacy
+
+Once a day the app sends an anonymous ping to `analytics.n3el.dev`, a stats
+service run by the Apexline developer. It contains a random install ID, the app
+version, macOS version, chip type and build channel. It never includes names,
+emails, account details, files or what you watch, and no IP addresses are
+stored. Turn it off in Settings → Privacy → Share anonymous usage stats. The
+code is in `electron/usage-stats.cjs`.
+
+apexline.io counts page views and download clicks with a cookieless script from
+the same service. Details: <https://apexline.io/privacy.html>
+
 ## Project layout
 
 | Path | What it is |

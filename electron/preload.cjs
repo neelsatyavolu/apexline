@@ -128,6 +128,10 @@ contextBridge.exposeInMainWorld("pitwall", {
   external: {
     openExternal: (url) => ipcRenderer.invoke("pitwall:external:open", url),
   },
+  usageStats: {
+    get: () => ipcRenderer.invoke("pitwall:usageStats:get"),
+    set: (enabled) => ipcRenderer.invoke("pitwall:usageStats:set", enabled),
+  },
   updates: {
     check: () => ipcRenderer.invoke("pitwall:updates:check"),
     open: (url) => ipcRenderer.invoke("pitwall:updates:open", url),

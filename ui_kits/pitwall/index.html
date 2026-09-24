@@ -8,8 +8,17 @@
 <title>Apexline</title>
 <link rel="stylesheet" href="../../styles.css">
 <style>
-  html, body { margin: 0; height: 100%; background: var(--bg-app); }
+  html, body { margin: 0; height: 100%; background: #07090d; }
   #root { height: 100vh; }
+  .startup-load { min-height: 100vh; display: grid; place-items: center; padding: 32px; background: #07090d; color: #e8edf5; }
+  .startup-load__panel { width: min(400px, 100%); text-align: center; }
+  .startup-load__mark { width: 56px; height: 56px; margin: 0 auto 18px; border-radius: 16px; display: block; }
+  .startup-load__kicker { color: #e80020; font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
+  .startup-load__title { margin: 10px 0 8px; font-size: 28px; line-height: 1.05; }
+  .startup-load__copy { margin: 0 auto; max-width: 34ch; color: #9aa4b5; font-size: 14px; line-height: 1.45; }
+  .startup-load__bar { position: relative; height: 3px; margin: 22px auto 0; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.08); }
+  .startup-load__bar span { position: absolute; inset: 0 auto 0 0; width: 38%; border-radius: inherit; background: #e80020; animation: pwStartupLoad 1.05s ease-in-out infinite; }
+  @keyframes pwStartupLoad { 0% { transform: translateX(-105%); } 55%,100% { transform: translateX(260%); } }
   ::-webkit-scrollbar { width: 11px; height: 11px; }
   ::-webkit-scrollbar-thumb { background: var(--ink-600); border-radius: 99px; border: 3px solid transparent; background-clip: content-box; }
   ::-webkit-scrollbar-thumb:hover { background: var(--ink-500); background-clip: content-box; }
@@ -17,7 +26,17 @@
 </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root">
+  <div class="startup-load" aria-busy="true">
+    <section class="startup-load__panel">
+      <img class="startup-load__mark" src="../../assets/logo-mark.svg" alt="" />
+      <div class="startup-load__kicker">Apexline</div>
+      <h1 class="startup-load__title">Loading live F1 data</h1>
+      <p class="startup-load__copy">Race, standings, and news stay hidden until this snapshot is fresh.</p>
+      <div class="startup-load__bar"><span></span></div>
+    </section>
+  </div>
+</div>
 <script src="../../node_modules/react/umd/react.development.js"></script>
 <script src="../../node_modules/react-dom/umd/react-dom.development.js"></script>
 <script src="../../node_modules/@babel/standalone/babel.min.js"></script>

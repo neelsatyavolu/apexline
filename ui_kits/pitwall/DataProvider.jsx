@@ -51,7 +51,8 @@
     "Loading F1 news",
     "Checking Apexline connections",
   ];
-  const STARTUP_NEWS_RETRY_MS = 1200;
+  const STARTUP_NEWS_RETRY_MS = 800;
+  const STARTUP_WAIT_MAX_ATTEMPTS = 3;
   const SEEDED_CONSTRUCTOR_ROWS = (window.PW_DATA?.constructors || []).map((row) => ({ ...row }));
 
   function ensureLoadingStyles() {
@@ -59,39 +60,48 @@
     const el = document.createElement("style");
     el.id = "pw-startup-loading-styles";
     el.textContent = `
-    .startup-load { min-height: 100vh; display: grid; place-items: center; padding: 44px; background:
-      radial-gradient(circle at 18% 18%, rgba(232,0,32,.16), transparent 30%),
-      linear-gradient(135deg, #080b11 0%, #111821 52%, #090c12 100%); color: var(--text-primary); }
-    .startup-load__panel { width: min(560px, 100%); border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: rgba(13,18,27,.86); box-shadow: 0 24px 80px rgba(0,0,0,.45); padding: 30px; }
+    .startup-load { min-height: 100vh; display: grid; place-items: center; padding: 32px; background: #07090d; color: var(--text-primary); }
+    .startup-load__panel { width: min(400px, 100%); text-align: center; }
+    .startup-load__mark { width: 56px; height: 56px; margin: 0 auto 18px; border-radius: 16px; display: block; box-shadow: 0 12px 32px rgba(0,0,0,.35); }
     .startup-load__kicker { color: var(--accent); font-size: var(--text-2xs); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; }
-    .startup-load__title { margin: 10px 0 8px; font-family: var(--font-display); font-size: var(--text-4xl); line-height: 1; color: var(--text-strong); }
-    .startup-load__copy { margin: 0; color: var(--text-secondary); font-size: var(--text-md); line-height: 1.45; }
-    .startup-load__bar { position: relative; height: 8px; margin: 24px 0 20px; overflow: hidden; border-radius: var(--radius-pill); background: var(--bg-sunken); }
-    .startup-load__bar span { position: absolute; inset: 0 auto 0 0; width: 42%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), #ffffff); animation: pwStartupLoad 1.15s ease-in-out infinite; }
-    .startup-load__steps { display: grid; gap: 10px; margin-top: 6px; }
-    .startup-load__step { display: flex; align-items: center; gap: 10px; color: var(--text-secondary); font-size: var(--text-sm); }
-    .startup-load__dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 18px rgba(232,0,32,.55); animation: pwStartupPulse 1s ease-in-out infinite; }
-    .startup-load__error { margin-top: 18px; display: flex; align-items: center; justify-content: space-between; gap: 14px; color: var(--text-secondary); font-size: var(--text-sm); }
+    .startup-load__title { margin: 10px 0 8px; font-family: var(--font-display); font-size: var(--text-3xl); line-height: 1.05; color: var(--text-strong); }
+    .startup-load__copy { margin: 0 auto; max-width: 34ch; color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.45; }
+    .startup-load__bar { position: relative; height: 3px; margin: 22px auto 20px; overflow: hidden; border-radius: var(--radius-pill); background: rgba(255,255,255,.08); }
+    .startup-load__bar span { position: absolute; inset: 0 auto 0 0; width: 38%; border-radius: inherit; background: var(--accent); animation: pwStartupLoad 1.05s ease-in-out infinite; }
+    .startup-load__steps { display: grid; gap: 8px; margin: 0 auto; width: min(280px, 100%); text-align: left; }
+    .startup-load__step { display: flex; align-items: center; gap: 10px; color: rgba(255,255,255,.34); font-size: var(--text-sm); transition: color .2s ease; }
+    .startup-load__step.is-active { color: var(--text-strong); }
+    .startup-load__step.is-done { color: rgba(255,255,255,.48); }
+    .startup-load__dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+    .startup-load__step.is-active .startup-load__dot { background: var(--accent); box-shadow: 0 0 12px rgba(232,0,32,.55); }
+    .startup-load__error { margin-top: 18px; display: flex; align-items: center; justify-content: space-between; gap: 14px; text-align: left; color: var(--text-secondary); font-size: var(--text-sm); }
     .startup-load__retry { border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text-primary); padding: 8px 12px; font: inherit; cursor: pointer; }
     .startup-load__retry:hover { border-color: var(--accent-border); color: var(--text-strong); }
-    @keyframes pwStartupLoad { 0% { transform: translateX(-105%); } 55%,100% { transform: translateX(245%); } }
-    @keyframes pwStartupPulse { 0%,100% { opacity: .45; transform: scale(.88); } 50% { opacity: 1; transform: scale(1); } }
+    @keyframes pwStartupLoad { 0% { transform: translateX(-105%); } 55%,100% { transform: translateX(260%); } }
     `;
     document.head.appendChild(el);
   }
 
   function PitWallLoadingScreen({ error, onRetry }) {
     ensureLoadingStyles();
+    const [stepIndex, setStepIndex] = React.useState(0);
+    React.useEffect(() => {
+      const timer = setInterval(() => setStepIndex((index) => (index + 1) % LOADING_STEPS.length), 850);
+      return () => clearInterval(timer);
+    }, []);
     return (
       <div className="startup-load">
         <section className="startup-load__panel" aria-live="polite" aria-busy="true">
-          <div className="startup-load__kicker">Apexline is warming up</div>
-          <h1 className="startup-load__title">Fetching the live paddock picture.</h1>
-          <p className="startup-load__copy">Hang tight while Apexline pulls fresh F1 data before opening the dashboard.</p>
+          <img className="startup-load__mark" src="../../assets/logo-mark.svg" alt="" />
+          <div className="startup-load__kicker">Apexline</div>
+          <h1 className="startup-load__title">Loading live F1 data</h1>
+          <p className="startup-load__copy">Race, standings, and news stay hidden until this snapshot is fresh.</p>
           <div className="startup-load__bar"><span /></div>
           <div className="startup-load__steps">
-            {LOADING_STEPS.map((step) => (
-              <div className="startup-load__step" key={step}><span className="startup-load__dot" />{step}</div>
+            {LOADING_STEPS.map((step, index) => (
+              <div className={"startup-load__step" + (index < stepIndex ? " is-done" : index === stepIndex ? " is-active" : "")} key={step}>
+                <span className="startup-load__dot" />{step}
+              </div>
             ))}
           </div>
           {error ? (
@@ -408,7 +418,9 @@
   }
 
   function shouldWaitForStartupNews(snapshot) {
-    return false;
+    if (!snapshot || snapshot.source === "error") return false;
+    if (snapshot.startupReady) return false;
+    return true;
   }
 
   function scheduleBackgroundEnrichmentPoll(snapshot, attempt, setTimer, refresh) {
@@ -449,9 +461,15 @@
         const snapshot = await window.pitwall.data.snapshot(snapshotOptions);
         setData((current) => mergeData(current, snapshot));
         if (options.initial && shouldWaitForStartupNews(snapshot)) {
-          clearTimeout(enrichmentTimerRef.current);
-          enrichmentTimerRef.current = setTimeout(() => refreshData({ initial: true }), STARTUP_NEWS_RETRY_MS);
-          return snapshot;
+          const attempt = Number(options.startupAttempt) || 0;
+          if (attempt < STARTUP_WAIT_MAX_ATTEMPTS) {
+            clearTimeout(enrichmentTimerRef.current);
+            enrichmentTimerRef.current = setTimeout(
+              () => refreshData({ forceRefresh: true, initial: true, startupAttempt: attempt + 1 }),
+              STARTUP_NEWS_RETRY_MS,
+            );
+            return snapshot;
+          }
         }
         if (options.initial) {
           setInitialDataReady(true);

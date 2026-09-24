@@ -5748,7 +5748,8 @@ assert.match(themeSource, /--accent-border/, "Theme tokens should update derived
 assert.match(html, /sync\.js/, "Renderer should load shared stream sync helpers");
 assert.match(html, /DataProvider/, "Renderer should wrap screens in the PitWall data provider");
 assert.doesNotMatch(html, /Good evening, Alex|Canadian GP · race weekend/, "Renderer chrome should not hardcode fake user or race copy");
-assert.match(dataProviderSource, /if \(!bypassInitialLiveDataGate\) refreshData\(\{ initial: true \}\)/, "Normal app startup should load the cached live snapshot first, then refresh newer races in the background");
+assert.match(dataProviderSource, /if \(!bypassInitialLiveDataGate\) refreshData\(\{ initial: true \}\)/, "Normal app startup should request a live first-pass snapshot and keep the loading screen until it is ready");
+assert.match(html, /startup-load[\s\S]*Loading live F1 data/, "Renderer HTML should show a clean loading splash before React mounts");
 assert.doesNotMatch(extractNamedFunction(mainProcess, "getPitWallSnapshot"), /diskData[\s\S]*await ensureRecentDriverForm/, "Cached live snapshots should return without waiting for driver-form network enrichment");
 assert.match(fs.readFileSync(path.join(root, "electron/main.cjs"), "utf8"), /dist\/pitwall\/index\.html/, "Electron should prefer the precompiled renderer when available");
 const smokeTestSourceForRendererBudget = fs.readFileSync(__filename, "utf8");
@@ -5903,10 +5904,11 @@ const dataProviderStartupGateSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(source["DataProvider.jsx"], "shouldWaitForStartupNews")}
   return { shouldWaitForStartupNews };
 })()`);
-assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: true }), false, "Startup gate should not wait on article enrichment when the snapshot is already fresh");
-assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: false }), false, "Startup gate should open once news enrichment has settled");
-assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: true, sourceLabel: "Live data (refreshing)" }), false, "Startup gate should paint cached data immediately while enrichment refreshes");
-assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: true, sourceLabel: "Live data", news: [{ title: "Fresh F1 headline" }] }), false, "Startup gate should open once the fresh base news feed is loaded without waiting for article enrichment");
+assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: true, startupReady: true }), false, "Startup gate should not wait on article enrichment when the live first-pass snapshot is ready");
+assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: false }), true, "Startup gate should wait until a live first-pass marks the snapshot ready");
+assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: true, sourceLabel: "Live data (refreshing)" }), true, "Startup gate should keep the loading screen up while disk cache is still refreshing");
+assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ enrichmentPending: true, startupReady: true, sourceLabel: "Live data", news: [{ title: "Fresh F1 headline" }] }), false, "Startup gate should open once the fresh base news feed is loaded without waiting for article enrichment");
+assert.equal(dataProviderStartupGateSandbox.shouldWaitForStartupNews({ source: "error" }), false, "Startup gate should surface a retry instead of spinning after a live-data error");
 const dataProviderEnrichmentPollingSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(source["DataProvider.jsx"], "scheduleBackgroundEnrichmentPoll")}
   return { scheduleBackgroundEnrichmentPoll };
@@ -5977,7 +5979,8 @@ assert.deepEqual(
   "Concurrent connection checks should commit both resolved statuses",
 );
 assert.match(source["DataProvider.jsx"], /startup:\s*Boolean\(options\.initial\)/, "Initial snapshot requests should tell Electron to skip non-startup work on the critical path");
-assert.match(source["DataProvider.jsx"], /options\.initial[\s\S]*shouldWaitForStartupNews\(snapshot\)[\s\S]*return snapshot[\s\S]*setInitialDataReady\(true\)/, "DataProvider should open startup after its first cached or core snapshot while enrichment continues");
+assert.match(source["DataProvider.jsx"], /options\.initial[\s\S]*shouldWaitForStartupNews\(snapshot\)[\s\S]*return snapshot[\s\S]*setInitialDataReady\(true\)/, "DataProvider should keep the loading screen until a live first-pass snapshot is ready");
+assert.match(source["DataProvider.jsx"], /STARTUP_WAIT_MAX_ATTEMPTS[\s\S]*startupAttempt/, "Startup gate should retry a bounded number of times instead of spinning forever");
 assert.doesNotMatch(source["DataProvider.jsx"], /STARTUP_NEWS_FORCE_AFTER_ATTEMPTS|refreshData\(\{ initial: true, forceRefresh \}\)/, "Background enrichment polling should not force-refresh and restart the live-data request");
 const dataProviderRouteSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(source["DataProvider.jsx"], "shouldBypassInitialLiveDataGate")}
@@ -8015,7 +8018,11 @@ assert.match(mainProcess, /refreshLiveDataSnapshot/, "Dashboard snapshot should 
 assert.match(mainProcess, /refreshLiveDataEnrichment[\s\S]*priority:\s*"background"/, "Live-data enrichment should yield OpenF1 slots to foreground user actions");
 assert.match(mainProcess, /live-data\.refresh-failed[\s\S]*enrichmentPending:\s*false/, "Failed background live-data refresh should settle cached startup news pending so the loading screen can open");
 assert.match(mainProcess, /const deferCopilot = Boolean\(options\.startup\)[\s\S]*getDailyCopilotInsights\(data,[\s\S]*deferCopilot[\s\S]*return data/, "Startup snapshots should return the fresh news feed before daily Copilot generation finishes");
-assert.match(mainProcess, /fetchLiveDataEntries\(LIVE_CORE_DATA_URLS\)/, "Dashboard snapshot should fetch only core data on its critical path");
+assert.match(mainProcess, /includeNews \? \{ \.\.\.LIVE_CORE_DATA_URLS, \.\.\.LIVE_NEWS_URLS \} : LIVE_CORE_DATA_URLS/, "Startup and forced refreshes should fetch news with the core live-data request set");
+assert.match(mainProcess, /fetchLiveDataEntries\(urls/, "Dashboard snapshot should fetch only the selected first-pass URL set on its critical path");
+assert.match(mainProcess, /startLiveDataRefresh\(\{\s*startup:\s*true\s*\}\)/, "Electron should warm the live first-pass snapshot while the window is opening");
+assert.match(mainProcess, /data\.startupReady = true/, "Live first-pass snapshots should mark themselves ready so the loading screen can open");
+assert.match(mainProcess, /startupReady:\s*false/, "Disk-cache startup paints should not be treated as a fresh first-pass snapshot");
 assert.doesNotMatch(mainProcess, /getPitWallSnapshot[\s\S]{0,900}Object\.entries\(LIVE_DATA_URLS\)/, "Dashboard snapshot should not wait for every OpenF1 timing endpoint before rendering");
 assert.match(mainProcess, /buildStrategyContext/, "Electron main should summarize tyre, pit, timing, weather, and news context for AI");
 assert.match(mainProcess, /visualization/, "AI response schema should allow typed visualization payloads");

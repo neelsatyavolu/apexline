@@ -84,7 +84,8 @@ function replaceLandingPageVersion(html, nextVersion) {
     .replace(
       /(<span class="rk">Version<\/span><span class="rv">)[^<]+(<\/span>)/g,
       `$1${nextVersion}$2`,
-    );
+    )
+    .replace(/(<dt>Version<\/dt><dd>)[^<]+(<\/dd>)/g, `$1${nextVersion}$2`);
 }
 
 const maxUpdateZipBytes = resolveByteCeiling(process.env, "APEXLINE_MAX_UPDATE_ZIP_BYTES", 150 * 1024 * 1024);

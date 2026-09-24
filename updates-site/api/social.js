@@ -1,7 +1,8 @@
-const { createHmac, randomBytes, randomUUID } = require("node:crypto");
+const { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } = require("node:crypto");
 
 const memory = globalThis.__APEXLINE_SOCIAL_MEMORY__ || {
   users: new Map(),
+  tokenHashes: new Map(),
   codeToUser: new Map(),
   friendships: new Map(),
   rooms: new Map(),
@@ -47,40 +48,96 @@ async function sql() {
   }
 }
 
-async function ensureSchema(db) {
-  if (!db) return;
-  await db`CREATE TABLE IF NOT EXISTS apexline_users (id TEXT PRIMARY KEY, friend_code TEXT UNIQUE NOT NULL, display_name TEXT NOT NULL, created_at BIGINT NOT NULL)`;
-  await db`CREATE TABLE IF NOT EXISTS apexline_friendships (a TEXT NOT NULL, b TEXT NOT NULL, status TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY (a, b))`;
-  await db`CREATE TABLE IF NOT EXISTS apexline_rooms (id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL, host_id TEXT NOT NULL, label TEXT NOT NULL, content_fingerprint TEXT NOT NULL, created_at BIGINT NOT NULL)`;
-  await db`CREATE TABLE IF NOT EXISTS apexline_chat_messages (room_id TEXT NOT NULL, id TEXT NOT NULL, user_id TEXT NOT NULL, name TEXT NOT NULL, text TEXT NOT NULL, sent_at BIGINT NOT NULL, PRIMARY KEY (room_id, id))`;
+let schemaReady = null;
+
+function ensureSchema(db) {
+  if (!db) return Promise.resolve();
+  schemaReady = schemaReady || (async () => {
+    await db`CREATE TABLE IF NOT EXISTS apexline_users (id TEXT PRIMARY KEY, friend_code TEXT UNIQUE NOT NULL, display_name TEXT NOT NULL, created_at BIGINT NOT NULL)`;
+    await db`ALTER TABLE apexline_users ADD COLUMN IF NOT EXISTS token_hash TEXT`;
+    await db`CREATE TABLE IF NOT EXISTS apexline_friendships (a TEXT NOT NULL, b TEXT NOT NULL, status TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY (a, b))`;
+    await db`CREATE TABLE IF NOT EXISTS apexline_rooms (id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL, host_id TEXT NOT NULL, label TEXT NOT NULL, content_fingerprint TEXT NOT NULL, created_at BIGINT NOT NULL)`;
+    await db`CREATE TABLE IF NOT EXISTS apexline_chat_messages (room_id TEXT NOT NULL, id TEXT NOT NULL, user_id TEXT NOT NULL, name TEXT NOT NULL, text TEXT NOT NULL, sent_at BIGINT NOT NULL, PRIMARY KEY (room_id, id))`;
+  })().catch((error) => {
+    schemaReady = null;
+    throw error;
+  });
+  return schemaReady;
+}
+
+class AuthError extends Error {}
+
+function hashToken(token) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function tokenMatches(token, storedHash) {
+  if (!token || !storedHash) return false;
+  const actual = Buffer.from(hashToken(token), "hex");
+  const expected = Buffer.from(storedHash, "hex");
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+async function storedUser(db, userId) {
+  if (!userId) return null;
+  if (db) {
+    const result = await db`SELECT id, friend_code, token_hash FROM apexline_users WHERE id = ${userId}`;
+    const row = result.rows[0];
+    return row ? { friendCode: row.friend_code, tokenHash: row.token_hash || "" } : null;
+  }
+  const user = memory.users.get(userId);
+  return user ? { friendCode: user.friendCode, tokenHash: memory.tokenHashes.get(userId) || "" } : null;
+}
+
+// Every action except bootstrap must prove it owns userId with the secret
+// token issued at bootstrap. User ids are visible to other users (chat,
+// presence), so they are never enough on their own.
+async function authenticate(body) {
+  const userId = clean(body.userId, 80);
+  const db = await sql();
+  await ensureSchema(db);
+  const user = await storedUser(db, userId);
+  if (!user || !tokenMatches(clean(body.userToken, 200), user.tokenHash)) throw new AuthError("Unauthorized");
+  return userId;
 }
 
 async function bootstrap(body) {
   const db = await sql();
   await ensureSchema(db);
   const displayName = clean(body.profile?.name || body.displayName || "Apexline fan", 80) || "Apexline fan";
+  const presentedToken = clean(body.userToken, 200);
   let userId = clean(body.userId || body.localUserId, 80);
-  let code = "";
-  if (db && userId) {
-    const existing = await db`SELECT id, friend_code, display_name FROM apexline_users WHERE id = ${userId}`;
-    if (existing.rows[0]) code = existing.rows[0].friend_code;
-  }
-  if (!userId || (!db && !memory.users.has(userId))) userId = randomUUID();
-  code = code || memory.users.get(userId)?.friendCode || friendCode();
+  let existing = await storedUser(db, userId);
+  // An account that already has a token can only be resumed with that token.
+  // Legacy accounts without one are claimed by the first client to bootstrap.
+  if (existing?.tokenHash && !tokenMatches(presentedToken, existing.tokenHash)) existing = null;
+  if (!existing) userId = randomUUID();
+  const userToken = existing?.tokenHash ? presentedToken : randomBytes(32).toString("base64url");
+  const tokenHash = hashToken(userToken);
+  let code = existing?.friendCode || friendCode();
   if (db) {
     for (let i = 0; i < 4; i += 1) {
       try {
-        await db`INSERT INTO apexline_users (id, friend_code, display_name, created_at) VALUES (${userId}, ${code}, ${displayName}, ${Date.now()}) ON CONFLICT (id) DO UPDATE SET display_name = ${displayName}`;
+        await db`INSERT INTO apexline_users (id, friend_code, display_name, created_at, token_hash) VALUES (${userId}, ${code}, ${displayName}, ${Date.now()}, ${tokenHash}) ON CONFLICT (id) DO UPDATE SET display_name = ${displayName}, token_hash = ${tokenHash}`;
         break;
       } catch {
         code = friendCode();
       }
     }
   }
-  const user = { userId, friendCode: code, displayName };
-  memory.users.set(userId, user);
+  memory.users.set(userId, { userId, friendCode: code, displayName });
+  memory.tokenHashes.set(userId, tokenHash);
   memory.codeToUser.set(code, userId);
-  return user;
+  return { userId, userToken, friendCode: code, displayName };
+}
+
+async function roomExists(db, roomId) {
+  if (!roomId) return false;
+  if (db) {
+    const result = await db`SELECT 1 FROM apexline_rooms WHERE id = ${roomId}`;
+    return result.rows.length > 0;
+  }
+  return memory.rooms.has(roomId);
 }
 
 function friendshipKey(a, b) {
@@ -88,10 +145,9 @@ function friendshipKey(a, b) {
 }
 
 async function friends(body) {
-  const userId = clean(body.userId, 80);
+  const userId = await authenticate(body);
   const db = await sql();
-  await ensureSchema(db);
-  if (db && userId) {
+  if (db) {
     const result = await db`
       SELECT f.a, f.b, f.status, f.created_at, u.id AS friend_id, u.friend_code, u.display_name
       FROM apexline_friendships f
@@ -123,10 +179,9 @@ async function friends(body) {
 }
 
 async function addFriend(body) {
-  const userId = clean(body.userId, 80);
+  const userId = await authenticate(body);
   const code = clean(body.friendCode, 16).toUpperCase();
   const db = await sql();
-  await ensureSchema(db);
   let targetId = "";
   if (db) {
     const target = await db`SELECT id, friend_code, display_name FROM apexline_users WHERE friend_code = ${code}`;
@@ -152,13 +207,12 @@ async function roomCreate(body) {
   const room = {
     id: randomUUID(),
     code: friendCode(),
-    hostId: clean(body.userId, 80),
+    hostId: await authenticate(body),
     label: clean(body.label || "Watch party", 80),
     contentFingerprint: clean(body.contentFingerprint || "", 220),
     createdAt: Date.now(),
   };
   const db = await sql();
-  await ensureSchema(db);
   if (db) {
     // Retry on the rare room-code collision (code is UNIQUE).
     for (let i = 0; i < 4; i += 1) {
@@ -187,9 +241,9 @@ function roomRow(row) {
 }
 
 async function roomJoin(body) {
+  await authenticate(body);
   const code = clean(body.code, 16).toUpperCase();
   const db = await sql();
-  await ensureSchema(db);
   if (db) {
     const result = await db`SELECT id, code, host_id, label, content_fingerprint, created_at FROM apexline_rooms WHERE code = ${code}`;
     if (result.rows[0]) return roomRow(result.rows[0]);
@@ -200,10 +254,11 @@ async function roomJoin(body) {
 }
 
 async function chatHistory(body) {
+  await authenticate(body);
   const roomId = clean(body.roomId, 80);
   const db = await sql();
-  await ensureSchema(db);
-  if (db && roomId) {
+  if (!(await roomExists(db, roomId))) return { messages: [] };
+  if (db) {
     const result = await db`SELECT id, user_id, name, text, sent_at FROM apexline_chat_messages WHERE room_id = ${roomId} ORDER BY sent_at DESC LIMIT 80`;
     const messages = result.rows.map((row) => ({
       id: row.id,
@@ -221,14 +276,14 @@ async function saveChat(body) {
   const roomId = clean(body.roomId, 80);
   const message = {
     id: clean(body.id || randomUUID(), 120),
-    userId: clean(body.userId, 80),
+    userId: await authenticate(body),
     name: clean(body.name || "Apexline fan", 80),
     text: clean(body.text, 500),
     sentAt: Number(body.sentAt) || Date.now(),
   };
-  if (!roomId || !message.text) return { ok: false };
+  if (!message.text) return { ok: false };
   const db = await sql();
-  await ensureSchema(db);
+  if (!(await roomExists(db, roomId))) return { ok: false, message: "Room not found." };
   if (db) {
     await db`INSERT INTO apexline_chat_messages (room_id, id, user_id, name, text, sent_at) VALUES (${roomId}, ${message.id}, ${message.userId}, ${message.name}, ${message.text}, ${message.sentAt}) ON CONFLICT (room_id, id) DO NOTHING`;
   }
@@ -238,12 +293,13 @@ async function saveChat(body) {
   return { ok: true, message };
 }
 
-function ablyToken(body) {
+async function ablyToken(body) {
+  const clientId = await authenticate(body);
   const key = clean(process.env.ABLY_API_KEY, 400);
   if (!key || !key.includes(":")) return { ok: false, message: "ABLY_API_KEY is not configured." };
   const [keyName, secret] = key.split(":");
   const roomId = clean(body.roomId, 120);
-  const clientId = clean(body.userId || "apexline", 120);
+  if (!(await roomExists(await sql(), roomId))) return { ok: false, message: "Room not found." };
   const ttl = 1000 * 60 * 60 * 4;
   const capability = JSON.stringify({ [`watch:${roomId}`]: ["publish", "subscribe", "presence"] });
   const timestamp = Date.now();
@@ -271,6 +327,8 @@ module.exports = async function handler(req, res) {
     }[action] || (async () => ({ error: "Unknown action" })))(body);
     return json(res, data?.error ? 400 : 200, data);
   } catch (error) {
-    return json(res, 500, { error: "Social API unavailable", detail: clean(error?.message, 160) });
+    if (error instanceof AuthError) return json(res, 401, { error: "Unauthorized" });
+    console.error("[social] action failed:", action, error?.message);
+    return json(res, 500, { error: "Social API unavailable" });
   }
 };

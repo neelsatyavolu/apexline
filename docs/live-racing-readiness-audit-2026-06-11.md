@@ -8,7 +8,7 @@ It is close for authenticated, meeting-key-backed F1 TV session loading: this wo
 
 ## Scope And Assumptions
 
-- Audited the current dirty workspace at `/Users/neel/f1hub`.
+- Audited the current dirty workspace in the repository root.
 - Follow-up fix changed `scripts/pitwall-smoke-test.cjs` only.
 - Current date: 2026-06-11.
 - The 2026 F1 TV library diagnostic reported no currently live session; Barcelona was the next upcoming weekend.

@@ -2,6 +2,7 @@
   "name": "apexline",
   "version": "1.1.10",
   "private": true,
+  "license": "MIT",
   "description": "Apexline macOS F1 companion app",
   "main": "electron/main.cjs",
   "scripts": {
@@ -16,7 +17,7 @@
     "release:update-feed": "node scripts/prepare-vercel-update.cjs",
     "start": "node scripts/build-renderer.cjs && electron .",
     "dev": "electron .",
-    "test": "node scripts/pitwall-smoke-test.cjs && node scripts/social-api-smoke-test.cjs",
+    "test": "node scripts/pitwall-smoke-test.cjs && node scripts/social-api-smoke-test.cjs && node scripts/openf1-proxy-smoke-test.cjs",
     "smoke": "node scripts/pitwall-smoke-test.cjs",
     "probe:openf1:monaco": "node scripts/pitwall-openf1-replay-probe.cjs --meeting=1286 --session=Qualifying --elapsed=861",
     "probe:f1timing:monaco": "node scripts/pitwall-f1timing-replay-probe.cjs --elapsed=3600",

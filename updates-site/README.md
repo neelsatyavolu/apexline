@@ -1,7 +1,7 @@
 # Apexline Update Feed
 
 This folder is the public Vercel project for Apexline update metadata and zipped
-macOS builds. It can be deployed without publishing the private app source.
+macOS builds. It also hosts the website and the serverless APIs in `api/` (OpenF1 proxy and watch-party social backend).
 
 Release flow:
 

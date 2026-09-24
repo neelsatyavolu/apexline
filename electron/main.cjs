@@ -225,7 +225,7 @@ const RECENT_DRIVER_RESULTS_CACHE_MS = 1000 * 60 * 30;
 const RACE_WINNER_CACHE_MS = 1000 * 60 * 30;
 const OPENF1_ANALYTICS_RETRY_MS = 750;
 const OPENF1_TOKEN_URL = "https://api.openf1.org/token";
-const OPENF1_TOKEN_PROXY_URL = `${SOCIAL_API_BASE_URL}/api/openf1-token`;
+const OPENF1_PROXY_BASE_URL = `${SOCIAL_API_BASE_URL}/api/openf1`;
 const OPENF1_REQUEST_INTERVAL_MS = 1000;
 const OPENF1_MAX_CONCURRENT_REQUESTS = 3;
 const OPENF1_SECOND_LIMIT = 6;
@@ -988,17 +988,19 @@ async function readSocialIdentity() {
     const parsed = JSON.parse(raw);
     return {
       userId: sanitizeSocialText(parsed.userId, 100),
+      userToken: sanitizeSocialText(parsed.userToken, 200),
       friendCode: sanitizeSocialText(parsed.friendCode, 24),
       displayName: sanitizeSocialText(parsed.displayName, 80),
     };
   } catch {
-    return { userId: "", friendCode: "", displayName: "" };
+    return { userId: "", userToken: "", friendCode: "", displayName: "" };
   }
 }
 
 async function writeSocialIdentity(identity = {}) {
   const next = {
     userId: sanitizeSocialText(identity.userId, 100),
+    userToken: sanitizeSocialText(identity.userToken, 200),
     friendCode: sanitizeSocialText(identity.friendCode, 24),
     displayName: sanitizeSocialText(identity.displayName, 80),
   };
@@ -1012,6 +1014,7 @@ function localSocialIdentity(profile = {}, existing = {}) {
   const friendCode = existing.friendCode || randomBytes(4).toString("hex").toUpperCase();
   return {
     userId,
+    userToken: existing.userToken || "",
     friendCode,
     displayName: sanitizeSocialText(profile.name || existing.displayName || "Apexline fan", 80) || "Apexline fan",
     offline: true,
@@ -1023,52 +1026,54 @@ async function requestSocial(action, payload = {}) {
   return requestJsonPost(`${SOCIAL_API_BASE_URL}/api/social`, { action, ...payload }, {}, 12000);
 }
 
+// The social token proves ownership of userId; it stays in the main process.
+async function requestSocialAsUser(action, payload = {}) {
+  const identity = await readSocialIdentity();
+  return requestSocial(action, { ...payload, userId: identity.userId, userToken: identity.userToken });
+}
+
+function publicSocialIdentity({ userToken, ...identity }) {
+  return identity;
+}
+
 async function bootstrapSocial(_event, options = {}) {
   const existing = await readSocialIdentity();
   const profile = normalizeUserProfile(options.profile || await getUserProfile());
   try {
-    const identity = await requestSocial("bootstrap", { userId: existing.userId, profile });
-    return writeSocialIdentity({ ...identity, displayName: identity.displayName || profile.name });
+    const identity = await requestSocial("bootstrap", { userId: existing.userId, userToken: existing.userToken, profile });
+    return publicSocialIdentity(await writeSocialIdentity({ ...identity, displayName: identity.displayName || profile.name }));
   } catch {
-    return writeSocialIdentity(localSocialIdentity(profile, existing));
+    return publicSocialIdentity(await writeSocialIdentity(localSocialIdentity(profile, existing)));
   }
 }
 
-async function socialFriends(_event, options = {}) {
-  const identity = await readSocialIdentity();
-  return requestSocial("friends", { userId: options.userId || identity.userId });
+async function socialFriends() {
+  return requestSocialAsUser("friends");
 }
 
 async function socialRoomCreate(_event, options = {}) {
-  const identity = await readSocialIdentity();
-  return requestSocial("roomCreate", {
-    userId: options.userId || identity.userId,
+  return requestSocialAsUser("roomCreate", {
     label: sanitizeSocialText(options.label || "Watch party", 80),
     contentFingerprint: sanitizeSocialText(options.contentFingerprint, 220),
   });
 }
 
 async function socialRoomJoin(_event, options = {}) {
-  const identity = await readSocialIdentity();
-  return requestSocial("roomJoin", { userId: options.userId || identity.userId, code: sanitizeSocialText(options.code, 24) });
+  return requestSocialAsUser("roomJoin", { code: sanitizeSocialText(options.code, 24) });
 }
 
 async function socialAblyToken(_event, options = {}) {
-  const identity = await readSocialIdentity();
-  return requestSocial("ablyToken", { userId: options.userId || identity.userId, roomId: sanitizeSocialText(options.roomId, 120) });
+  return requestSocialAsUser("ablyToken", { roomId: sanitizeSocialText(options.roomId, 120) });
 }
 
 async function socialChatHistory(_event, options = {}) {
-  const identity = await readSocialIdentity();
-  return requestSocial("chatHistory", { userId: options.userId || identity.userId, roomId: sanitizeSocialText(options.roomId, 120) });
+  return requestSocialAsUser("chatHistory", { roomId: sanitizeSocialText(options.roomId, 120) });
 }
 
 async function socialChatSave(_event, options = {}) {
-  const identity = await readSocialIdentity();
-  return requestSocial("saveChat", {
+  return requestSocialAsUser("saveChat", {
     roomId: sanitizeSocialText(options.roomId, 120),
     id: sanitizeSocialText(options.id, 120),
-    userId: options.userId || identity.userId,
     name: sanitizeSocialText(options.name, 80),
     text: sanitizeSocialText(options.text, 500),
     sentAt: Number(options.sentAt) || Date.now(),
@@ -1076,8 +1081,7 @@ async function socialChatSave(_event, options = {}) {
 }
 
 async function socialAddFriend(_event, options = {}) {
-  const identity = await readSocialIdentity();
-  return requestSocial("addFriend", { userId: options.userId || identity.userId, friendCode: sanitizeSocialText(options.friendCode, 24) });
+  return requestSocialAsUser("addFriend", { friendCode: sanitizeSocialText(options.friendCode, 24) });
 }
 
 ipcMain.handle("pitwall:key:get", (_event, provider) => getSecret(provider));
@@ -1439,7 +1443,6 @@ function requestFormJson(targetUrl, body, timeout = 12000) {
 
 let openF1TokenCache = null;
 let openF1TokenRefresh = null;
-let openF1TokenProxyCooldownUntil = 0;
 const openF1ForegroundQueue = [];
 const openF1BackgroundQueue = [];
 let openF1ActiveRequests = 0;
@@ -1454,28 +1457,28 @@ function openF1IsUrl(targetUrl) {
   }
 }
 
+// Without a local OpenF1 account, requests go through the Apexline proxy, which
+// authenticates server-side and never hands its token to the client.
+function openF1ProxyUrl(targetUrl) {
+  const url = new URL(targetUrl);
+  const endpoint = url.pathname.replace(/^\/v1\//, "");
+  return `${OPENF1_PROXY_BASE_URL}/${encodeURIComponent(endpoint)}${url.search}`;
+}
+
 async function getOpenF1AccessToken() {
   const credentials = openF1Credentials();
-  const now = Date.now();
-  if (openF1TokenCache?.accessToken && openF1TokenCache.expiresAt - now > OPENF1_TOKEN_REFRESH_MARGIN_MS) return openF1TokenCache.accessToken;
+  if (!credentials) return "";
+  if (openF1TokenCache?.accessToken && openF1TokenCache.expiresAt - Date.now() > OPENF1_TOKEN_REFRESH_MARGIN_MS) return openF1TokenCache.accessToken;
   if (openF1TokenRefresh) return openF1TokenRefresh;
-  if (!credentials && now < openF1TokenProxyCooldownUntil) return "";
-  const fetchTokenData = credentials
-    ? requestFormJson(OPENF1_TOKEN_URL, {
-      username: credentials.username,
-      password: credentials.password,
-    })
-    : requestJson(OPENF1_TOKEN_PROXY_URL, 12000);
-  openF1TokenRefresh = fetchTokenData.then((tokenData) => {
+  openF1TokenRefresh = requestFormJson(OPENF1_TOKEN_URL, {
+    username: credentials.username,
+    password: credentials.password,
+  }).then((tokenData) => {
     const accessToken = String(tokenData?.access_token || "");
     if (!accessToken) throw new Error("OpenF1 authentication did not return an access token.");
     const expiresIn = Math.max(60, Number(tokenData?.expires_in || 3600));
     openF1TokenCache = { accessToken, expiresAt: Date.now() + expiresIn * 1000 };
     return accessToken;
-  }).catch((error) => {
-    if (credentials) throw error;
-    openF1TokenProxyCooldownUntil = Date.now() + 60000;
-    return "";
   }).finally(() => {
     openF1TokenRefresh = null;
   });
@@ -1546,9 +1549,9 @@ async function requestOpenF1Json(targetUrl, options = {}) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
       return await scheduleOpenF1Request(async () => {
+        if (!openF1Credentials()) return requestJson(openF1ProxyUrl(targetUrl), timeout);
         const token = await getOpenF1AccessToken();
-        const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        return requestJson(targetUrl, timeout, headers);
+        return requestJson(targetUrl, timeout, { Authorization: `Bearer ${token}` });
       }, options);
     } catch (error) {
       lastError = error;

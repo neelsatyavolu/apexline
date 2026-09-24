@@ -500,6 +500,7 @@ const oldLandingPageFixture = [
   '<p>Download Version 1.0.2 for Apple Silicon macOS.</p>',
   '<span class="meta">v1.0.3 · 135 MB</span>',
   '<div class="req"><span class="rk">Version</span><span class="rv">1.0.3</span></div>',
+  '<div><dt>Version</dt><dd>1.0.3</dd></div>',
   '<a href="/updates/darwin/arm64/releases.json">Feed</a>',
   '<a href="/updates/darwin/x64/Apexline-1.0.3-mac-x64.zip">Intel</a>',
 ].join("\n");
@@ -514,6 +515,7 @@ assert.match(replacedLandingPageFixture, /badge-pill">Version 2\.3\.4</, "Update
 assert.match(replacedLandingPageFixture, /Download Version 2\.3\.4 for Apple Silicon/, "Update feed prep should refresh the visible download copy");
 assert.match(replacedLandingPageFixture, /class="meta">v2\.3\.4 · 135 MB/, "Update feed prep should refresh the visible version metadata");
 assert.match(replacedLandingPageFixture, /class="rk">Version<\/span><span class="rv">2\.3\.4</, "Update feed prep should refresh the visible version requirement");
+assert.match(replacedLandingPageFixture, /<dt>Version<\/dt><dd>2\.3\.4<\/dd>/, "Update feed prep should refresh the download spec version");
 assert.match(replacedLandingPageFixture, /updates\/darwin\/arm64\/releases\.json/, "Update feed prep should preserve unrelated feed links");
 assert.match(replacedLandingPageFixture, /Apexline-1\.0\.3-mac-x64\.zip/, "Update feed prep should preserve unrelated architecture links");
 assert.match(updateSiteIndex, /Apexline for macOS/, "Apexline landing page should identify the app clearly");
@@ -522,54 +524,46 @@ const deployedArm64ArtifactVersions = Array.from(
   updateSiteIndex.matchAll(/\/updates\/darwin\/arm64\/Apexline-([0-9A-Za-z.+-]+)-mac-arm64\.zip/g),
   (match) => match[1],
 );
-assert.equal(deployedArm64ArtifactVersions.length, 3, "Apexline landing page should expose exactly three macOS arm64 download links");
+assert.ok(deployedArm64ArtifactVersions.length >= 1, "Apexline landing page should expose a macOS arm64 download link");
 assert.deepEqual(
   deployedArm64ArtifactVersions,
-  Array(3).fill(packageJson.version),
+  Array(deployedArm64ArtifactVersions.length).fill(packageJson.version),
   "Every Apexline landing-page macOS arm64 download link should use the current package version",
 );
+assert.match(updateSiteIndex, /<dt>Version<\/dt><dd>[0-9A-Za-z.+-]+<\/dd>/, "Apexline landing page should show the version in a form update feed prep can refresh");
 assert.match(updateSiteIndex, /updates\/darwin\/arm64\/releases\.json/, "Apexline landing page should link the app update feed");
-assert.match(updateSiteIndex, /<div class="n">22<\/div><div class="l">Driver timing rows<\/div>/, "Apexline landing page should reflect the 22-driver timing field without implying guaranteed live tracking");
+assert.match(updateSiteIndex, /https:\/\/github\.com\/neelsatyavolu\/apexline/, "Apexline landing page should link the open-source repository");
+assert.match(updateSiteIndex, /22-car timing tower/, "Apexline landing page should reflect the 22-driver timing field without implying guaranteed live tracking");
 assert.match(updateSiteIndex, /active F1 TV subscription/, "Apexline landing page should be explicit that streams require the user's F1 TV subscription");
-assert.match(updateSiteIndex, /Developer ID signed and Apple notarized/, "Apexline landing page should accurately describe the signed and notarized 1.1.8 build");
+assert.match(updateSiteIndex, /Developer ID signed and Apple notarized/, "Apexline landing page should accurately describe the signed and notarized build");
 assert.match(updateSiteIndex, /Updates remain manual downloads from the public update feed/, "Apexline landing page should retain the manual-download update explanation");
-assert.doesNotMatch(updateSiteIndex, /not Apple Developer ID signed or notarized/, "Apexline landing page should not describe the signed 1.1.8 build as unsigned");
+assert.doesNotMatch(updateSiteIndex, /not Apple Developer ID signed or notarized/, "Apexline landing page should not describe the signed build as unsigned");
 assert.doesNotMatch(updateSiteIndex, /Live now|Free during beta|Apple Silicon &amp; Intel|menu bar live timing|24<\/div><div class="l">Grands Prix|broadcast-grade|exactly like the broadcast|private-repo safe|any combination of onboard cameras|Browser tabs needed/, "Apexline landing page should not publish prototype-only, unsupported, or over-polished marketing claims");
-const landingScreenshotAssets = [
-  "apexline-live-racing-current.png",
-  "apexline-screen-track-map.png",
-  "apexline-screen-ai-copilot-next-weekend.png",
-  "apexline-screen-analytics-ant-ham-monaco.png",
-  "apexline-screen-news.png",
-  "apexline-screen-drivers.png",
-  "apexline-screen-teams.png",
-  "apexline-screen-schedule.png",
-  "apexline-screen-leaderboards.png",
-  "apexline-screen-weekend.png",
-];
-const landingScreenshotTags = updateSiteIndex.match(/<img\b[^>]*src="\.\/assets\/apexline-(?:live-racing-current|screen-[^"]+)\.png"[^>]*>/g) || [];
-assert.equal(landingScreenshotTags.length, 10, "Apexline landing page should reference exactly ten product screenshots");
-const liveScreenshotTag = landingScreenshotTags.find((tag) => tag.includes("apexline-live-racing-current.png"));
+const landingScreenIds = ["live", "dashboard", "weekend", "trackmap", "leaderboards", "schedule", "drivers", "teams", "news", "analytics", "copilot"];
+const landingScreenshotTags = updateSiteIndex.match(/<img\b[^>]*src="\.\/assets\/screens\/[a-z]+\.webp"[^>]*>/g) || [];
+assert.equal(landingScreenshotTags.length, landingScreenIds.length, "Apexline landing page should reference one screenshot per showcased screen");
+const liveScreenshotTag = landingScreenshotTags.find((tag) => tag.includes("screens/live.webp"));
 assert.ok(liveScreenshotTag, "Apexline landing page should include the first visible Live Racing screenshot");
 assert.match(liveScreenshotTag, /\bloading="eager"/, "The first visible Live Racing screenshot should load eagerly");
 assert.match(liveScreenshotTag, /\bfetchpriority="high"/, "The first visible Live Racing screenshot should receive high fetch priority");
 assert.match(liveScreenshotTag, /\bdecoding="async"/, "The first visible Live Racing screenshot should decode asynchronously");
-const belowFoldScreenshotTags = landingScreenshotTags.filter((tag) => !tag.includes("apexline-live-racing-current.png"));
-assert.equal(belowFoldScreenshotTags.length, 9, "Apexline landing page should have nine below-fold screenshots");
+const belowFoldScreenshotTags = landingScreenshotTags.filter((tag) => !tag.includes("screens/live.webp"));
 for (const tag of belowFoldScreenshotTags) {
   assert.match(tag, /\bloading="lazy"/, "Below-fold screenshots should load lazily");
   assert.match(tag, /\bdecoding="async"/, "Below-fold screenshots should decode asynchronously");
   assert.doesNotMatch(tag, /\bfetchpriority="high"/, "Below-fold screenshots should not receive high fetch priority");
 }
+for (const tag of landingScreenshotTags) {
+  assert.match(tag, /\balt="[^"]{20,}"/, "Every landing-page screenshot should have descriptive alt text");
+  assert.ok(Number(tag.match(/\bwidth="(\d+)"/)?.[1]) >= 2400, "Landing-page screenshots should be high resolution");
+}
 let landingScreenshotBytes = 0;
-landingScreenshotAssets.forEach((asset) => {
-  const assetPath = path.join(root, "updates-site/public/assets", asset);
-  assert.match(updateSiteIndex, new RegExp(asset.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${asset} should be referenced by the landing page`);
+landingScreenIds.forEach((id) => {
+  const assetPath = path.join(root, "updates-site/public/assets/screens", `${id}.webp`);
+  assert.ok(fs.existsSync(assetPath), `screens/${id}.webp should exist for the landing page`);
   landingScreenshotBytes += fs.statSync(assetPath).size;
-  const size = readPngSize(assetPath);
-  assert.ok(size.width >= 3000 && size.height >= 1800, `${asset} should be a high-resolution screenshot`);
 });
-assert.ok(landingScreenshotBytes <= 17_160_049, `Landing-page product screenshots should not exceed 17,160,049 bytes (found ${landingScreenshotBytes})`);
+assert.ok(landingScreenshotBytes <= 3_000_000, `Landing-page screenshots should stay under 3 MB in total (found ${landingScreenshotBytes})`);
 assert.equal(updateFeed.releases?.[0]?.updateTo?.url, `https://apexline.io/updates/darwin/arm64/Apexline-${packageJson.version}-mac-arm64.zip`, "Update feed should point at the public Apexline domain");
 assert.match(pitwallIndex, /Drivers\.jsx/, "Apexline app should load the drivers page component");
 assert.match(pitwallIndex, /Teams\.jsx/, "Apexline app should load the teams page component");

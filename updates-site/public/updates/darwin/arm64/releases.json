@@ -1,14 +1,14 @@
 {
-  "currentRelease": "1.1.11",
+  "currentRelease": "1.1.12",
   "releases": [
     {
-      "version": "1.1.11",
+      "version": "1.1.12",
       "updateTo": {
-        "version": "1.1.11",
-        "pub_date": "2026-09-24T00:57:48.230Z",
-        "notes": "Faster startup with an immediate loading screen. Watch parties and OpenF1 data now go through authenticated Apexline services. Downloads are served from GitHub Releases.",
-        "name": "Apexline 1.1.11",
-        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.11-mac-arm64.zip"
+        "version": "1.1.12",
+        "pub_date": "2026-09-24T03:49:53.784Z",
+        "notes": "Apexline 1.1.12 for Apple silicon Macs. Adds an optional anonymous daily usage ping (install count, version, macOS version); turn it off in Settings > Privacy. Download the zip, unzip it and drag Apexline to Applications.",
+        "name": "Apexline 1.1.12",
+        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.12-mac-arm64.zip"
       }
     }
   ]

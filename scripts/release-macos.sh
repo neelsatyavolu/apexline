@@ -14,7 +14,7 @@
 #   - 1Password CLI signed in (op account list)
 #   - CastLabs EVS Python module for VMP (python3 -m castlabs_evs.vmp)
 #   - Xcode CLT (codesign, notarytool, stapler)
-#   - GitHub CLI signed in (gh auth status), version bump pushed to origin/main
+#   - GitHub CLI signed in (gh auth status), release commit pushed to GitHub
 # Credentials: ~/Documents/GitHub/APPLE_SIGNING.md
 
 set -euo pipefail
@@ -128,14 +128,19 @@ if [ "$DO_PUBLISH" = "1" ]; then
   VERSION="$("$NODE" -p "require('./package.json').version")"
   ZIP="$ROOT/updates-site/public/updates/darwin/arm64/Apexline-$VERSION-mac-arm64.zip"
   [ -f "$ZIP" ] || { echo "error: $ZIP not found; run the feed step first." >&2; exit 1; }
-  git fetch -q origin main
+  BUILT_FROM="$(git rev-parse HEAD)"
+  git fetch -q origin
+  if [ -z "$(git branch -r --contains "$BUILT_FROM")" ]; then
+    echo "error: push $BUILT_FROM before publishing; the release tag points at the commit the zip was built from." >&2
+    exit 1
+  fi
   if gh release view "v$VERSION" >/dev/null 2>&1; then
     echo "Replacing zip on GitHub release v$VERSION…"
     gh release upload "v$VERSION" "$ZIP" --clobber
   else
     echo "Publishing GitHub release v$VERSION…"
     gh release create "v$VERSION" "$ZIP" \
-      --target "$(git rev-parse origin/main)" \
+      --target "$BUILT_FROM" \
       --title "Apexline $VERSION" \
       --notes "${APEXLINE_RELEASE_NOTES:-Apexline $VERSION for Apple silicon Macs. Download the zip, unzip it and drag Apexline to Applications.}" \
       --latest

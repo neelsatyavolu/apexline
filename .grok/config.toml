@@ -1,7 +1,0 @@
-[mcp_servers]
-
-# agmux project memory (auto-managed — do not remove while using agmux)
-[mcp_servers.agmux-memory]
-command = "/opt/homebrew/bin/node"
-args = ["/Applications/agmux.app/Contents/Resources/sidecar/dist/agmux-memory-mcp.bundle.mjs"]
-env = { AGMUX_PROJECT_ID = "bd6d9764-c0c6-4c06-8851-99d30b827ded", AGMUX_MEMORY_STORE = "/Users/neel/.agmux/projects/bd6d9764-c0c6-4c06-8851-99d30b827ded/memory.json", AGMUX_MEMORY_MD = "/Users/neel/Documents/GitHub/apexline/.agmux/MEMORY.md", AGMUX_HANDOFF_STORE = "/Users/neel/.agmux/projects/bd6d9764-c0c6-4c06-8851-99d30b827ded/handoffs.json", AGMUX_SESSIONS_MD = "/Users/neel/Documents/GitHub/apexline/.agmux/SESSIONS.md", AGMUX_ACTIVE_THREAD_FILE = "/Users/neel/.agmux/projects/bd6d9764-c0c6-4c06-8851-99d30b827ded/active-thread-id", AGMUX_TRANSCRIPT_ROOTS = '["/Users/neel/.claude/projects","/Users/neel/.codex/sessions","/Users/neel/.grok/sessions","/Users/neel/Documents/GitHub/apexline/.opencode/sessions"]', AGMUX_ALLOW_ACTIVE_THREAD_FALLBACK = "1" }

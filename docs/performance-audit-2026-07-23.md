@@ -49,11 +49,11 @@ enrichment finishes.
 
 ### 1. Cached startup is still network-gated
 
-**Evidence:** [DataProvider.jsx:388](/Users/neel/Documents/GitHub/apexline/ui_kits/pitwall/DataProvider.jsx:388),
-[DataProvider.jsx:424](/Users/neel/Documents/GitHub/apexline/ui_kits/pitwall/DataProvider.jsx:424),
-[main.cjs:7709](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:7709),
-[main.cjs:7730](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:7730),
-[pitwall-smoke-test.cjs:3812](/Users/neel/Documents/GitHub/apexline/scripts/pitwall-smoke-test.cjs:3812).
+**Evidence:** [DataProvider.jsx:388](ui_kits/pitwall/DataProvider.jsx:388),
+[DataProvider.jsx:424](ui_kits/pitwall/DataProvider.jsx:424),
+[main.cjs:7709](electron/main.cjs:7709),
+[main.cjs:7730](electron/main.cjs:7730),
+[pitwall-smoke-test.cjs:3812](scripts/pitwall-smoke-test.cjs:3812).
 
 Electron can return the disk snapshot immediately and refresh in the
 background, but the renderer deliberately keeps the whole shell behind a
@@ -72,8 +72,8 @@ under slow/offline sources.
 
 ### 2. Production eagerly loads development React, every route, and both players
 
-**Evidence:** [build-renderer.cjs:40](/Users/neel/Documents/GitHub/apexline/scripts/build-renderer.cjs:40),
-[build-renderer.cjs:60](/Users/neel/Documents/GitHub/apexline/scripts/build-renderer.cjs:60).
+**Evidence:** [build-renderer.cjs:40](scripts/build-renderer.cjs:40),
+[build-renderer.cjs:60](scripts/build-renderer.cjs:60).
 
 All scripts are classic parser-blocking tags and rendering starts only after
 all of them execute. The production build still uses
@@ -89,10 +89,10 @@ browser-global architecture; a bundler is not required.
 
 ### 3. Live Racing redraws its large tree every 250 ms
 
-**Evidence:** [LiveRacing.jsx:3977](/Users/neel/Documents/GitHub/apexline/ui_kits/pitwall/LiveRacing.jsx:3977),
-[LiveRacing.jsx:4105](/Users/neel/Documents/GitHub/apexline/ui_kits/pitwall/LiveRacing.jsx:4105),
-[LiveRacing.jsx:5302](/Users/neel/Documents/GitHub/apexline/ui_kits/pitwall/LiveRacing.jsx:5302),
-[LiveRacing.jsx:5927](/Users/neel/Documents/GitHub/apexline/ui_kits/pitwall/LiveRacing.jsx:5927).
+**Evidence:** [LiveRacing.jsx:3977](ui_kits/pitwall/LiveRacing.jsx:3977),
+[LiveRacing.jsx:4105](ui_kits/pitwall/LiveRacing.jsx:4105),
+[LiveRacing.jsx:5302](ui_kits/pitwall/LiveRacing.jsx:5302),
+[LiveRacing.jsx:5927](ui_kits/pitwall/LiveRacing.jsx:5927).
 
 The 6,826-line component owns a 250 ms clock state. Each tick invalidates the
 top-level component and re-runs timing, battle, pane, and insight model work,
@@ -108,9 +108,9 @@ budgets.
 
 ### 4. Stalled Formula 1 live timing does not self-recover
 
-**Evidence:** [main.cjs:5736](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:5736),
-[main.cjs:5789](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:5789),
-[main.cjs:6179](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:6179).
+**Evidence:** [main.cjs:5736](electron/main.cjs:5736),
+[main.cjs:5789](electron/main.cjs:5789),
+[main.cjs:6179](electron/main.cjs:6179).
 
 The connection initializer exits whenever the socket claims it is connected.
 If messages stop, the snapshot becomes stale, but the connected socket is not
@@ -125,8 +125,8 @@ delivering data.
 
 ### 5. Analytics fallback can report mid-race data as final stats
 
-**Evidence:** [main.cjs:10974](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:10974),
-[main.cjs:10983](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:10983).
+**Evidence:** [main.cjs:10974](electron/main.cjs:10974),
+[main.cjs:10983](electron/main.cjs:10983).
 
 The Formula 1 timing fallback samples at session start plus 1,400 seconds
 (23:20), or 5,200 seconds when a start is unavailable. For a race, the former
@@ -141,9 +141,9 @@ time-limited sessions.
 
 ### 6. Replay fallback downloads a 121-second all-driver telemetry window every five seconds
 
-**Evidence:** [main.cjs:6052](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:6052),
-[main.cjs:6068](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:6068),
-[main.cjs:6090](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:6090).
+**Evidence:** [main.cjs:6052](electron/main.cjs:6052),
+[main.cjs:6068](electron/main.cjs:6068),
+[main.cjs:6090](electron/main.cjs:6090).
 
 Each new five-second replay bucket fetches the preceding 120 seconds plus one
 second of `car_data`, for all drivers.
@@ -157,9 +157,9 @@ budgets for a ten-minute replay.
 
 ### 7. Media proxy fully buffers and copies playback responses
 
-**Evidence:** [main.cjs:7806](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:7806),
-[main.cjs:7867](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:7867),
-[preload.cjs:65](/Users/neel/Documents/GitHub/apexline/electron/preload.cjs:65).
+**Evidence:** [main.cjs:7806](electron/main.cjs:7806),
+[main.cjs:7867](electron/main.cjs:7867),
+[preload.cjs:65](electron/preload.cjs:65).
 
 Every response is accumulated into chunk buffers, concatenated, sliced to an
 ArrayBuffer, then structured-cloned over IPC.
@@ -173,9 +173,9 @@ long-play memory test and segment-size guard.
 
 ### 8. Track Map performs repeated full-session work
 
-**Evidence:** [main.cjs:4727](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:4727),
-[main.cjs:5446](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:5446),
-[TrackMap.jsx:1181](/Users/neel/Documents/GitHub/apexline/ui_kits/pitwall/TrackMap.jsx:1181).
+**Evidence:** [main.cjs:4727](electron/main.cjs:4727),
+[main.cjs:5446](electron/main.cjs:5446),
+[TrackMap.jsx:1181](ui_kits/pitwall/TrackMap.jsx:1181).
 
 Main-process position bounds/traces traverse full cached samples on a 270 ms
 path, while replay elapsed state redraws the full React tree at 10 Hz.
@@ -187,7 +187,7 @@ the changing progress/current-position UI in the renderer.
 
 ### 9. Packaging copies 108 MB of playback packages to use ~1.3 MB of runtime scripts
 
-**Evidence:** [package-macos.cjs:535](/Users/neel/Documents/GitHub/apexline/scripts/package-macos.cjs:535).
+**Evidence:** [package-macos.cjs:535](scripts/package-macos.cjs:535).
 
 The app recursively copies complete React, ReactDOM, HLS, and Shaka packages.
 HLS and Shaka account for about 106.9 MB uncompressed and 28.7 MB compressed in
@@ -201,8 +201,8 @@ Add packaged playback coverage and app/zip size ceilings.
 
 ### 10. Public landing page eagerly downloads 17.16 MB of screenshots
 
-**Evidence:** [index.html:496](/Users/neel/Documents/GitHub/apexline/updates-site/public/index.html:496),
-[index.html:519](/Users/neel/Documents/GitHub/apexline/updates-site/public/index.html:519).
+**Evidence:** [index.html:496](updates-site/public/index.html:496),
+[index.html:519](updates-site/public/index.html:519).
 
 Ten large PNG screenshots lack `loading="lazy"`, async decoding, responsive
 sources, and modern formats.
@@ -217,43 +217,43 @@ visible image, lazy-load the rest, and add a total/page image-byte budget.
 
 - **F1 TV library fan-out:** up to 32 detail requests run without per-season
   in-flight deduplication. Add keyed refresh promises and bounded concurrency.
-  Evidence: [main.cjs:3065](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:3065),
-  [main.cjs:9958](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:9958).
+  Evidence: [main.cjs:3065](electron/main.cjs:3065),
+  [main.cjs:9958](electron/main.cjs:9958).
 - **Dashboard enrichment volume:** every three-minute refresh can request the
   complete latest-session car telemetry and enrich up to 24 article pages.
   Time-bound telemetry, cache article enrichment by canonical URL, and cap
-  concurrency. Evidence: [main.cjs:191](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:191),
-  [main.cjs:2135](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:2135),
-  [main.cjs:7586](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:7586).
+  concurrency. Evidence: [main.cjs:191](electron/main.cjs:191),
+  [main.cjs:2135](electron/main.cjs:2135),
+  [main.cjs:7586](electron/main.cjs:7586).
 - **Settings write amplification:** each profile-name keystroke serializes the
   full profile, synchronously writes localStorage, invokes Electron, and
   updates shared context. Debounce/commit on blur and store large profile
   images separately. Evidence:
-  [Settings.jsx:278](/Users/neel/Documents/GitHub/apexline/ui_kits/pitwall/Settings.jsx:278),
-  [DataProvider.jsx:239](/Users/neel/Documents/GitHub/apexline/ui_kits/pitwall/DataProvider.jsx:239).
+  [Settings.jsx:278](ui_kits/pitwall/Settings.jsx:278),
+  [DataProvider.jsx:239](ui_kits/pitwall/DataProvider.jsx:239).
 - **Dashboard identity mismatch:** the countdown may select a later race while
   the hero still reads name/circuit/round from `D.race`. Render identity from
   the race owning `nextSession`. Evidence:
-  [Dashboard.jsx:106](/Users/neel/Documents/GitHub/apexline/ui_kits/pitwall/Dashboard.jsx:106),
-  [Dashboard.jsx:115](/Users/neel/Documents/GitHub/apexline/ui_kits/pitwall/Dashboard.jsx:115).
+  [Dashboard.jsx:106](ui_kits/pitwall/Dashboard.jsx:106),
+  [Dashboard.jsx:115](ui_kits/pitwall/Dashboard.jsx:115).
 - **Serialized connection probes:** AI auth and F1 TV status are independent but
   awaited sequentially. Use `Promise.allSettled`. Evidence:
-  [DataProvider.jsx:446](/Users/neel/Documents/GitHub/apexline/ui_kits/pitwall/DataProvider.jsx:446).
+  [DataProvider.jsx:446](ui_kits/pitwall/DataProvider.jsx:446).
 - **Potential startup hang:** the main window is created only after an
   unbounded Electron-components readiness promise. Add a bounded wait and
   degraded playback status. Evidence:
-  [main.cjs:631](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:631),
-  [main.cjs:11808](/Users/neel/Documents/GitHub/apexline/electron/main.cjs:11808).
+  [main.cjs:631](electron/main.cjs:631),
+  [main.cjs:11808](electron/main.cjs:11808).
 - **Operational artifact growth:** package snapshots currently consume 45 GB
   locally and the static update project 2.8 GB. Make snapshots opt-in/retained
   by policy and archive old public artifacts outside the active deployment.
   Evidence:
-  [package-macos.cjs:514](/Users/neel/Documents/GitHub/apexline/scripts/package-macos.cjs:514),
-  [prepare-vercel-update.cjs:51](/Users/neel/Documents/GitHub/apexline/scripts/prepare-vercel-update.cjs:51).
+  [package-macos.cjs:514](scripts/package-macos.cjs:514),
+  [prepare-vercel-update.cjs:51](scripts/prepare-vercel-update.cjs:51).
 - **News list scaling (hypothesis):** each render copies, filters, and renders
   the feed again in Trending. This is currently low risk if feeds remain
   small; cap/paginate and use `content-visibility` before expanding sources.
-  Evidence: [News.jsx:120](/Users/neel/Documents/GitHub/apexline/ui_kits/pitwall/News.jsx:120).
+  Evidence: [News.jsx:120](ui_kits/pitwall/News.jsx:120).
 
 ## Implementation result
 

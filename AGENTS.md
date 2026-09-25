@@ -9,6 +9,14 @@ Apexline is an Electron macOS F1 companion app. The renderer is React in
 renderer bridge is `electron/preload.cjs`. Build, package, and smoke-test
 helpers live in `scripts`.
 
+## Open Source Safety
+
+This repository is public (MIT, open source). Everything committed, including
+history, PR text, and release notes, is visible to anyone. Never commit
+secrets, `.env` files, tokens, cookies, signing or notarization credentials,
+personal paths, or local tool state (`.claude/`, `.agmux/`, `.grok/`,
+`.vercel/`). Check `git diff --cached` before every commit.
+
 ## Working Rules
 
 - Prefer small, surgical changes. Match the existing CommonJS and browser-global

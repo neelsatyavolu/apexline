@@ -1,3 +1,12 @@
+# Open Source Safety
+
+This repository is public (MIT, open source). Everything committed, including
+history, PR text, and release notes, is visible to anyone. Never commit
+secrets, `.env` files, tokens, cookies, signing or notarization credentials,
+personal paths, or local tool state (`.claude/`, `.agmux/`, `.grok/`,
+`.vercel/`). Check `git diff --cached` before every commit. See `AGENTS.md`
+for the full project guide.
+
 # context-mode — MANDATORY routing rules
 
 You have context-mode MCP tools available. These rules are NOT optional — they protect your context window from flooding. A single unrouted command can dump 56 KB into context and waste the entire session.

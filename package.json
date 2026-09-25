@@ -23,6 +23,7 @@
     "probe:f1timing:monaco": "node scripts/pitwall-f1timing-replay-probe.cjs --elapsed=3600",
     "probe:trackmap:monaco-race": "node scripts/trackmap-replay-render-probe.cjs --elapsed=300",
     "probe:trackmap:z-anchor": "node scripts/trackmap-z-anchor-probe.cjs",
+    "probe:trackmap:motion": "node scripts/trackmap-motion-probe.cjs",
     "probe:live-layout": "node scripts/build-renderer.cjs && electron scripts/live-racing-layout-probe.cjs",
     "probe:theater": "node scripts/build-renderer.cjs && electron scripts/theater-replay-render-probe.cjs"
   },

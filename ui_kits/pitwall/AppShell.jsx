@@ -242,7 +242,13 @@
       let mounted = true;
       updates.check()
         .then((status) => {
-          if (mounted && status?.status === "available" && status.update?.url) {
+          // Leaving the dashboard before the check lands would drop the result
+          // for good; allow a retry on the next visit instead.
+          if (!mounted) {
+            updateCheckStarted.current = false;
+            return;
+          }
+          if (status?.status === "available" && status.update?.url) {
             setUpdatePrompt({
               status: "available",
               update: status.update,
@@ -250,7 +256,7 @@
             });
           }
         })
-        .catch(() => {});
+        .catch(() => { updateCheckStarted.current = false; });
       return () => { mounted = false; };
     }, [active]);
 

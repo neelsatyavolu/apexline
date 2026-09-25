@@ -29,6 +29,13 @@ fs.copyFileSync(path.join(srcDir, "social.js"), path.join(outDir, "social.js"));
 fs.copyFileSync(path.join(srcDir, "theme.js"), path.join(outDir, "theme.js"));
 fs.copyFileSync(path.join(srcDir, "trackmap-circuits.js"), path.join(outDir, "trackmap-circuits.js"));
 
+// _ds_bundle.js also carries stale demo copies of every ui_kits/pitwall screen
+// (~145 KB) that are parsed and evaluated on the startup path, then deleted.
+// Ship only the design-system components; the real screens load from dist.
+const DS_STALE_SCREEN_MODULE = /\/\/ (ui_kits\/pitwall\/[A-Za-z]+\.jsx)\ntry \{ \(\(\) => \{\n[\s\S]*?\} catch \(e\) \{ __ds_ns\.__errors\.push\(\{ path: "\1", error: String\(\(e && e\.message\) \|\| e\) \}\); \}\n/g;
+const dsBundle = fs.readFileSync(path.join(root, "_ds_bundle.js"), "utf8");
+fs.writeFileSync(path.join(outDir, "ds_bundle.js"), dsBundle.replace(DS_STALE_SCREEN_MODULE, ""));
+
 for (const name of screens) {
   const sourcePath = path.join(srcDir, `${name}.jsx`);
   const outPath = path.join(outDir, `${name}.js`);
@@ -80,7 +87,7 @@ const html = `<!-- Built Apexline renderer. Source: ui_kits/pitwall/index.html -
 </div>
 <script src="../../node_modules/react/umd/react.production.min.js"></script>
 <script src="../../node_modules/react-dom/umd/react-dom.production.min.js"></script>
-<script src="../../_ds_bundle.js"></script>
+<script src="ds_bundle.js"></script>
 <script src="theme.js"></script>
 <script src="data.js"></script>
 <script src="sync.js"></script>
@@ -175,6 +182,27 @@ ${initialScreenScripts}
     const candidate = String(fromQuery || fromHash || "dashboard").toLowerCase();
     return allowed.has(candidate) ? candidate : "dashboard";
   }
+  // One screen throwing during render must not unmount the whole app.
+  class ScreenErrorBoundary extends React.Component {
+    constructor(props) {
+      super(props);
+      this.state = { error: null };
+    }
+    static getDerivedStateFromError(error) {
+      return { error };
+    }
+    componentDidCatch(error) {
+      console.error("[apexline] screen crashed:", error && error.message);
+    }
+    render() {
+      if (!this.state.error) return this.props.children;
+      return React.createElement("div", { className: "pw-screen-loading", role: "alert" },
+        React.createElement("span", null, "This screen hit an error."),
+        React.createElement("button", { type: "button", onClick: () => this.setState({ error: null }) }, "Reload screen"),
+        this.props.onExit ? React.createElement("button", { type: "button", onClick: this.props.onExit }, "Back to dashboard") : null,
+      );
+    }
+  }
   function App() {
     const [screen, setScreen] = React.useState(initialPitWallScreen);
     const [loadedScreen, setLoadedScreen] = React.useState(() => initialPitWallScreen() === "dashboard" ? "dashboard" : "");
@@ -218,7 +246,8 @@ ${initialScreenScripts}
     }
     if (screen === "live") {
       const Live = window.PW.LiveRacing;
-      return React.createElement(Live, { onExit: () => setScreen("dashboard") });
+      const exitLive = () => setScreen("dashboard");
+      return React.createElement(ScreenErrorBoundary, { key: "live", onExit: exitLive }, React.createElement(Live, { onExit: exitLive }));
     }
     const Screen = {
       dashboard: window.PW.Dashboard,
@@ -240,7 +269,7 @@ ${initialScreenScripts}
       crumb: meta.c,
       onGoLive: () => setScreen("live"),
       onSearchResult: handleSearchResult,
-    }, Screen ? React.createElement(Screen, { onNavigate: setScreen, onGoLive: () => setScreen("live") }) : null);
+    }, Screen ? React.createElement(ScreenErrorBoundary, { key: screen }, React.createElement(Screen, { onNavigate: setScreen, onGoLive: () => setScreen("live") })) : null);
   }
   ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(window.PW.DataProvider, null, React.createElement(App)));
 </script>

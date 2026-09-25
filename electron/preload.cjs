@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld("pitwall", {
     replayTiming: (options = {}) => ipcRenderer.invoke("pitwall:data:replayTiming", options),
     replayTimingAvailability: (options = {}) => ipcRenderer.invoke("pitwall:data:replayTimingAvailability", options),
     trackMapReplayTiming: (options = {}) => ipcRenderer.invoke("pitwall:data:trackMapReplayTiming", options),
+    trackMapLivePositions: (options = {}) => ipcRenderer.invoke("pitwall:data:trackMapLivePositions", options),
   },
   ai: {
     authStatus: () => ipcRenderer.invoke("pitwall:ai:authStatus"),

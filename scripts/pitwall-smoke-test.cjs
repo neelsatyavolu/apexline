@@ -622,15 +622,15 @@ assert.match(trackMapSource, /preStartSeconds: 5/, "Track Map replay should star
 assert.match(trackMapSource, /i \/ Math\.max\(1, runningRows\.length\)/, "Track Map replay fallback spacing should not collapse blank-interval cars into one marker");
 assert.match(trackMapSource, /activeTiming\.filter\(\(row\) => !row\.retired\)/, "Track Map should not draw retired cars on the circuit");
 assert.match(trackMapSource, /function fitOfficialSimilarity/, "Track Map should align official positions with a rotation-aware similarity fit instead of axis flips only");
-assert.match(trackMapSource, /TRACK_MAP_MOTION_TAU_MS = 200/, "Track Map replay should ease toward targets with velocity-continuous smoothing instead of restarting eased glides");
-assert.match(trackMapSource, /TRACK_MAP_DEAD_RECKON_MAX_MS = 900/, "Track Map replay should dead-reckon through short data gaps so cars never stop-start between polls");
+assert.match(trackMapSource, /feed\.buffer\.sampleAt\(c\.number, clockMs\)/, "Track Map cars should interpolate buffered official samples at the render clock instead of dead-reckoning between polls");
+assert.doesNotMatch(trackMapSource, /DEAD_RECKON/, "Track Map should not extrapolate car motion past the data");
 assert.match(trackMapSource, /TRACK_MAP_OFFICIAL_TELEPORT_PX = 150/, "Track Map replay should snap instead of gliding across the map on seek-sized position jumps");
 assert.match(mainProcess, /function f1TimingInterpolatedPositionRowsAt/, "Track Map replay should interpolate official positions between archive packets instead of stepping per entry");
 assert.match(mainProcess, /trackPositionSample: trackPositionInvariant\.sample/, "Track Map replay snapshots should include a memoized session-wide position sample for stable map orientation");
 assert.match(trackMapSource, /trackPositionSample/, "Track Map replay should lock projector orientation from the session-wide position sample");
 assert.match(trackMapSource, /Math\.floor\(\(elapsedSeconds \* 1000\) \/ TRACK_MAP_REPLAY_DATA_POLL_MS\)/, "Track Map replay fetch bucket should use the configured one-second interval");
 assert.match(trackMapSource, /carsRef[\s\S]*projectorRef[\s\S]*requestAnimationFrame/, "Track Map replay animation should keep one RAF loop across data updates");
-assert.match(trackMapSource, /Math\.abs\(dTarget\) > TRACK_MAP_OFFICIAL_TELEPORT_PX/, "Track Map replay should trust official points and only snap when the target teleports");
+assert.match(trackMapSource, /Math\.abs\(dTarget\) > TRACK_MAP_OFFICIAL_TELEPORT_PX\) motion\.s = motion\.targetS/, "Track Map replay should trust official points and only snap when the target teleports");
 assert.match(trackMapSource, /path\.getPointAtLength\(\(sMod \/ trackTotal\) \* L\)/, "Track Map cars should always render on the track centerline via along-path motion");
 assert.match(mainProcess, /Math\.floor\(\(elapsedSeconds \* 1000\) \/ 270\)/, "Track Map replay main-process cache should honor the 3.7 Hz fetch cadence");
 assert.match(mainProcess, /function f1TimingRaceStartArchiveSeconds/, "Track Map replay should anchor Monaco-style archives to the real race start");
@@ -639,7 +639,7 @@ assert.match(mainProcess, /Math\.abs\(targetUtcMs - rowUtcMs\) <= 4000/, "Track 
 assert.match(mainProcess, /trackMapReplayStreamCache/, "Track Map replay should fetch full session timing streams once and reuse them across polls");
 assert.match(mainProcess, /f1TimingStateCursorCache/, "Replay state merging should resume from a per-stream cursor instead of re-merging from the session start each poll");
 assert.match(mainProcess, /date: new Date\(targetUtcMs\)\.toISOString\(\)/, "Interpolated replay positions should be stamped with the interpolation instant, not the older bracket packet");
-assert.match(trackMapSource, /motion\.dataAtMs/, "Track Map replay should estimate car speed from the data clock instead of poll arrival times");
+assert.match(mainProcess, /positionTrail,/, "Track Map replay snapshots should carry timestamped position trails ahead of the playhead");
 assert.match(mainProcess, /function trackMapPositionOnlyTimingRows/, "Track Map replay should render Position.z cars before TimingData rows appear");
 assert.match(trackMapSource, /trackPositionBounds/, "Track Map replay should project official positions using full-session coordinate bounds");
 assert.match(trackMapSource, /const sprint = sessions\.find[\s\S]*const grandPrix = sessions\.find[\s\S]*return \[sprint, grandPrix\]/, "Sprint weekends should offer Sprint and Race replay choices");
@@ -4020,6 +4020,47 @@ assert.equal(
   40,
   "Live Formula 1 mini sectors should advance the displayed lap when S1 restarts after only later-sector history was known",
 );
+const sectorCompactionTimingEntries = () => [
+  { seconds: 10, data: { Lines: { "44": { RacingNumber: "44", Position: 2, NumberOfLaps: 39, Sectors: {
+    "0": { Value: "30.100", Segments: [{ Status: 2048 }, { Status: 2048 }, { Status: 2048 }] },
+    "1": { Value: "40.200", Segments: [{ Status: 2048 }, { Status: 2048 }, { Status: 2048 }] },
+    "2": { Value: "35.300", Segments: [{ Status: 2048 }, { Status: 2048 }, { Status: 2048 }] },
+  } } } } },
+  // New lap: the feed only lights S1 and leaves last lap's S2/S3 in place.
+  { seconds: 11, data: { Lines: { "44": { NumberOfLaps: 40, Sectors: { "0": { Value: "", Segments: { "0": { Status: 2049 } } } } } } } },
+  ...Array.from({ length: 1400 }, (_, index) => ({ seconds: 12 + index * 0.05, data: { Lines: { "44": { IntervalToPositionAhead: { Value: `+${index}` } } } } })),
+  { seconds: 120, data: { Lines: { "44": { Sectors: { "0": { Segments: { "1": { Status: 2049 } } } } } } } },
+];
+const sectorCompactionSession = (timingEntries) => ({
+  driverListEntries: [{ seconds: 0, data: { "44": { Tla: "HAM" } } }],
+  timingEntries,
+  timingAppEntries: [],
+  clockEntries: [],
+  sessionStatusEntries: [],
+  weatherEntries: [],
+  raceControlEntries: [],
+  lapCountEntries: [],
+  carDataEntries: [],
+});
+// Mirror boundedF1TimingLiveEntries: compact before every push, so the base is
+// re-folded more than once.
+const sectorCompactedEntries = [];
+sectorCompactionTimingEntries().forEach((entry) => {
+  f1TimingRaceControlSandbox.compactF1TimingLiveEntries(sectorCompactedEntries).push(entry);
+});
+assert.ok(sectorCompactedEntries.length < 1000, "Live Formula 1 timing compaction fixture should fold older entries");
+const sectorUncompactedRow = f1TimingRaceControlSandbox.parseF1TimingArchiveRows(sectorCompactionSession(sectorCompactionTimingEntries()), Number.MAX_SAFE_INTEGER, { preserveSectorProgress: true }).timing[0];
+const sectorCompactedRow = f1TimingRaceControlSandbox.parseF1TimingArchiveRows(sectorCompactionSession(sectorCompactedEntries), Number.MAX_SAFE_INTEGER, { preserveSectorProgress: true }).timing[0];
+assert.deepEqual(
+  JSON.parse(JSON.stringify(sectorCompactedRow.sectors)),
+  { s1: ["green", "green"], s2: [], s3: [] },
+  "Live Formula 1 mini sectors should not resurrect last lap's S2/S3 after live entries are compacted",
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify({ sectors: sectorCompactedRow.sectors, sectorTimes: sectorCompactedRow.sectorTimes, sessionLap: sectorCompactedRow.sessionLap })),
+  JSON.parse(JSON.stringify({ sectors: sectorUncompactedRow.sectors, sectorTimes: sectorUncompactedRow.sectorTimes, sessionLap: sectorUncompactedRow.sessionLap })),
+  "Live Formula 1 sector progress should match the uncompacted feed after compaction",
+);
 const inPitGarageSession = {
   driverListEntries: [{ seconds: 0, data: { "44": { Tla: "HAM" } } }],
   timingEntries: [
@@ -5733,7 +5774,7 @@ const liveDataUpdateNotificationSandbox = vm.runInNewContext(`(() => {
 liveDataUpdateNotificationSandbox.notifyLiveDataUpdated();
 assert.deepEqual(liveDataUpdateMessages, [["pitwall:data:updated"]], "Background enrichment completion should notify active renderers without exposing snapshot data");
 assert.match(preload, /onUpdated:\s*\(callback\)[\s\S]*ipcRenderer\.on\("pitwall:data:updated"[\s\S]*removeListener\("pitwall:data:updated"/, "Preload should expose a narrow subscribe/unsubscribe API for completed live-data enrichment");
-assert.match(dataProviderSource, /data\?\.onUpdated\?\.\(\(\) => refreshData\(\)\)[\s\S]*unsubscribeDataUpdated\?\.\(\)/, "DataProvider should refresh after enrichment completion and remove its listener on cleanup");
+assert.match(dataProviderSource, /data\?\.onUpdated\?\.\(\(\) => refreshData\(\{ latest: true \}\)\)[\s\S]*unsubscribeDataUpdated\?\.\(\)/, "DataProvider should refresh after enrichment completion and remove its listener on cleanup");
 assert.match(extractNamedFunction(mainProcess, "refreshLiveDataEnrichment"), /writeLiveSnapshotDiskCache\(data\)[\s\S]*notifyLiveDataUpdated\(\)/, "Background enrichment should notify the renderer after updating cache and disk");
 
 const html = fs.readFileSync(path.join(root, "ui_kits/pitwall/index.html"), "utf8");
@@ -5774,6 +5815,9 @@ try {
   const distHtmlPath = path.join(rendererFixtureRoot, "dist/pitwall/index.html");
   assert.ok(fs.existsSync(distHtmlPath), "Isolated renderer build should always produce an index for startup-budget checks");
   const distHtml = fs.readFileSync(distHtmlPath, "utf8");
+  const distDsBundle = fs.readFileSync(path.join(rendererFixtureRoot, "dist/pitwall/ds_bundle.js"), "utf8");
+  assert.doesNotMatch(distDsBundle, /^\/\/ ui_kits\/pitwall\/[A-Za-z]+\.jsx$/m, "Renderer build should strip stale demo screens from the startup design-system bundle");
+  assert.match(distDsBundle, /__ds_ns\.DriverTag = __ds_scope\.DriverTag/, "Stripped design-system bundle should keep its component exports");
   assert.doesNotMatch(distHtml, /text\/babel|@babel|babel\.min\.js/, "Compiled renderer should not use in-browser Babel");
   assert.match(distHtml, /AppShell\.js/, "Compiled renderer should load compiled screen scripts");
   assert.match(distHtml, /react\/umd\/react\.production\.min\.js/, "Generated renderer should use production React");
@@ -5783,7 +5827,7 @@ try {
   assert.deepEqual(parserBlockingSources, [
     "../../node_modules/react/umd/react.production.min.js",
     "../../node_modules/react-dom/umd/react-dom.production.min.js",
-    "../../_ds_bundle.js",
+    "ds_bundle.js",
     "theme.js",
     "data.js",
     "sync.js",
@@ -6497,9 +6541,9 @@ assert.deepEqual(
   "New custom tiles should shrink to fit a shallow open strip instead of failing to add"
 );
 assert.match(source["LiveRacing.jsx"], /useState\(readCustomLayouts\)/, "Live Racing should initialize custom layouts from storage");
-assert.match(source["LiveRacing.jsx"], /localStorage\.setItem\(CUSTOM_LAYOUT_STORAGE_KEY/, "Custom layouts should persist to localStorage on change");
+assert.match(source["LiveRacing.jsx"], /(?:localStorage\.setItem|writeLocalStorage)\(CUSTOM_LAYOUT_STORAGE_KEY/, "Custom layouts should persist to localStorage on change");
 assert.match(source["LiveRacing.jsx"], /liveCustomLayouts: normalized/, "Custom layouts should mirror to the pitwall profile like panel sizes");
-assert.match(source["LiveRacing.jsx"], /localStorage\.setItem\("pw-live-layout"/, "The active preset should persist so custom layouts restore on reopen");
+assert.match(source["LiveRacing.jsx"], /(?:localStorage\.setItem|writeLocalStorage)\("pw-live-layout"/, "The active preset should persist so custom layouts restore on reopen");
 assert.match(source["LiveRacing.jsx"], /const layout = activeCustomLayout \? "custom" : LAYOUTS\[preset\]/, "An active custom layout should switch the layout type to custom");
 assert.match(source["LiveRacing.jsx"], /function createCustomLayout/, "Live Racing should support creating custom layouts");
 assert.match(source["LiveRacing.jsx"], /function deleteCustomLayout/, "Live Racing should support deleting custom layouts");
@@ -7431,7 +7475,7 @@ assert.match(source["LiveRacing.jsx"], /setInterval\(loadLiveTiming, LIVE_TIMING
 assert.match(source["LiveRacing.jsx"], /liveTimingRequestRef/, "Live timing polling should ignore stale overlapping responses");
 assert.match(source["LiveRacing.jsx"], /liveTimingInFlightRef/, "Live timing polling should not start overlapping snapshot requests");
 assert.match(source["Weekend.jsx"], /liveTimingRequestIdRef[\s\S]*liveTimingInFlightRef\.current === requestId/, "Weekend live timing polling should ignore stale overlapping responses");
-assert.match(source["LiveRacing.jsx"], /setLiveTimingData\(data \|\| null\)/, "Live timing should surface Formula 1 unavailable responses instead of preserving stale rows");
+assert.match(source["LiveRacing.jsx"], /(?:set|apply)LiveTimingData\(data \|\| null\)/, "Live timing should surface Formula 1 unavailable responses instead of preserving stale rows");
 assert.doesNotMatch(source["LiveRacing.jsx"], /replaySync\.mode === "replay"[\s\S]*\? \(replayRows\.length \? replayRows : D\.timing\)[\s\S]*: \(liveRows\.length \? liveRows : D\.timing\)/, "Live Racing should not show stale dashboard timing rows when the selected live/replay timing source has no rows");
 assert.match(source["LiveRacing.jsx"], /pendingF1TvSelection/, "Choosing an F1 TV replay should pause unrelated live timing until playback resolves");
 assert.match(source["LiveRacing.jsx"], /if \(!resolvedF1TvContent\?\.contentId && !resolvedF1TvContent\?\.feeds\?\.length\) return undefined;/, "Replay timing should wait for the selected F1 TV session to resolve before polling timing");
@@ -8166,3 +8210,137 @@ runSmokeChecks().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
+
+{
+  const mainSource = fs.readFileSync(path.join(__dirname, "../electron/main.cjs"), "utf8");
+  const loadMainFunction = (name) => {
+    const match = mainSource.match(new RegExp(`\\nfunction ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}\\n`));
+    assert.ok(match, `${name} should exist in electron/main.cjs`);
+    return vm.runInNewContext(`(${match[0].trim()})`);
+  };
+  const isOAuthRefreshRejected = loadMainFunction("isOAuthRefreshRejected");
+  assert.equal(isOAuthRefreshRejected(new Error("codex token request failed (400)")), true, "OAuth refresh 400 should count as an auth rejection");
+  assert.equal(isOAuthRefreshRejected(new Error("grok token request failed (401)")), true, "OAuth refresh 401 should count as an auth rejection");
+  assert.equal(isOAuthRefreshRejected(new Error("codex token request failed (503)")), false, "OAuth refresh 5xx should keep the stored session");
+  assert.equal(isOAuthRefreshRejected(Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" })), false, "OAuth refresh timeouts should keep the stored session");
+  const isTransientOpenF1Error = loadMainFunction("isTransientOpenF1Error");
+  assert.equal(isTransientOpenF1Error({ statusCode: 502 }), true, "OpenF1 5xx should be retried");
+  assert.equal(isTransientOpenF1Error({ code: "ECONNRESET" }), true, "OpenF1 connection resets should be retried");
+  assert.equal(isTransientOpenF1Error(new Error("Timeout for https://api.openf1.org/v1/laps")), true, "OpenF1 timeouts should be retried");
+  assert.equal(isTransientOpenF1Error({ statusCode: 404 }), false, "OpenF1 4xx should not be retried as transient");
+  assert.match(mainSource, /getOrCreateInFlightRefresh\(oauthRefreshes, provider/, "Concurrent OAuth refreshes should share one in-flight request per provider");
+  assert.match(mainSource, /"Cache-Control": "no-cache"[\s\S]{0,200}"Last-Modified"/, "Local renderer server should allow revalidation so V8 code cache survives restarts");
+  assert.match(mainSource, /show: false,[\s\S]{0,400}backgroundThrottling: false/, "Main window should defer showing and keep live timing running while unfocused");
+}
+
+// Track Map motion: buffered official samples interpolated at a render clock.
+{
+  const root = path.resolve(__dirname, "..");
+  const trackMapSource = fs.readFileSync(path.join(root, "ui_kits/pitwall/TrackMap.jsx"), "utf8");
+  const mainSource = fs.readFileSync(path.join(root, "electron/main.cjs"), "utf8");
+  const preloadSource = fs.readFileSync(path.join(root, "electron/preload.cjs"), "utf8");
+  const extract = (source, name) => {
+    const start = source.indexOf(`function ${name}`);
+    assert.ok(start >= 0, `${name} should exist`);
+    const bodyStart = source.indexOf("{", source.indexOf(")", start));
+    let depth = 0;
+    for (let index = bodyStart; index < source.length; index += 1) {
+      if (source[index] === "{") depth += 1;
+      if (source[index] === "}") depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+    throw new Error(`Could not extract ${name}`);
+  };
+  const trackMapConsts = [...trackMapSource.matchAll(/const (TRACK_MAP_[A-Z_0-9]+) = ([^;]+);/g)].map(([, n, v]) => `const ${n} = ${v};`).join("\n");
+  const tm = vm.runInNewContext(`(() => {
+    ${trackMapConsts}
+    ${["createTrackPositionBuffer", "createLiveTrackClock", "createReplayElapsedClock", "distanceToSegment", "nearestTrackPoint", "applyOfficialFit", "fitOfficialSimilarity"]
+      .map((name) => extract(trackMapSource, name)).join("\n")}
+    return { createTrackPositionBuffer, createLiveTrackClock, createReplayElapsedClock, fitOfficialSimilarity, TRACK_MAP_LIVE_DELAY_MS };
+  })()`, { Map, Set, Math, Number, Object, Array, Infinity, Boolean });
+
+  // Buffer: interpolate between bracketing samples, hold briefly past the end,
+  // keep sample identity across re-sent windows, prune old samples.
+  const buffer = tm.createTrackPositionBuffer();
+  buffer.merge({ 44: [[1000, 0, 0, 10], [1250, 100, 0, 20]] }, (t) => t, 0);
+  assert.deepEqual({ ...buffer.sampleAt(44, 1125) }, { x: 50, y: 0, z: 15 }, "Track Map buffer should interpolate official samples at the render time");
+  assert.equal(buffer.sampleAt(44, 1250 + 1000).x, 100, "Track Map buffer should hold the newest sample briefly past the end");
+  assert.equal(buffer.sampleAt(44, 1250 + 5000), null, "Track Map buffer should drop a car whose samples are long stale");
+  const heldSample = buffer.bracketAt(44, 1260).a;
+  buffer.merge({ 44: [[1250, 100, 0, 20], [1500, 200, 0, 20]] }, (t) => t, 0);
+  assert.equal(buffer.bracketAt(44, 1260).a, heldSample, "Re-sent samples should keep their identity so per-sample snaps stay stable");
+  assert.equal(buffer.sampleAt(44, 1375).x, 150, "Merged trails should extend interpolation to newer samples");
+  buffer.merge({}, (t) => t, 1200);
+  assert.equal(buffer.bracketAt(44, 1100)?.b ?? null, null, "Samples older than the keep window should be pruned");
+
+  // Live clock: sits a fixed delay behind the feed edge, never steps backwards,
+  // and glides (never lurches) to a stop short of the data when the feed stalls.
+  let now = 0;
+  const clock = tm.createLiveTrackClock(() => now);
+  assert.equal(clock.nowMs(), null, "Live clock should wait for feed data");
+  clock.observe(1_000_000);
+  assert.equal(clock.nowMs(), 1_000_000 - tm.TRACK_MAP_LIVE_DELAY_MS, "Live clock should start one buffer delay behind the newest sample");
+  let previous = clock.nowMs();
+  let lastRate = null, maxRateChange = 0;
+  for (let frame = 1; frame <= 600; frame += 1) {
+    now += 16;
+    if (frame % 60 === 0 && frame < 300) clock.observe(1_000_000 + frame * 16);
+    const value = clock.nowMs();
+    assert.ok(value >= previous, "Live render clock should never run backwards");
+    const rate = (value - previous) / 16;
+    if (lastRate != null) maxRateChange = Math.max(maxRateChange, Math.abs(rate - lastRate));
+    lastRate = rate;
+    previous = value;
+  }
+  assert.ok(previous < 1_000_000 + 300 * 16, "Live render clock should not run past the newest buffered sample when the feed stalls");
+  assert.ok(maxRateChange < 0.2, `Live render clock should ease playback speed rather than jump (${maxRateChange.toFixed(2)})`);
+
+  // Native timers throw "Illegal invocation" when called as methods of a plain
+  // object; the replay clock's defaults must wrap them (this crashed replay).
+  assert.match(trackMapSource, /setInterval: \(callback, ms\) => setInterval\(callback, ms\)/, "Replay clock default timers should wrap native setInterval");
+  assert.match(trackMapSource, /clearInterval: \(id\) => clearInterval\(id\)/, "Replay clock default timers should wrap native clearInterval");
+  // Replay clock exposes a sub-tick playhead for per-frame interpolation.
+  let replayNow = 0;
+  const replayClock = tm.createReplayElapsedClock(10, null, { now: () => replayNow, setInterval: () => 1, clearInterval: () => {} });
+  replayClock.start();
+  replayNow += 40;
+  assert.equal(replayClock.getPreciseElapsedSeconds(), 10.04, "Replay clock should interpolate its playhead between 100ms ticks");
+
+  // Fit recovers a y-flipped, rotated, unevenly sampled trace of an elongated
+  // circuit (the Montreal failure mode) to within a few px.
+  const outline = [];
+  for (let i = 0; i < 120; i += 1) {
+    const a = (i / 120) * Math.PI * 2;
+    outline.push([500 + Math.cos(a) * 120 + (Math.cos(a) > 0 ? 40 : 0), 400 + Math.sin(a) * 380]);
+  }
+  const deg = 177 * Math.PI / 180;
+  const trace = [];
+  for (let i = 0; i < outline.length; i += 1) {
+    // Dense on one end to skew the RMS-radius scale guess.
+    for (let r = 0; r < (i < 30 ? 4 : 1); r += 1) {
+      const [x, y] = outline[i];
+      const ux = (x - 500) / 11 + r * 0.01, uy = -(y - 400) / 11; // y-up telemetry frame
+      trace.push({ x: Math.cos(deg) * ux - Math.sin(deg) * uy + 3000, y: Math.sin(deg) * ux + Math.cos(deg) * uy - 800, z: 0 });
+    }
+  }
+  const fitted = tm.fitOfficialSimilarity(trace, outline);
+  assert.ok(fitted && fitted.score < 4, `Track Map fit should lock onto elongated circuits (score ${fitted && fitted.score.toFixed(1)})`);
+  assert.equal(fitted.fit.mirror, true, "Track Map fit should use the y-up telemetry mirror");
+
+  // Main process: timestamped trails for replay windows and a live poll IPC.
+  const trailSandbox = vm.runInNewContext(`(() => {
+    const f1TimingPositionSampleCache = new WeakMap();
+    ${["finiteNumber", "f1TimingPositionSamples", "f1TimingPositionTrail"].map((name) => extract(mainSource, name)).join("\n")}
+    return { f1TimingPositionTrail };
+  })()`, { WeakMap, Map, Set, Number, Date, Object, Array, Math });
+  const packet = (iso, cars) => ({ Timestamp: iso, Entries: cars });
+  const trail = trailSandbox.f1TimingPositionTrail({ positionEntries: [{ seconds: 1, data: { Position: [
+    packet("2026-06-07T13:00:00.000Z", { 44: { X: 10, Y: 20, Z: 5 }, 1: { X: 0, Y: 0, Z: 0 } }),
+    packet("2026-06-07T13:00:00.250Z", { 44: { X: 12, Y: 21, Z: 5 } }),
+    packet("2026-06-07T13:00:09.000Z", { 44: { X: 90, Y: 90, Z: 5 } }),
+  ] } }] }, Date.parse("2026-06-07T13:00:00.000Z"), Date.parse("2026-06-07T13:00:01.000Z"));
+  assert.deepEqual(JSON.parse(JSON.stringify(trail)), { 44: [[Date.parse("2026-06-07T13:00:00.000Z"), 10, 20, 5], [Date.parse("2026-06-07T13:00:00.250Z"), 12, 21, 5]] }, "Position trails should cover only the window and drop (0,0) dropouts");
+  assert.match(mainSource, /ipcMain\.handle\("pitwall:data:trackMapLivePositions"/, "Main should expose a live Track Map position feed");
+  assert.match(preloadSource, /trackMapLivePositions: \(options = \{\}\) => ipcRenderer\.invoke\("pitwall:data:trackMapLivePositions", options\)/, "Preload should expose the narrow live Track Map position bridge");
+  assert.match(trackMapSource, /pitwall\.data\.trackMapLivePositions\(\{ sinceUtcMs, includeSample \}\)/, "Live Track Map should poll the position feed instead of the minutes-stale snapshot");
+}

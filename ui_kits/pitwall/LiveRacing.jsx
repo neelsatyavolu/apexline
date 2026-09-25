@@ -1681,13 +1681,33 @@
       return {};
     }
   }
+  function writeLocalStorage(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // Storage can be full or unavailable; persistence is best-effort.
+    }
+  }
+  // Change signal for live timing polls: drops fields that differ on every
+  // response without changing what is shown (fetch time, target-time suffix on
+  // the source label, main-process diagnostics). fetchedAt is kept while catching
+  // up because the catch-up countdown is measured from it.
+  function liveTimingChangeSignature(data) {
+    if (!data || typeof data !== "object") return String(data);
+    const { fetchedAt, sourceLabel, diagnostics, ...rest } = data;
+    return JSON.stringify({
+      ...rest,
+      sourceLabel: String(sourceLabel || "").replace(/ @ \S+$/, ""),
+      fetchedAt: data.catchingUp ? fetchedAt : undefined,
+    });
+  }
   function saveStreamSources(sources) {
     const persisted = {};
     Object.entries(sources || {}).forEach(([key, value]) => {
       const record = streamRecord(value);
       if (record) persisted[key] = record;
     });
-    localStorage.setItem("pw-stream-sources", JSON.stringify(persisted));
+    writeLocalStorage("pw-stream-sources", JSON.stringify(persisted));
   }
   function cleanPitWallError(error, fallback = "Something went wrong.") {
     const message = String(error?.message || error || fallback);
@@ -3952,6 +3972,7 @@
     const replayTimingInFlightRef = React.useRef(false);
     const liveTimingRequestRef = React.useRef(0);
     const liveTimingInFlightRef = React.useRef(false);
+    const liveTimingSignatureRef = React.useRef({ data: null, signature: "" });
     const liveTimingSyncRef = React.useRef(liveTimingRequestForMetrics(null, DEFAULT_WORLD_SYNC_TARGET));
     const sessionClockAnchorRef = React.useRef(null);
     const timingMiniSectorCountsByKeyRef = React.useRef({});
@@ -3989,7 +4010,13 @@
     const videoQuality = normalizeVideoQuality(profile.videoQuality || livePrefs.videoQuality);
     const currentSeason = String(D.seasonSummary?.season || new Date().getFullYear());
     const selectableSeasons = Array.from(new Set([currentSeason, String(new Date().getFullYear()), String(new Date().getFullYear() - 1), String(new Date().getFullYear() - 2), "2024", "2023", "2022", "2021", "2020", "2019", "2018"])).filter(Boolean);
-    const f1TvSessionLibrary = normalizeRaceLibrary(f1TvLibrary || localF1TvLibrary(), f1TvSeason || currentSeason, clockTick);
+    // Session status only compares the clock against start/end times, so a
+    // one-second bucket is indistinguishable while skipping 3 of 4 clock ticks.
+    const f1TvStatusSecond = Math.floor(clockTick / 1000) * 1000;
+    const f1TvSessionLibrary = React.useMemo(
+      () => normalizeRaceLibrary(f1TvLibrary || localF1TvLibrary(), f1TvSeason || currentSeason, f1TvStatusSecond),
+      [f1TvLibrary, D.schedule, f1TvSeason, currentSeason, f1TvStatusSecond],
+    );
     const f1TvRaces = f1TvSessionLibrary.races || [];
     const currentF1TvWeekendIndex = (() => {
       const index = f1TvRaces.findIndex((race) => race.status === "live" || race.status === "upcoming");
@@ -4038,18 +4065,18 @@
       saveStreamSources(streamSources);
     }, [streamSources]);
     React.useEffect(() => {
-      localStorage.setItem(SYNC_STORAGE_KEY, JSON.stringify(syncSettings));
+      writeLocalStorage(SYNC_STORAGE_KEY, JSON.stringify(syncSettings));
     }, [syncSettings]);
     React.useEffect(() => {
-      localStorage.setItem(TIMING_OFFSET_STORAGE_KEY, String(clampReplayTimingOffset(replayTimingOffset)));
+      writeLocalStorage(TIMING_OFFSET_STORAGE_KEY, String(clampReplayTimingOffset(replayTimingOffset)));
     }, [replayTimingOffset]);
     React.useEffect(() => {
-      localStorage.setItem(PARTY_TRAY_STORAGE_KEY, JSON.stringify(partyTrayPosition));
+      writeLocalStorage(PARTY_TRAY_STORAGE_KEY, JSON.stringify(partyTrayPosition));
     }, [partyTrayPosition]);
     React.useEffect(() => {
       const normalized = normalizeLivePanelSizes(panelSizes);
       const serialized = JSON.stringify(normalized);
-      localStorage.setItem(PANEL_SIZE_STORAGE_KEY, serialized);
+      writeLocalStorage(PANEL_SIZE_STORAGE_KEY, serialized);
       if (!panelSizesTouchedRef.current || !window.pitwall?.profile?.set || serialized === profilePanelSizesKeyRef.current) return;
       profilePanelSizesKeyRef.current = serialized;
       window.pitwall.profile.set({ livePanelSizes: normalized }).catch(() => {});
@@ -4057,7 +4084,7 @@
     React.useEffect(() => {
       const normalized = normalizeCustomLayouts(customLayouts);
       const serialized = JSON.stringify(normalized);
-      localStorage.setItem(CUSTOM_LAYOUT_STORAGE_KEY, serialized);
+      writeLocalStorage(CUSTOM_LAYOUT_STORAGE_KEY, serialized);
       if (!customLayoutsTouchedRef.current || !window.pitwall?.profile?.set || serialized === profileCustomLayoutsKeyRef.current) return;
       profileCustomLayoutsKeyRef.current = serialized;
       window.pitwall.profile.set({ liveCustomLayouts: normalized }).catch(() => {});
@@ -4085,9 +4112,9 @@
     React.useEffect(() => {
       try {
         const saved = JSON.parse(localStorage.getItem("pw-live-layout") || "{}");
-        localStorage.setItem("pw-live-layout", JSON.stringify({ ...saved, preset }));
+        writeLocalStorage("pw-live-layout", JSON.stringify({ ...saved, preset }));
       } catch {
-        localStorage.setItem("pw-live-layout", JSON.stringify({ preset }));
+        writeLocalStorage("pw-live-layout", JSON.stringify({ preset }));
       }
     }, [preset]);
     React.useEffect(() => {
@@ -4100,7 +4127,7 @@
       setPanelSizes((sizes) => JSON.stringify(normalizeLivePanelSizes(sizes)) === serialized ? sizes : normalized);
     }, [profile.livePanelSizes]);
     React.useEffect(() => {
-      localStorage.setItem(TIMING_COLUMN_STORAGE_KEY, JSON.stringify(timingColumns));
+      writeLocalStorage(TIMING_COLUMN_STORAGE_KEY, JSON.stringify(timingColumns));
     }, [timingColumns]);
     React.useEffect(() => {
       const timer = setInterval(() => setClockTick(Date.now()), CLOCK_TICK_INTERVAL_MS);
@@ -5619,26 +5646,37 @@
       }
       if (!window.pitwall?.data?.liveTiming) return undefined;
       let cancelled = false;
+      const applyLiveTimingData = (next) => {
+        const signature = liveTimingChangeSignature(next);
+        setLiveTimingData((current) => {
+          const cached = liveTimingSignatureRef.current;
+          if (current && current === cached.data && cached.signature === signature) return current;
+          liveTimingSignatureRef.current = { data: next, signature };
+          return next;
+        });
+      };
       const loadLiveTiming = async () => {
-        if (liveTimingInFlightRef.current) return;
+        if (document.hidden || liveTimingInFlightRef.current) return;
         const requestId = liveTimingRequestRef.current + 1;
         liveTimingRequestRef.current = requestId;
-        liveTimingInFlightRef.current = true;
+        liveTimingInFlightRef.current = requestId;
         try {
           const timingSync = liveTimingSyncRef.current || { targetLatencySeconds: syncTargetFor("WORLD") };
           const data = await window.pitwall.data.liveTiming({ source: "f1", targetUtcMs: liveTimingTargetUtcNow(timingSync, Date.now()), targetLatencySeconds: timingSync.targetLatencySeconds });
           if (cancelled || requestId !== liveTimingRequestRef.current) return;
-          setLiveTimingData(data || null);
+          applyLiveTimingData(data || null);
           logPitWallDebug("live.timing", {
             rowCount: data?.timing?.length || 0,
             ok: Boolean(data?.ok),
           });
         } catch (error) {
           if (cancelled || requestId !== liveTimingRequestRef.current) return;
-          setLiveTimingData({ ok: false, timing: [], weather: {}, sourceLabel: "Formula 1 live timing unavailable", message: "Formula 1 SignalR live timing is unavailable." });
+          applyLiveTimingData({ ok: false, timing: [], weather: {}, sourceLabel: "Formula 1 live timing unavailable", message: "Formula 1 SignalR live timing is unavailable." });
           logPitWallDebug("live.timing-error", { message: error?.message || String(error || "") });
         } finally {
-          if (requestId === liveTimingRequestRef.current) liveTimingInFlightRef.current = false;
+          // Only the request that owns the flag may clear it, so a stale request
+          // finishing after a restart cannot let a new one overlap a pending one.
+          if (liveTimingInFlightRef.current === requestId) liveTimingInFlightRef.current = false;
         }
       };
       loadLiveTiming();
@@ -5646,10 +5684,10 @@
       return () => {
         cancelled = true;
         liveTimingRequestRef.current += 1;
-        liveTimingInFlightRef.current = false;
         clearInterval(timer);
       };
-    }, [liveWorkspaceReady, replaySync.mode, syncSettings, pendingF1TvSelection]);
+      // syncSettings reaches the poll through liveTimingSyncRef, so it must not restart it.
+    }, [liveWorkspaceReady, replaySync.mode, pendingF1TvSelection]);
     React.useEffect(() => {
       if (replaySync.mode !== "replay") {
         setReplayTimingData(null);
@@ -5674,10 +5712,11 @@
         const requestId = replayTimingRequestRef.current + 1;
         replayTimingRequestRef.current = requestId;
         replayTimingInFlightRef.current = true;
+        let timeoutTimer = null;
         try {
           const data = await Promise.race([
             window.pitwall.data.replayTiming({ meetingKey, sessionKind: f1TvSessionKind, elapsedSeconds: timingElapsedSeconds, videoStartUtc, videoStartArchiveSeconds }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("Replay timing request timed out.")), REPLAY_TIMING_REQUEST_TIMEOUT_MS)),
+            new Promise((_, reject) => { timeoutTimer = setTimeout(() => reject(new Error("Replay timing request timed out.")), REPLAY_TIMING_REQUEST_TIMEOUT_MS); }),
           ]);
           if (cancelled || requestId !== replayTimingRequestRef.current) return;
           setReplayTimingData((current) => hasRealTimingRows(data?.timing) ? data : hasRealTimingRows(current?.timing) ? current : data || null);
@@ -5697,6 +5736,7 @@
           setReplayTimingData({ ok: false, timing: [], weather: {}, sourceLabel: "Replay timing unavailable", message: "OpenF1 replay timing is unavailable." });
           logPitWallDebug("replay.timing-error", { meetingKey, sessionKind: f1TvSessionKind, message: error?.message || String(error || "") });
         } finally {
+          clearTimeout(timeoutTimer);
           if (requestId === replayTimingRequestRef.current) replayTimingInFlightRef.current = false;
         }
       };

@@ -265,7 +265,9 @@
 
   function persistProfile(profile, options = {}) {
     const next = normalizeProfile(profile);
-    localStorage.setItem("pw-profile", JSON.stringify(next));
+    // A large profile image can exceed the storage quota; the main-process copy
+    // below is still authoritative, so a failed local write must not throw.
+    try { localStorage.setItem("pw-profile", JSON.stringify(next)); } catch {}
     if (window.pitwall?.profile?.set) {
       const payload = options.patch
         ? normalizeProfilePatch(options.patch)
@@ -437,6 +439,9 @@
     const [initialDataReady, setInitialDataReady] = React.useState(!hasRuntimeDataBridge || bypassInitialLiveDataGate);
     const [initialLoadError, setInitialLoadError] = React.useState("");
     const enrichmentTimerRef = React.useRef(null);
+    const refreshInFlightRef = React.useRef(null);
+    const refreshSeqRef = React.useRef(0);
+    const appliedSeqRef = React.useRef(0);
 
     const profileComplete = Boolean(
       profile.name.trim() &&
@@ -448,8 +453,22 @@
 
     const dataSource = data.sourceLabel || (data.source === "live" ? "Live data" : "Waiting for live data");
 
-    async function refreshData(options = {}) {
-      if (!window.pitwall?.data?.snapshot) return null;
+    // Stable identity so consumers' effects (e.g. Copilot's poll) don't restart
+    // on every provider render. Plain polls share one in-flight snapshot, and a
+    // response older than one already applied never overwrites it.
+    const refreshData = React.useCallback((options = {}) => {
+      if (!window.pitwall?.data?.snapshot) return Promise.resolve(null);
+      const plain = !options.initial && !options.latest && !options.forceRefresh && !options.forceCopilotRefresh && !options.forceCopilotPageId;
+      if (plain && refreshInFlightRef.current) return refreshInFlightRef.current;
+      const request = runRefresh(options, ++refreshSeqRef.current);
+      refreshInFlightRef.current = request;
+      request.finally(() => {
+        if (refreshInFlightRef.current === request) refreshInFlightRef.current = null;
+      });
+      return request;
+    }, []);
+
+    async function runRefresh(options, seq) {
       try {
         if (options.initial) setInitialLoadError("");
         const snapshotOptions = {
@@ -459,7 +478,10 @@
           ...(options.forceCopilotPageId ? { forceCopilotPageId: options.forceCopilotPageId } : {}),
         };
         const snapshot = await window.pitwall.data.snapshot(snapshotOptions);
-        setData((current) => mergeData(current, snapshot));
+        if (seq > appliedSeqRef.current) {
+          appliedSeqRef.current = seq;
+          setData((current) => mergeData(current, snapshot));
+        }
         if (options.initial && shouldWaitForStartupNews(snapshot)) {
           const attempt = Number(options.startupAttempt) || 0;
           if (attempt < STARTUP_WAIT_MAX_ATTEMPTS) {
@@ -510,14 +532,16 @@
         f1tvConnected: Boolean(status?.authenticated),
       });
     }
+    // Only touches a state setter, so the first render's closure stays valid.
+    const stableRefreshConnections = React.useCallback(refreshConnections, []);
 
-    function updateProfile(patch) {
+    const updateProfile = React.useCallback((patch) => {
       setProfile((current) => {
         const next = normalizeProfile({ ...current, ...patch });
         persistProfile(next, { patch });
         return next;
       });
-    }
+    }, []);
 
     React.useEffect(() => {
       let mounted = true;
@@ -543,7 +567,7 @@
         : null;
       if (!bypassInitialLiveDataGate) refreshData({ initial: true });
       refreshConnections();
-      const unsubscribeDataUpdated = window.pitwall?.data?.onUpdated?.(() => refreshData());
+      const unsubscribeDataUpdated = window.pitwall?.data?.onUpdated?.(() => refreshData({ latest: true }));
       const timer = setInterval(refreshData, 1000 * 60 * 3);
       return () => {
         mounted = false;
@@ -554,7 +578,7 @@
       };
     }, []);
 
-    const value = {
+    const value = React.useMemo(() => ({
       data,
       profile,
       connection,
@@ -562,8 +586,8 @@
       dataSource,
       updateProfile,
       refreshData,
-      refreshConnections,
-    };
+      refreshConnections: stableRefreshConnections,
+    }), [data, profile, connection, profileComplete, dataSource, updateProfile, refreshData, stableRefreshConnections]);
     if (!initialDataReady) {
       return <PitWallContext.Provider value={value}><PitWallLoadingScreen error={initialLoadError} onRetry={() => refreshData({ forceRefresh: true, initial: true })} /></PitWallContext.Provider>;
     }

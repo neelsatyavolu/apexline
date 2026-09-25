@@ -6,7 +6,7 @@
     Avatar, FlagStatus, TimingRow, TimingRowHeader, SegmentedControl } = NS;
 
   const STYLE_ID = "pw-weekend-styles";
-  const F1_LIVE_TIMING_POLL_INTERVAL_MS = 500;
+  const F1_LIVE_TIMING_POLL_INTERVAL_MS = 1000;
   if (!document.getElementById(STYLE_ID)) {
     const el = document.createElement("style");
     el.id = STYLE_ID;
@@ -133,6 +133,13 @@
     }));
   }
 
+  // Change signal for live timing polls: fetchedAt and main-process diagnostics
+  // differ on every response but nothing on this page renders them.
+  function liveTimingChangeSignature(data) {
+    if (!data || typeof data !== "object") return String(data);
+    const { fetchedAt, diagnostics, ...rest } = data;
+    return JSON.stringify(rest);
+  }
   function liveSessionTimingRows(D, hasLiveTiming, liveTimingData) {
     if (!hasLiveTiming) return [];
     if (liveTimingData?.timing?.length) return liveTimingData.timing;
@@ -804,6 +811,7 @@
     const [liveTimingData, setLiveTimingData] = React.useState(null);
     const liveTimingInFlightRef = React.useRef(false);
     const liveTimingRequestIdRef = React.useRef(0);
+    const liveTimingSignatureRef = React.useRef({ data: null, signature: "" });
     const liveRows = liveSessionTimingRows(D, hasLiveTiming, liveTimingData);
     const recapRows = timingRows(D);
     const liveDataSource = liveTimingData?.sourceLabel || liveTimingData?.message || dataSource;
@@ -823,14 +831,22 @@
       }
       let cancelled = false;
       const loadLiveTiming = async () => {
-        if (liveTimingInFlightRef.current) return;
+        if (document.hidden || liveTimingInFlightRef.current) return;
         const requestId = liveTimingRequestIdRef.current + 1;
         liveTimingRequestIdRef.current = requestId;
         liveTimingInFlightRef.current = requestId;
         try {
           const data = await window.pitwall.data.liveTiming({ source: "f1", targetLatencySeconds: 0 });
           if (cancelled) return;
-          setLiveTimingData((current) => data?.timing?.length ? data : current?.timing?.length ? current : data || null);
+          const signature = liveTimingChangeSignature(data);
+          setLiveTimingData((current) => {
+            const next = data?.timing?.length ? data : current?.timing?.length ? current : data || null;
+            if (next === current) return current;
+            const cached = liveTimingSignatureRef.current;
+            if (current && current === cached.data && cached.signature === signature) return current;
+            liveTimingSignatureRef.current = { data: next, signature };
+            return next;
+          });
         } catch {
           if (!cancelled) setLiveTimingData({ ok: false, timing: [], weather: {}, sourceLabel: "Formula 1 live timing unavailable", message: "Formula 1 live timing is unavailable." });
         } finally {
@@ -842,7 +858,6 @@
       return () => {
         cancelled = true;
         liveTimingRequestIdRef.current += 1;
-        liveTimingInFlightRef.current = false;
         clearInterval(timer);
       };
     }, [hasLiveTiming, selectedRaceSession?.kind]);

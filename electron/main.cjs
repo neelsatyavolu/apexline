@@ -49,18 +49,29 @@ function startStaticServer(root) {
       return;
     }
 
-    fs.readFile(filePath, (error, body) => {
-      if (error) {
-        res.writeHead(error.code === "ENOENT" ? 404 : 500);
-        res.end(error.code === "ENOENT" ? "Not found" : "Server error");
+    fs.stat(filePath, (statError, stats) => {
+      const lastModified = !statError && stats.isFile() ? new Date(Math.floor(stats.mtimeMs / 1000) * 1000) : null;
+      const ifModifiedSince = Date.parse(req.headers["if-modified-since"] || "");
+      if (lastModified && Number.isFinite(ifModifiedSince) && lastModified.getTime() <= ifModifiedSince) {
+        res.writeHead(304, { "Cache-Control": "no-cache", "Last-Modified": lastModified.toUTCString() });
+        res.end();
         return;
       }
 
-      res.writeHead(200, {
-        "Content-Type": contentType(filePath),
-        "Cache-Control": "no-store",
+      fs.readFile(filePath, (error, body) => {
+        if (error) {
+          res.writeHead(error.code === "ENOENT" ? 404 : 500);
+          res.end(error.code === "ENOENT" ? "Not found" : "Server error");
+          return;
+        }
+
+        res.writeHead(200, {
+          "Content-Type": contentType(filePath),
+          "Cache-Control": "no-cache",
+          ...(lastModified ? { "Last-Modified": lastModified.toUTCString() } : {}),
+        });
+        res.end(body);
       });
-      res.end(body);
     });
   });
 
@@ -153,11 +164,15 @@ const DEFAULT_GROK_MODEL = "grok-4.6";
 const HIDDEN_MODELS = { codex: [], grok: [] };
 let modelCatalog = sharedAuth.bundledModels;
 let modelRefreshAt = 0;
+let modelCatalogLoad = null;
 async function visibleAiModels(provider) {
   if (Date.now() >= modelRefreshAt) {
-    modelCatalog = await sharedAuth.loadModels({ fallback: modelCatalog });
     modelRefreshAt = Date.now() + 5 * 60_000;
+    modelCatalogLoad = sharedAuth.loadModels({ fallback: modelCatalog })
+      .then((catalog) => { modelCatalog = catalog; }, (error) => { modelRefreshAt = 0; throw error; })
+      .finally(() => { modelCatalogLoad = null; });
   }
+  if (modelCatalogLoad) await modelCatalogLoad;
   return sharedAuth.selectModels(modelCatalog, provider, HIDDEN_MODELS[provider]);
 }
 const MAX_CAPTURED_STREAMS = 48;
@@ -267,6 +282,7 @@ const OPENF1_ANALYTICS_ENDPOINTS = {
 };
 let analyticsSessionCache = new Map();
 let analyticsRefreshInFlight = new Map();
+const analyticsBuildInFlight = new Map();
 let recentDriverResultsCache = new Map();
 let raceWinnerCache = new Map();
 let f1TvLibraryCache = new Map();
@@ -507,9 +523,22 @@ function execFilePromise(command, args, options = {}) {
   });
 }
 
+const secretCache = new Map();
+
 async function getSecret(provider) {
   assertKeyProvider(provider);
   if (process.platform !== "darwin") return "";
+  const cached = secretCache.get(provider);
+  if (cached) return cached;
+  const pending = readKeychainSecret(provider);
+  secretCache.set(provider, pending);
+  pending.catch(() => {
+    if (secretCache.get(provider) === pending) secretCache.delete(provider);
+  });
+  return pending;
+}
+
+async function readKeychainSecret(provider) {
   try {
     return (await runSecurity(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", provider, "-w"])).trim();
   } catch (error) {
@@ -533,13 +562,19 @@ async function setSecret(provider, value) {
     await deleteSecret(provider);
     return true;
   }
-  await runSecurity(["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", provider, "-w", password]);
+  secretCache.delete(provider);
+  try {
+    await runSecurity(["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", provider, "-w", password]);
+  } finally {
+    secretCache.delete(provider);
+  }
   return true;
 }
 
 async function deleteSecret(provider) {
   assertKeyProvider(provider);
   if (process.platform !== "darwin") return false;
+  secretCache.delete(provider);
   try {
     await runSecurity(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", provider]);
   } catch (error) {
@@ -549,6 +584,8 @@ async function deleteSecret(provider) {
     await runSecurity(["delete-generic-password", "-s", LEGACY_KEYCHAIN_SERVICE, "-a", provider]);
   } catch (error) {
     if (error.code !== 44) throw error;
+  } finally {
+    secretCache.delete(provider);
   }
   return true;
 }
@@ -1124,7 +1161,18 @@ ipcMain.handle("pitwall:updates:open", (_event, targetUrl) => {
 });
 ipcMain.handle("pitwall:updates:install", (_event, targetUrl) => installPitWallUpdate(targetUrl));
 
-function requestText(targetUrl, timeout = 8500, headers = {}) {
+const MAX_TEXT_RESPONSE_BYTES = 25 * 1024 * 1024;
+const MAX_TEXT_REDIRECTS = 5;
+
+function armRequestDeadline(req, timeout, targetUrl) {
+  const timer = setTimeout(() => req.destroy(new Error(`Timeout for ${targetUrl}`)), Math.max(1000, Number(timeout) || 8500) * 2);
+  const clear = () => clearTimeout(timer);
+  req.once("close", clear);
+  req.once("error", clear);
+  return clear;
+}
+
+function requestText(targetUrl, timeout = 8500, headers = {}, redirectsLeft = MAX_TEXT_REDIRECTS) {
   return new Promise((resolve, reject) => {
     const req = https.get(targetUrl, {
       headers: {
@@ -1136,7 +1184,12 @@ function requestText(targetUrl, timeout = 8500, headers = {}) {
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
-        requestText(new URL(res.headers.location, targetUrl).href, timeout, headers).then(resolve, reject);
+        clearDeadline();
+        if (redirectsLeft <= 0) {
+          reject(new Error(`Too many redirects for ${targetUrl}`));
+          return;
+        }
+        requestText(new URL(res.headers.location, targetUrl).href, timeout, headers, redirectsLeft - 1).then(resolve, reject);
         return;
       }
       if (res.statusCode < 200 || res.statusCode >= 300) {
@@ -1148,10 +1201,20 @@ function requestText(targetUrl, timeout = 8500, headers = {}) {
         return;
       }
       let body = "";
+      let bytes = 0;
       res.setEncoding("utf8");
-      res.on("data", (chunk) => { body += chunk; });
+      res.on("data", (chunk) => {
+        bytes += Buffer.byteLength(chunk);
+        if (bytes > MAX_TEXT_RESPONSE_BYTES) {
+          req.destroy(new Error(`Response too large for ${targetUrl}`));
+          return;
+        }
+        body += chunk;
+      });
       res.on("end", () => resolve(body));
+      res.on("error", reject);
     });
+    const clearDeadline = armRequestDeadline(req, timeout, targetUrl);
     req.on("timeout", () => req.destroy(new Error(`Timeout for ${targetUrl}`)));
     req.on("error", reject);
   });
@@ -1379,7 +1442,17 @@ async function checkPitWallUpdates() {
   };
 }
 
+const DOTENV_CACHE_MS = 60_000;
+let dotEnvCache = null;
+
 function readDotEnvValues() {
+  if (dotEnvCache && Date.now() - dotEnvCache.readAt < DOTENV_CACHE_MS) return dotEnvCache.values;
+  const values = readDotEnvFiles();
+  dotEnvCache = { values, readAt: Date.now() };
+  return values;
+}
+
+function readDotEnvFiles() {
   const candidates = [
     path.join(process.cwd(), ".env"),
     path.join(app.getAppPath(), ".env"),
@@ -1553,6 +1626,14 @@ function scheduleOpenF1Request(fn, options = {}) {
   });
 }
 
+const OPENF1_TRANSIENT_RETRIES = 2;
+
+function isTransientOpenF1Error(error) {
+  if (Number(error?.statusCode) >= 500) return true;
+  if (["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EAI_AGAIN", "EPIPE"].includes(error?.code)) return true;
+  return /^Timeout for /.test(String(error?.message || ""));
+}
+
 async function requestOpenF1Json(targetUrl, options = {}) {
   const timeout = options.timeout || 12000;
   let lastError = null;
@@ -1568,9 +1649,10 @@ async function requestOpenF1Json(targetUrl, options = {}) {
       if (error?.statusCode === 401 && openF1TokenCache) {
         openF1TokenCache = null;
       }
-      const retryable = error?.statusCode === 401 || error?.statusCode === 429;
+      const transient = isTransientOpenF1Error(error);
+      const retryable = error?.statusCode === 401 || error?.statusCode === 429 || (transient && attempt < OPENF1_TRANSIENT_RETRIES);
       if (!retryable || attempt === 3) throw error;
-      await wait(openF1RetryDelayMs(error, attempt));
+      await wait(openF1RetryDelayMs(error, attempt) + (transient ? Math.floor(Math.random() * 500) : 0));
     }
   }
   throw lastError || new Error("OpenF1 request failed");
@@ -1631,6 +1713,7 @@ function requestJsonPost(targetUrl, body, headers = {}, timeout = 20000) {
         resolve(json);
       });
     });
+    armRequestDeadline(req, timeout, targetUrl);
     req.on("timeout", () => req.destroy(new Error(`Timeout for ${targetUrl}`)));
     req.on("error", reject);
     req.write(payload);
@@ -1669,6 +1752,7 @@ function requestTextPost(targetUrl, body, headers = {}, timeout = 20000) {
         resolve(text);
       });
     });
+    armRequestDeadline(req, timeout, targetUrl);
     req.on("timeout", () => req.destroy(new Error(`Timeout for ${targetUrl}`)));
     req.on("error", reject);
     req.write(payload);
@@ -1784,20 +1868,28 @@ async function writeOAuthSession(provider, tokens) {
   return tokens;
 }
 
+const oauthRefreshes = new Map();
+
+function isOAuthRefreshRejected(error) {
+  return /token request failed \((?:400|401)\)|invalid_grant/i.test(String(error?.message || ""));
+}
+
 async function getActiveOAuthSession(provider) {
   const tokens = await readOAuthSession(provider);
   if (!tokens) return null;
   if (Number(tokens.expiresAt || 0) > Date.now() + 30_000) return tokens;
-  try {
-    const refreshed = provider === "codex"
-      ? await refreshCodexTokens(tokens.refreshToken, tokens.accountId)
-      : await refreshGrokTokens(tokens.refreshToken);
-    return writeOAuthSession(provider, refreshed);
-  } catch (error) {
-    console.error(`[${provider}-oauth] token refresh failed:`, error);
-    await deleteSecret(provider);
-    return null;
-  }
+  return getOrCreateInFlightRefresh(oauthRefreshes, provider, async () => {
+    try {
+      const refreshed = provider === "codex"
+        ? await refreshCodexTokens(tokens.refreshToken, tokens.accountId)
+        : await refreshGrokTokens(tokens.refreshToken);
+      return await writeOAuthSession(provider, refreshed);
+    } catch (error) {
+      console.error(`[${provider}-oauth] token refresh failed:`, error?.message || String(error));
+      if (isOAuthRefreshRejected(error)) await deleteSecret(provider);
+      return null;
+    }
+  });
 }
 
 function knownModel(model, models, fallback) {
@@ -4566,12 +4658,18 @@ function f1TimingLineSessionLap(line) {
 
 function f1TimingSectorHistoryAt(entries, targetSeconds, options = {}) {
   const startSeconds = finiteNumber(options.startSeconds);
-  const history = new Map();
+  let history = new Map();
   let state = {};
   for (const entry of entries || []) {
     if (startSeconds != null && entry.seconds < startSeconds) continue;
     if (entry.seconds > targetSeconds) break;
     state = mergeF1TimingDelta(state, entry.data);
+    // A compacted live base still holds last lap's S2/S3 (the feed never clears
+    // them), so replaying it as a delta fakes rollovers. Resume its history.
+    if (entry.sectorHistory) {
+      history = new Map(entry.sectorHistory);
+      continue;
+    }
     const lines = state?.Lines || {};
     const deltaLines = entry?.data?.Lines || {};
     for (const [numberText, deltaLine] of Object.entries(deltaLines)) {
@@ -4993,6 +5091,54 @@ function getTrackMapInvariantPositionData(sessionData) {
   };
   f1TimingTrackMapInvariantCache.set(cacheKey, invariant);
   return invariant;
+}
+
+// Raw timestamped position samples per driver in [fromUtcMs, toUtcMs]. The
+// Track Map buffers these and interpolates them against its own render clock,
+// so cars move continuously between polls instead of stepping or guessing.
+function f1TimingPositionTrail(sessionData, fromUtcMs, toUtcMs) {
+  const drivers = {};
+  if (!Number.isFinite(fromUtcMs) || !Number.isFinite(toUtcMs)) return drivers;
+  const { samples } = f1TimingPositionSamples(sessionData);
+  let lo = 0;
+  let hi = samples.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (samples[mid].utcMs < fromUtcMs) lo = mid + 1;
+    else hi = mid;
+  }
+  for (let index = lo; index < samples.length && samples[index].utcMs <= toUtcMs; index += 1) {
+    const { utcMs, driverNumber, row } = samples[index];
+    // (0,0) with no elevation is the feed's dropout sentinel, not a place.
+    if (row.x === 0 && row.y === 0 && !(row.z > 0)) continue;
+    if (!drivers[driverNumber]) drivers[driverNumber] = [];
+    drivers[driverNumber].push([utcMs, row.x, row.y, row.z ?? null]);
+  }
+  return drivers;
+}
+
+const TRACK_MAP_LIVE_TRAIL_ENTRIES = 40;
+
+function getTrackMapLivePositions(options = {}) {
+  if (!recoverStaleF1TimingLiveClient()) ensureF1TimingLiveClient().catch(() => {});
+  if (!f1LiveTimingState?.lastMessageAt || Date.now() - f1LiveTimingState.lastMessageAt > F1_TIMING_LIVE_STALE_MS) {
+    return { ok: false, latestUtcMs: null, drivers: {}, sample: [] };
+  }
+  const entriesByTopic = f1LiveTimingState.entriesByTopic || {};
+  const entries = [].concat(entriesByTopic["Position.z"] || [], entriesByTopic.Position || []);
+  // Only the newest messages can hold unseen samples; a fresh array also keeps
+  // the WeakMap sample cache from pinning a live array that mutates in place.
+  const tail = { positionEntries: entries.slice(-TRACK_MAP_LIVE_TRAIL_ENTRIES) };
+  const { samples } = f1TimingPositionSamples(tail);
+  const latestUtcMs = samples.length ? samples[samples.length - 1].utcMs : null;
+  const sinceUtcMs = finiteNumber(options.sinceUtcMs);
+  const fromUtcMs = latestUtcMs == null ? null : Math.max(sinceUtcMs != null ? sinceUtcMs + 1 : -Infinity, latestUtcMs - 20000);
+  return {
+    ok: latestUtcMs != null,
+    latestUtcMs,
+    drivers: latestUtcMs == null ? {} : f1TimingPositionTrail(tail, fromUtcMs, latestUtcMs),
+    sample: options.includeSample ? f1TimingPositionSamplePoints({ positionEntries: entries.slice() }) : [],
+  };
 }
 
 function parseF1TimingWeatherState(state) {
@@ -5648,6 +5794,13 @@ async function getTrackMapReplayTimingSnapshot(options = {}) {
     elapsedSeconds: Math.max(0, Number((item.elapsedSeconds - relativeOffset).toFixed(3))),
   }));
   const trackPositionInvariant = getTrackMapInvariantPositionData(sessionData);
+  // Samples ahead of the playhead let the renderer interpolate through the
+  // next poll; times map back to replay elapsed seconds via the origin pair.
+  const positionTrail = Number.isFinite(targetUtcMs) ? {
+    originUtcMs: targetUtcMs,
+    originElapsedSeconds: elapsedSeconds,
+    drivers: f1TimingPositionTrail(sessionData, targetUtcMs - 2000, targetUtcMs + 5000),
+  } : null;
   const data = {
     ok: timing.length > 0,
     sessionKind: sessionData.selectedSession?.session_name || sessionKind,
@@ -5662,6 +5815,7 @@ async function getTrackMapReplayTimingSnapshot(options = {}) {
     lapTimeline,
     trackPositionBounds: trackPositionInvariant.bounds,
     trackPositionSample: trackPositionInvariant.sample,
+    positionTrail,
     diagnostics: {
       ...(parsed.diagnostics || {}),
       raceStartArchiveSeconds: sessionData.raceStartArchiveSeconds,
@@ -5727,9 +5881,10 @@ function compactF1TimingLiveEntries(rows) {
   const baseSeconds = finiteNumber(rows[keepFrom - 1]?.seconds)
     ?? finiteNumber(rows[0]?.seconds)
     ?? 0;
+  const sectorHistory = f1TimingSectorHistoryAt(rows.slice(0, keepFrom), Infinity);
   const kept = rows.slice(keepFrom);
   rows.length = 0;
-  rows.push({ time: "", seconds: baseSeconds, data: base }, ...kept);
+  rows.push({ time: "", seconds: baseSeconds, data: base, ...(sectorHistory.size ? { sectorHistory } : {}) }, ...kept);
   // Compaction rewrites indices; drop any resume cursor so the next parse
   // rebuilds from the folded base instead of skipping past the new length.
   f1TimingStateCursorCache.delete(rows);
@@ -6556,7 +6711,22 @@ async function getLiveTimingSnapshot(options = {}) {
   }
   const cacheKey = `openf1:${Math.round(targetLatencySeconds)}`;
   if (liveTimingCache?.key === cacheKey && Date.now() - liveTimingCache.createdAt < 15000) return liveTimingCache.data;
-  const latestSessions = await requestOpenF1Json(openF1ApiUrl("sessions", { session_key: "latest" })).catch(() => []);
+  return getOrCreateInFlightRefresh(openF1LiveTimingRefreshes, cacheKey, () => refreshOpenF1LiveTimingSnapshot(cacheKey));
+}
+
+const OPENF1_LATEST_SESSIONS_CACHE_MS = 5 * 60_000;
+const openF1LiveTimingRefreshes = new Map();
+let openF1LatestSessionsCache = null;
+
+async function openF1LatestSessions() {
+  if (openF1LatestSessionsCache && Date.now() - openF1LatestSessionsCache.createdAt < OPENF1_LATEST_SESSIONS_CACHE_MS) return openF1LatestSessionsCache.data;
+  const sessions = await requestOpenF1Json(openF1ApiUrl("sessions", { session_key: "latest" })).catch(() => []);
+  if (Array.isArray(sessions) && sessions.length) openF1LatestSessionsCache = { createdAt: Date.now(), data: sessions };
+  return sessions;
+}
+
+async function refreshOpenF1LiveTimingSnapshot(cacheKey) {
+  const latestSessions = await openF1LatestSessions();
   const timingUrls = liveTimingEnrichmentUrls(latestSessions, Date.now());
   const keys = ["openF1Drivers", "openF1Position", "openF1Intervals", "openF1Laps", "openF1Stints", "openF1Pit", "openF1Weather", "openF1CarData"];
   const timingRequests = Object.fromEntries(keys.filter((key) => timingUrls[key]).map((key) => [key, timingUrls[key]]));
@@ -8139,17 +8309,21 @@ async function getPitWallSnapshot(options = {}) {
   return liveDataRefresh;
 }
 
+let fallbackPitWallDataCache = null;
+
 function readFallbackPitWallData() {
+  if (fallbackPitWallDataCache) return structuredClone(fallbackPitWallDataCache);
   try {
     const source = fs.readFileSync(path.join(app.getAppPath(), "ui_kits/pitwall/data.js"), "utf8");
     const sandbox = { window: {} };
     vm.createContext(sandbox);
     vm.runInContext(source, sandbox, { filename: "ui_kits/pitwall/data.js", timeout: 1000 });
     const data = sandbox.window.PW_DATA || {};
-    return {
+    fallbackPitWallDataCache = JSON.parse(JSON.stringify({
       drivers: Array.isArray(data.drivers) ? data.drivers : [],
       constructors: Array.isArray(data.constructors) ? data.constructors : [],
-    };
+    }));
+    return structuredClone(fallbackPitWallDataCache);
   } catch {}
   return { drivers: [], constructors: [] };
 }
@@ -11687,13 +11861,17 @@ function analyticsSessionCachePath() {
   return path.join(app.getPath("userData"), ANALYTICS_SESSION_CACHE_FILE);
 }
 
+let analyticsSessionDiskCache = null;
+
 function readAnalyticsSessionDiskCache() {
+  if (analyticsSessionDiskCache) return analyticsSessionDiskCache;
   try {
     const parsed = JSON.parse(fs.readFileSync(analyticsSessionCachePath(), "utf8"));
-    return parsed && typeof parsed === "object" && parsed.entries ? parsed : { entries: {} };
+    analyticsSessionDiskCache = parsed && typeof parsed === "object" && parsed.entries ? parsed : { entries: {} };
   } catch {
-    return { entries: {} };
+    analyticsSessionDiskCache = { entries: {} };
   }
+  return analyticsSessionDiskCache;
 }
 
 function analyticsDiskEntryFresh(entry) {
@@ -11753,12 +11931,14 @@ function analyticsSessionDiskEntry(keys = [], options = {}) {
 function writeAnalyticsSessionDiskCache(keys = [], data) {
   const cache = readAnalyticsSessionDiskCache();
   const createdAt = new Date().toISOString();
+  const merged = { ...cache.entries };
   for (const key of keys.filter(Boolean)) {
-    cache.entries[key] = { createdAt, data };
+    merged[key] = { createdAt, data };
   }
-  const entries = Object.entries(cache.entries).slice(-64);
+  const next = { entries: Object.fromEntries(Object.entries(merged).slice(-64)) };
+  analyticsSessionDiskCache = next;
   fs.mkdirSync(path.dirname(analyticsSessionCachePath()), { recursive: true });
-  fs.writeFileSync(analyticsSessionCachePath(), JSON.stringify({ entries: Object.fromEntries(entries) }), "utf8");
+  fs.writeFileSync(analyticsSessionCachePath(), JSON.stringify(next), "utf8");
 }
 
 function analyticsCacheFingerprint(data = {}) {
@@ -12038,11 +12218,13 @@ async function getAnalyticsSession(options = {}) {
     return cachedAnalyticsSessionData(data, "disk", staleDiskEntry?.createdAt, shouldRefresh);
   }
 
-  const data = await buildAnalyticsSessionData(sessionInfo, options);
-  analyticsSessionCache.set(cacheKey, { createdAt: Date.now(), data });
-  writeAnalyticsSessionDiskCache([cacheKey, aliasKey], data);
-  trimAnalyticsSessionMemoryCache();
-  return data;
+  return getOrCreateInFlightRefresh(analyticsBuildInFlight, cacheKey, async () => {
+    const data = await buildAnalyticsSessionData(sessionInfo, options);
+    analyticsSessionCache.set(cacheKey, { createdAt: Date.now(), data });
+    writeAnalyticsSessionDiskCache([cacheKey, aliasKey], data);
+    trimAnalyticsSessionMemoryCache();
+    return data;
+  });
 }
 
 function historicalEndpoint(options = {}) {
@@ -12148,6 +12330,7 @@ ipcMain.handle("pitwall:data:liveTimingResync", () => resyncF1LiveTiming());
 ipcMain.handle("pitwall:data:replayTiming", (_event, options = {}) => getReplayTimingSnapshot(options));
 ipcMain.handle("pitwall:data:replayTimingAvailability", (_event, options = {}) => getReplayTimingAvailability(options));
 ipcMain.handle("pitwall:data:trackMapReplayTiming", (_event, options = {}) => getTrackMapReplayTimingSnapshot(options));
+ipcMain.handle("pitwall:data:trackMapLivePositions", (_event, options = {}) => getTrackMapLivePositions(options));
 ipcMain.handle("pitwall:ai:authStatus", () => getAiAuthStatus());
 ipcMain.handle("pitwall:ai:authStart", (_event, provider) => startAiOAuth(provider));
 ipcMain.handle("pitwall:ai:authSubmitCode", (_event, provider, code) => submitAiOAuthCode(provider, code));
@@ -12251,14 +12434,25 @@ async function createWindow() {
     title: "Apexline",
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 16, y: 16 },
+    show: false,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
       webviewTag: false,
+      backgroundThrottling: false,
       preload: path.join(root, "electron/preload.cjs"),
     },
   });
+
+  const showWindow = () => {
+    clearTimeout(showFallbackTimer);
+    if (!win.isDestroyed() && !win.isVisible()) win.show();
+  };
+  const showFallbackTimer = setTimeout(showWindow, 5000);
+  win.once("ready-to-show", showWindow);
+  win.webContents.once("did-fail-load", showWindow);
+  win.once("closed", () => clearTimeout(showFallbackTimer));
 
   function sendWindowState() {
     if (!win.isDestroyed()) {
@@ -12342,7 +12536,9 @@ app.whenReady().then(async () => {
 
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+    createWindow().catch((error) => {
+      writePitWallDebugLog("window.activate-create-failed", { message: error?.message || "Window creation failed" });
+    });
   }
 });
 

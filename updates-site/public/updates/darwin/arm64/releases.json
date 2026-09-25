@@ -1,14 +1,14 @@
 {
-  "currentRelease": "1.1.13",
+  "currentRelease": "1.1.14",
   "releases": [
     {
-      "version": "1.1.13",
+      "version": "1.1.14",
       "updateTo": {
-        "version": "1.1.13",
-        "pub_date": "2026-09-25T18:15:36.553Z",
-        "notes": "Apexline 1.1.13",
-        "name": "Apexline 1.1.13",
-        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.13-mac-arm64.zip"
+        "version": "1.1.14",
+        "pub_date": "2026-09-25T21:23:01.758Z",
+        "notes": "Apexline 1.1.14 for Apple silicon Macs. Track Map cars now move smoothly and sit on their real positions in live sessions and replays: no more jumping or random speed-ups, pit-lane cars shown in the pit lane, and correct placement from the race start. Also fixes a crash when starting a Track Map replay. Download the zip, unzip it and drag Apexline to Applications.",
+        "name": "Apexline 1.1.14",
+        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.14-mac-arm64.zip"
       }
     }
   ]

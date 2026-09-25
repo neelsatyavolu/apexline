@@ -5056,19 +5056,33 @@ function f1TimingPositionSamplePoints(sessionData, maxPoints = 240) {
     if (!byDriver.has(sample.driverNumber)) byDriver.set(sample.driverNumber, []);
     byDriver.get(sample.driverNumber).push(sample);
   }
-  let trace = [];
-  for (const list of byDriver.values()) if (list.length > trace.length) trace = list;
-  trace = trace.filter((sample) => sample.row && sample.row.x != null && sample.row.y != null);
-  const onTrack = trace.filter((sample) => /^ontrack$/i.test(String(sample.row.status || "")));
-  const usable = onTrack.length >= 60 ? onTrack : trace;
-  // Drop stationary stretches (garage, grid, red flags): clusters of repeated
-  // off-line coordinates would otherwise bias the renderer's map fit.
-  const moving = [];
-  for (const sample of usable) {
-    const prev = moving[moving.length - 1];
-    if (!prev || Math.hypot(sample.row.x - prev.row.x, sample.row.y - prev.row.y) > 80) moving.push(sample);
+  // Keep only racing-speed running (> 30 m/s): garage, grid, red flags and the
+  // pit lane (speed-limited, and absent from the drawn outline) would bias the
+  // renderer's map fit. Practice traces are dominated by pit-lane running
+  // otherwise, which fitted Baku FP2 8% too small.
+  const fastSamples = (list) => {
+    const usable = list.filter((sample) => sample.row && sample.row.x != null && sample.row.y != null
+      && !(sample.row.x === 0 && sample.row.y === 0));
+    const fast = [];
+    for (let index = 1; index < usable.length; index += 1) {
+      const prev = usable[index - 1], sample = usable[index];
+      const dtMs = sample.utcMs - prev.utcMs;
+      if (dtMs <= 0 || dtMs > 1000) continue;
+      // Position units are decimetres: 300 units/s is 30 m/s.
+      if (Math.hypot(sample.row.x - prev.row.x, sample.row.y - prev.row.y) / (dtMs / 1000) > 300) fast.push(sample);
+    }
+    return fast;
+  };
+  let longest = [];
+  let fastest = [];
+  for (const list of byDriver.values()) {
+    if (list.length > longest.length) longest = list;
+    const fast = fastSamples(list);
+    if (fast.length > fastest.length) fastest = fast;
   }
-  const source = moving.length >= 60 ? moving : usable;
+  const source = fastest.length >= 60
+    ? fastest
+    : longest.filter((sample) => sample.row && sample.row.x != null && sample.row.y != null);
   const step = Math.max(1, Math.floor(source.length / maxPoints));
   const points = [];
   for (let index = 0; index < source.length; index += step) {
@@ -5118,6 +5132,47 @@ function f1TimingPositionTrail(sessionData, fromUtcMs, toUtcMs) {
 }
 
 const TRACK_MAP_LIVE_TRAIL_ENTRIES = 40;
+const TRACK_MAP_LIVE_REFERENCE_MIN_POINTS = 200;
+let trackMapLiveReference = { key: "", sample: [] };
+
+// Formula 1 uses one coordinate frame for every session of a weekend, so an
+// earlier session's trace (e.g. qualifying for the race) fits the map from
+// the first live frame, before the live session has run a lap: a field
+// bunched on the grid cannot pin the map's rotation on its own.
+async function loadTrackMapMeetingReferenceSample(year, meetingKey, currentPath, currentStartMs) {
+  const index = JSON.parse(stripJsonBom(await f1TimingRequestText(`${F1_TIMING_BASE_URL}/static/${year}/Index.json`, 12000)));
+  const meeting = (index?.Meetings || []).find((item) => String(item?.Key) === String(meetingKey));
+  const earlier = (meeting?.Sessions || [])
+    .filter((session) => session?.Path && session.Path !== currentPath
+      && (!Number.isFinite(currentStartMs) || Date.parse(session.StartDate || "") < currentStartMs))
+    .sort((a, b) => Date.parse(b.StartDate || "") - Date.parse(a.StartDate || ""));
+  for (const session of earlier) {
+    try {
+      const text = await f1TimingRequestText(`${F1_TIMING_BASE_URL}/static/${session.Path}Position.z.jsonStream`, 60000);
+      const sample = f1TimingPositionSamplePoints({ positionEntries: parseF1TimingJsonStream(text, { zipped: true }) });
+      if (sample.length >= TRACK_MAP_LIVE_REFERENCE_MIN_POINTS) return sample;
+    } catch (error) {
+      writePitWallDebugLog("trackmap.reference-trace-failed", { path: session.Path, message: error?.message || "request failed" });
+    }
+  }
+  return [];
+}
+
+function trackMapLiveReferenceSample(entriesByTopic) {
+  const info = f1TimingStateAt(entriesByTopic.SessionInfo || [], Number.MAX_SAFE_INTEGER) || {};
+  const path = String(info.Path || "");
+  const meetingKey = info.Meeting?.Key;
+  const year = path.slice(0, 4);
+  if (!path || meetingKey == null || !/^\d{4}$/.test(year)) return [];
+  const key = `${meetingKey}|${path}`;
+  if (trackMapLiveReference.key !== key) {
+    trackMapLiveReference = { key, sample: [] };
+    loadTrackMapMeetingReferenceSample(year, meetingKey, path, Date.parse(info.StartDate || ""))
+      .then((sample) => { if (trackMapLiveReference.key === key) trackMapLiveReference = { key, sample }; })
+      .catch((error) => writePitWallDebugLog("trackmap.reference-trace-failed", { path, message: error?.message || "index failed" }));
+  }
+  return trackMapLiveReference.sample;
+}
 
 function getTrackMapLivePositions(options = {}) {
   if (!recoverStaleF1TimingLiveClient()) ensureF1TimingLiveClient().catch(() => {});
@@ -5137,8 +5192,15 @@ function getTrackMapLivePositions(options = {}) {
     ok: latestUtcMs != null,
     latestUtcMs,
     drivers: latestUtcMs == null ? {} : f1TimingPositionTrail(tail, fromUtcMs, latestUtcMs),
-    sample: options.includeSample ? f1TimingPositionSamplePoints({ positionEntries: entries.slice() }) : [],
+    sample: options.includeSample ? trackMapLiveFitSample(entriesByTopic, entries) : [],
   };
+}
+
+function trackMapLiveFitSample(entriesByTopic, entries) {
+  const own = f1TimingPositionSamplePoints({ positionEntries: entries.slice() });
+  if (own.length >= TRACK_MAP_LIVE_REFERENCE_MIN_POINTS) return own;
+  const reference = trackMapLiveReferenceSample(entriesByTopic);
+  return reference.length ? reference : own;
 }
 
 function parseF1TimingWeatherState(state) {

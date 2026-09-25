@@ -31,7 +31,8 @@ function extractConsts(source) {
 
 const helpers = vm.runInNewContext(`(() => {
   ${extractConsts(trackMapSource)}
-  ${["distanceToSegment", "nearestTrackPoint", "applyOfficialFit", "fitOfficialSimilarity", "buildTrackZProfile"]
+  const trackSegmentCache = new WeakMap();
+  ${["distanceToSegment", "nearestTrackPoint", "trackSegments", "nearestOnTrack", "applyOfficialFit", "fitOfficialSimilarity", "buildTrackZProfile"]
     .map((name) => extractNamedFunction(trackMapSource, name)).join("\n")}
   return { nearestTrackPoint, applyOfficialFit, fitOfficialSimilarity, buildTrackZProfile,
            SNAP_MAX: TRACK_MAP_SNAP_MAX_DIST_PX, Z_WEIGHT: TRACK_MAP_Z_WEIGHT,

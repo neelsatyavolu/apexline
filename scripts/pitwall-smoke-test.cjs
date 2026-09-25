@@ -622,7 +622,7 @@ assert.match(trackMapSource, /preStartSeconds: 5/, "Track Map replay should star
 assert.match(trackMapSource, /i \/ Math\.max\(1, runningRows\.length\)/, "Track Map replay fallback spacing should not collapse blank-interval cars into one marker");
 assert.match(trackMapSource, /activeTiming\.filter\(\(row\) => !row\.retired\)/, "Track Map should not draw retired cars on the circuit");
 assert.match(trackMapSource, /function fitOfficialSimilarity/, "Track Map should align official positions with a rotation-aware similarity fit instead of axis flips only");
-assert.match(trackMapSource, /feed\.buffer\.sampleAt\(c\.number, clockMs\)/, "Track Map cars should interpolate buffered official samples at the render clock instead of dead-reckoning between polls");
+assert.match(trackMapSource, /advanceTrackCar\(feed\.buffer, c\.number, clockMs/, "Track Map cars should play smoothed, buffered official samples at the render clock instead of dead-reckoning between polls");
 assert.doesNotMatch(trackMapSource, /DEAD_RECKON/, "Track Map should not extrapolate car motion past the data");
 assert.match(trackMapSource, /TRACK_MAP_OFFICIAL_TELEPORT_PX = 150/, "Track Map replay should snap instead of gliding across the map on seek-sized position jumps");
 assert.match(mainProcess, /function f1TimingInterpolatedPositionRowsAt/, "Track Map replay should interpolate official positions between archive packets instead of stepping per entry");
@@ -630,7 +630,7 @@ assert.match(mainProcess, /trackPositionSample: trackPositionInvariant\.sample/,
 assert.match(trackMapSource, /trackPositionSample/, "Track Map replay should lock projector orientation from the session-wide position sample");
 assert.match(trackMapSource, /Math\.floor\(\(elapsedSeconds \* 1000\) \/ TRACK_MAP_REPLAY_DATA_POLL_MS\)/, "Track Map replay fetch bucket should use the configured one-second interval");
 assert.match(trackMapSource, /carsRef[\s\S]*projectorRef[\s\S]*requestAnimationFrame/, "Track Map replay animation should keep one RAF loop across data updates");
-assert.match(trackMapSource, /Math\.abs\(dTarget\) > TRACK_MAP_OFFICIAL_TELEPORT_PX\) motion\.s = motion\.targetS/, "Track Map replay should trust official points and only snap when the target teleports");
+assert.match(trackMapSource, /Math\.abs\(dTarget\) > TRACK_MAP_OFFICIAL_TELEPORT_PX\) next\.s = next\.targetS/, "Track Map replay should trust official points and only snap when the target teleports");
 assert.match(trackMapSource, /path\.getPointAtLength\(\(sMod \/ trackTotal\) \* L\)/, "Track Map cars should always render on the track centerline via along-path motion");
 assert.match(mainProcess, /Math\.floor\(\(elapsedSeconds \* 1000\) \/ 270\)/, "Track Map replay main-process cache should honor the 3.7 Hz fetch cadence");
 assert.match(mainProcess, /function f1TimingRaceStartArchiveSeconds/, "Track Map replay should anchor Monaco-style archives to the real race start");
@@ -8233,7 +8233,8 @@ runSmokeChecks().catch((error) => {
   assert.match(mainSource, /show: false,[\s\S]{0,400}backgroundThrottling: false/, "Main window should defer showing and keep live timing running while unfocused");
 }
 
-// Track Map motion: buffered official samples interpolated at a render clock.
+// Track Map motion: timestamped official samples, packet-timing correction,
+// centred smoothing, a per-car acceleration governor and a live jitter buffer.
 {
   const root = path.resolve(__dirname, "..");
   const trackMapSource = fs.readFileSync(path.join(root, "ui_kits/pitwall/TrackMap.jsx"), "utf8");
@@ -8254,52 +8255,108 @@ runSmokeChecks().catch((error) => {
   const trackMapConsts = [...trackMapSource.matchAll(/const (TRACK_MAP_[A-Z_0-9]+) = ([^;]+);/g)].map(([, n, v]) => `const ${n} = ${v};`).join("\n");
   const tm = vm.runInNewContext(`(() => {
     ${trackMapConsts}
-    ${["createTrackPositionBuffer", "createLiveTrackClock", "createReplayElapsedClock", "distanceToSegment", "nearestTrackPoint", "applyOfficialFit", "fitOfficialSimilarity"]
+    const officialFitCache = new Map();
+    const trackSegmentCache = new WeakMap();
+    ${["createTrackPositionBuffer", "correctPacketTiming", "smoothTrackPosition", "advanceTrackCar", "createLiveTrackClock", "createReplayElapsedClock",
+      "distanceToSegment", "nearestTrackPoint", "trackSegments", "nearestOnTrack", "applyOfficialFit", "fitOfficialSimilarity"]
       .map((name) => extract(trackMapSource, name)).join("\n")}
-    return { createTrackPositionBuffer, createLiveTrackClock, createReplayElapsedClock, fitOfficialSimilarity, TRACK_MAP_LIVE_DELAY_MS };
-  })()`, { Map, Set, Math, Number, Object, Array, Infinity, Boolean });
+    return { createTrackPositionBuffer, advanceTrackCar, createLiveTrackClock, createReplayElapsedClock, fitOfficialSimilarity,
+      TRACK_MAP_LIVE_DELAY_MS, TRACK_MAP_MAX_ACCEL_UNITS, TRACK_MAP_GOVERN_MIN_SPEED_UNITS };
+  })()`, { Map, WeakMap, Set, Math, Number, Object, Array, Infinity, Boolean, Float64Array });
 
-  // Buffer: interpolate between bracketing samples, hold briefly past the end,
-  // keep sample identity across re-sent windows, prune old samples.
+  // Three cars at a steady 80 m/s (800 units/s) whose feed packets carry a
+  // shared timestamp error of up to +-60ms, like the real Position.z feed.
+  const packetJitter = (k) => [0, 55, -40, 20, -60, 35, -15, 50, -30, 5][k % 10];
+  const steadyTrail = (fromK, toK) => {
+    const drivers = { 1: [], 2: [], 3: [] };
+    for (let k = fromK; k < toK; k += 1) {
+      const trueT = k * 250;
+      [1, 2, 3].forEach((n) => drivers[n].push([trueT + packetJitter(k), trueT * 0.8, n * 500, 10]));
+    }
+    return drivers;
+  };
   const buffer = tm.createTrackPositionBuffer();
-  buffer.merge({ 44: [[1000, 0, 0, 10], [1250, 100, 0, 20]] }, (t) => t, 0);
-  assert.deepEqual({ ...buffer.sampleAt(44, 1125) }, { x: 50, y: 0, z: 15 }, "Track Map buffer should interpolate official samples at the render time");
-  assert.equal(buffer.sampleAt(44, 1250 + 1000).x, 100, "Track Map buffer should hold the newest sample briefly past the end");
-  assert.equal(buffer.sampleAt(44, 1250 + 5000), null, "Track Map buffer should drop a car whose samples are long stale");
-  const heldSample = buffer.bracketAt(44, 1260).a;
-  buffer.merge({ 44: [[1250, 100, 0, 20], [1500, 200, 0, 20]] }, (t) => t, 0);
-  assert.equal(buffer.bracketAt(44, 1260).a, heldSample, "Re-sent samples should keep their identity so per-sample snaps stay stable");
-  assert.equal(buffer.sampleAt(44, 1375).x, 150, "Merged trails should extend interpolation to newer samples");
-  buffer.merge({}, (t) => t, 1200);
-  assert.equal(buffer.bracketAt(44, 1100)?.b ?? null, null, "Samples older than the keep window should be pruned");
+  buffer.merge(steadyTrail(0, 80), (t) => t, -Infinity, 0);
+  const speeds = [];
+  let maxError = 0;
+  for (let t = 5000; t <= 12000; t += 16) {
+    const p = buffer.smoothAt(1, t);
+    maxError = Math.max(maxError, Math.abs(p.x - t * 0.8));
+    speeds.push(Math.hypot(p.vx, p.vy));
+  }
+  assert.ok(maxError < 15, `Smoothed positions should sit within 1.5m of the true path despite packet timestamp jitter (${maxError.toFixed(1)})`);
+  assert.ok(Math.max(...speeds) / Math.min(...speeds) < 1.05, "Packet-timing correction plus smoothing should hold a steady car's speed within 5%");
 
-  // Live clock: sits a fixed delay behind the feed edge, never steps backwards,
-  // and glides (never lurches) to a stop short of the data when the feed stalls.
+  // A rewound glitch sample (30m behind) must not drag the car backwards.
+  const glitch = tm.createTrackPositionBuffer();
+  const glitchTrail = steadyTrail(0, 80);
+  glitchTrail[1][40] = [40 * 250, 40 * 250 * 0.8 - 300, 500, 10];
+  glitch.merge(glitchTrail, (t) => t, -Infinity, 0);
+  let glitchError = 0;
+  for (let t = 9000; t <= 11000; t += 16) glitchError = Math.max(glitchError, Math.abs(glitch.smoothAt(1, t).x - t * 0.8));
+  assert.ok(glitchError < 30, `A rewound feed sample should barely move the smoothed car (${glitchError.toFixed(1)} units)`);
+  assert.equal(glitch.generation(), 0, "Buffer generation starts at zero");
+  glitch.clear();
+  assert.equal(glitch.generation(), 1, "Clearing the buffer (a seek) should bump its generation so cars are re-placed");
+
+  // A lagging car whose reported position catches up 100m in one sample: the
+  // governor spreads it so on-screen speed never rises faster than the limit,
+  // and the car returns to its data within seconds.
+  const catchUp = tm.createTrackPositionBuffer();
+  const catchUpTrail = { 7: [] };
+  for (let k = 0; k < 200; k += 1) catchUpTrail[7].push([k * 250, k * 250 * 0.8 + (k >= 60 ? 1000 : 0), 0, 10]);
+  catchUp.merge(catchUpTrail, (t) => t, -Infinity, 0);
+  let state = null;
+  let worstAccel = 0;
+  let lastSpeed = null;
+  for (let t = 10000; t <= 40000; t += 16) {
+    state = tm.advanceTrackCar(catchUp, 7, t, state);
+    if (lastSpeed != null && state.speed > tm.TRACK_MAP_GOVERN_MIN_SPEED_UNITS) worstAccel = Math.max(worstAccel, (state.speed - lastSpeed) / 0.016);
+    lastSpeed = state.speed;
+  }
+  assert.ok(worstAccel <= tm.TRACK_MAP_MAX_ACCEL_UNITS * 1.05, `Rendered cars should never out-accelerate the governor (${worstAccel.toFixed(0)} units/s²)`);
+  assert.ok(state.lagMs < 100, `The governor should recover a catch-up's lag within seconds (${state.lagMs.toFixed(0)}ms left)`);
+
+  // A car parked in its pit box jitters by centimetres; that must not freeze
+  // its clock, or it would pull away seconds late.
+  const parked = tm.createTrackPositionBuffer();
+  const parkedTrail = { 9: [] };
+  for (let k = 0; k < 120; k += 1) parkedTrail[9].push([k * 250, (k % 2) * 3 + (k >= 60 ? (k - 60) * 250 * 0.2 : 0), 0, 10]);
+  parked.merge(parkedTrail, (t) => t, -Infinity, 0);
+  let parkedState = null;
+  for (let t = 5000; t <= 25000; t += 16) parkedState = tm.advanceTrackCar(parked, 9, t, parkedState);
+  assert.ok(parkedState.lagMs < 500, `A stationary car's jitter should not stall its playback (${parkedState.lagMs.toFixed(0)}ms lag)`);
+
+  // Live clock: trails the feed edge by the buffer delay, never runs
+  // backwards, changes rate by at most 2% while re-syncing, and glides to a
+  // stop short of the newest sample when the feed stalls.
   let now = 0;
   const clock = tm.createLiveTrackClock(() => now);
   assert.equal(clock.nowMs(), null, "Live clock should wait for feed data");
   clock.observe(1_000_000);
   assert.equal(clock.nowMs(), 1_000_000 - tm.TRACK_MAP_LIVE_DELAY_MS, "Live clock should start one buffer delay behind the newest sample");
   let previous = clock.nowMs();
-  let lastRate = null, maxRateChange = 0;
-  for (let frame = 1; frame <= 600; frame += 1) {
+  let maxRateChange = 0, lastRate = null, maxRate = 0;
+  for (let frame = 1; frame <= 1500; frame += 1) {
     now += 16;
-    if (frame % 60 === 0 && frame < 300) clock.observe(1_000_000 + frame * 16);
+    // Messages every ~1s, one of them arriving 400ms fresher than the rest.
+    if (frame % 60 === 0 && frame < 600) clock.observe(1_000_000 + frame * 16 + (frame === 300 ? 400 : 0));
     const value = clock.nowMs();
     assert.ok(value >= previous, "Live render clock should never run backwards");
     const rate = (value - previous) / 16;
     if (lastRate != null) maxRateChange = Math.max(maxRateChange, Math.abs(rate - lastRate));
+    if (frame < 600) maxRate = Math.max(maxRate, rate);
     lastRate = rate;
     previous = value;
   }
-  assert.ok(previous < 1_000_000 + 300 * 16, "Live render clock should not run past the newest buffered sample when the feed stalls");
+  assert.ok(maxRate <= 1.021, `Live clock re-sync should stay within 2% of real time (${maxRate.toFixed(3)})`);
   assert.ok(maxRateChange < 0.2, `Live render clock should ease playback speed rather than jump (${maxRateChange.toFixed(2)})`);
+  assert.ok(previous < 1_000_000 + 599 * 16 + 400, "Live render clock should stop short of the newest sample when the feed stalls");
 
   // Native timers throw "Illegal invocation" when called as methods of a plain
   // object; the replay clock's defaults must wrap them (this crashed replay).
   assert.match(trackMapSource, /setInterval: \(callback, ms\) => setInterval\(callback, ms\)/, "Replay clock default timers should wrap native setInterval");
   assert.match(trackMapSource, /clearInterval: \(id\) => clearInterval\(id\)/, "Replay clock default timers should wrap native clearInterval");
-  // Replay clock exposes a sub-tick playhead for per-frame interpolation.
   let replayNow = 0;
   const replayClock = tm.createReplayElapsedClock(10, null, { now: () => replayNow, setInterval: () => 1, clearInterval: () => {} });
   replayClock.start();
@@ -8316,7 +8373,6 @@ runSmokeChecks().catch((error) => {
   const deg = 177 * Math.PI / 180;
   const trace = [];
   for (let i = 0; i < outline.length; i += 1) {
-    // Dense on one end to skew the RMS-radius scale guess.
     for (let r = 0; r < (i < 30 ? 4 : 1); r += 1) {
       const [x, y] = outline[i];
       const ux = (x - 500) / 11 + r * 0.01, uy = -(y - 400) / 11; // y-up telemetry frame
@@ -8326,12 +8382,30 @@ runSmokeChecks().catch((error) => {
   const fitted = tm.fitOfficialSimilarity(trace, outline);
   assert.ok(fitted && fitted.score < 4, `Track Map fit should lock onto elongated circuits (score ${fitted && fitted.score.toFixed(1)})`);
   assert.equal(fitted.fit.mirror, true, "Track Map fit should use the y-up telemetry mirror");
+  // A cache hit must hand back the same projector: the renderer glides every
+  // car when the projector identity changes, so a fresh closure per render
+  // would nudge the whole field every second.
+  const projectorSandbox = vm.runInNewContext(`(() => {
+    ${trackMapConsts}
+    const officialFitCache = new Map();
+    const trackSegmentCache = new WeakMap();
+    ${["distanceToSegment", "nearestTrackPoint", "trackSegments", "nearestOnTrack", "applyOfficialFit", "buildTrackZProfile", "fitOfficialSimilarity", "officialPositionProjector"]
+      .map((name) => extract(trackMapSource, name)).join("\n")}
+    return { officialPositionProjector };
+  })()`, { Map, WeakMap, Set, Math, Number, Object, Array, Infinity, Boolean, Date, Float64Array });
+  const outlineGeom = { vb: "smoke", points: outline };
+  const firstProjector = projectorSandbox.officialPositionProjector([], outlineGeom, null, trace);
+  assert.ok(firstProjector, "Track Map should fit the synthetic trace");
+  assert.equal(projectorSandbox.officialPositionProjector([], outlineGeom, null, trace), firstProjector, "A cached fit should return the same projector function");
+  assert.match(trackMapSource, /const chooseProjector = [\s\S]*error < st\.chosenError - TRACK_MAP_FIT_SWAP_MARGIN_PX/, "Track Map should only swap to a fit that matches the field clearly better");
+  assert.match(trackMapSource, /projectorSwapped \? TRACK_MAP_FIT_SWAP_GLIDE_TAU_MS/, "A fit swap should glide the field instead of jumping it");
 
-  // Main process: timestamped trails for replay windows and a live poll IPC.
+  // Main process: timestamped trails, a fit trace from racing-speed running
+  // only (pit-lane crawling biased Baku FP2 8% small), and the live bridge.
   const trailSandbox = vm.runInNewContext(`(() => {
     const f1TimingPositionSampleCache = new WeakMap();
-    ${["finiteNumber", "f1TimingPositionSamples", "f1TimingPositionTrail"].map((name) => extract(mainSource, name)).join("\n")}
-    return { f1TimingPositionTrail };
+    ${["finiteNumber", "f1TimingPositionSamples", "f1TimingPositionTrail", "f1TimingPositionSamplePoints"].map((name) => extract(mainSource, name)).join("\n")}
+    return { f1TimingPositionTrail, f1TimingPositionSamplePoints };
   })()`, { WeakMap, Map, Set, Number, Date, Object, Array, Math });
   const packet = (iso, cars) => ({ Timestamp: iso, Entries: cars });
   const trail = trailSandbox.f1TimingPositionTrail({ positionEntries: [{ seconds: 1, data: { Position: [
@@ -8340,7 +8414,16 @@ runSmokeChecks().catch((error) => {
     packet("2026-06-07T13:00:09.000Z", { 44: { X: 90, Y: 90, Z: 5 } }),
   ] } }] }, Date.parse("2026-06-07T13:00:00.000Z"), Date.parse("2026-06-07T13:00:01.000Z"));
   assert.deepEqual(JSON.parse(JSON.stringify(trail)), { 44: [[Date.parse("2026-06-07T13:00:00.000Z"), 10, 20, 5], [Date.parse("2026-06-07T13:00:00.250Z"), 12, 21, 5]] }, "Position trails should cover only the window and drop (0,0) dropouts");
+  const pitThenLap = [];
+  for (let k = 0; k < 300; k += 1) {
+    // 20 s of pit-lane crawling at 16 m/s, then 55 s of racing at 70 m/s.
+    const x = k < 80 ? k * 40 : 80 * 40 + (k - 80) * 175;
+    pitThenLap.push(packet(new Date(Date.parse("2026-06-07T13:00:00Z") + k * 250).toISOString(), { 16: { X: x, Y: 5000, Z: 5, Status: "OnTrack" } }));
+  }
+  const tracePoints = trailSandbox.f1TimingPositionSamplePoints({ positionEntries: [{ seconds: 1, data: { Position: pitThenLap } }] });
+  assert.ok(tracePoints.length >= 60 && tracePoints.every((p) => p.x > 80 * 40), "The map-fit trace should use racing-speed running only, never pit-lane crawling");
   assert.match(mainSource, /ipcMain\.handle\("pitwall:data:trackMapLivePositions"/, "Main should expose a live Track Map position feed");
+  assert.match(mainSource, /function trackMapLiveFitSample[\s\S]*trackMapLiveReferenceSample/, "Live fits should fall back to an earlier session of the meeting before the live trace is long enough");
   assert.match(preloadSource, /trackMapLivePositions: \(options = \{\}\) => ipcRenderer\.invoke\("pitwall:data:trackMapLivePositions", options\)/, "Preload should expose the narrow live Track Map position bridge");
   assert.match(trackMapSource, /pitwall\.data\.trackMapLivePositions\(\{ sinceUtcMs, includeSample \}\)/, "Live Track Map should poll the position feed instead of the minutes-stale snapshot");
 }

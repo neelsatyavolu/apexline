@@ -18,26 +18,37 @@
   const FLAG_VAR = { green: "var(--flag-green)", yellow: "var(--flag-yellow, #ffd23f)", sc: "var(--flag-yellow, #ffd23f)", vsc: "var(--flag-yellow, #ffd23f)", red: "var(--live)", chequered: "var(--text-1)" };
   const TRACK_MAP_REPLAY_TICK_MS = 100;
   const TRACK_MAP_REPLAY_DATA_POLL_MS = 1000;
-  const TRACK_MAP_MOTION_TAU_MS = 80;       // only irons out snap noise: the target itself is interpolated
-  const TRACK_MAP_OFF_LINE_TAU_MS = 350;   // off the centerline (pit lane) the snap is ambiguous; cars there are slow
-  const TRACK_MAP_OFF_LINE_PX = 10;
-  const TRACK_MAP_FALLBACK_TAU_MS = 550;
+  const TRACK_MAP_MOTION_TAU_MS = 80;       // no-feed fallback: eases toward each new official point
+  const TRACK_MAP_FALLBACK_TAU_MS = 1500;   // no position data at all: gap-spaced estimates glide calmly between timing updates
   const TRACK_MAP_OFFICIAL_TELEPORT_PX = 150;
-  const TRACK_MAP_OFFICIAL_LOST_MS = 5000;  // hold a car's last official spot through dropouts this long
+  const TRACK_MAP_OFFICIAL_LOST_MS = 5000;  // hold a car's last position through dropouts this long, then hide it
   const TRACK_MAP_SNAP_MAX_DIST_PX = 60;
-  const TRACK_MAP_PIT_SNAP_MAX_DIST_PX = 160; // with continuity, keep pit-lane cars on the adjacent road
-  const TRACK_MAP_TRAIL_MAX_GAP_MS = 4000;  // interpolate across sample gaps up to this long
-  const TRACK_MAP_TRAIL_HOLD_MS = 1500;     // hold the edge sample this long past either end of the trail
+  const TRACK_MAP_GLIDE_JUMP_PX = 8;        // a target step this large in one frame is a discontinuity, not motion (cars move <2px/frame)
+  const TRACK_MAP_GLIDE_TAU_MS = 400;       // ...absorbed and glided out over this time constant
+  const TRACK_MAP_FIT_SWAP_GLIDE_TAU_MS = 1200;
+  const TRACK_MAP_INTERIM_FIT_WAIT_MS = 6000;
+  const TRACK_MAP_FIT_SWAP_MARGIN_PX = 0.3;
+  const TRACK_MAP_FEED_GRACE_MS = 4000;     // an active position feed (replay IPC, live poll) delivers well within this
   const TRACK_MAP_TRAIL_KEEP_MS = 15000;
+  const TRACK_MAP_SMOOTH_SIGMA_MS = 700;      // position smoothing kernel (see smoothTrackPosition)
+  const TRACK_MAP_SMOOTH_OUTLIER_UNITS = 250; // 25m off the local trajectory: a feed glitch (rewind), not motion
+  const TRACK_MAP_MAX_ACCEL_UNITS = 400;       // 40 m/s²: above any real car plus timing noise; data catch-ups run 100+ (see advanceTrackCar)
+  const TRACK_MAP_CATCHUP_RATE = 0.1;
+  const TRACK_MAP_GOVERN_MIN_SPEED_UNITS = 150; // 15 m/s
+  const TRACK_MAP_MAX_LAG_MS = 6000;
+  const TRACK_MAP_TIMING_SETTLE_MS = 1000;    // packet timestamps are corrected once this much newer data exists
+  const TRACK_MAP_TIMING_MAX_OFFSET_MS = 200;
+  const TRACK_MAP_TIMING_MIN_SPEED_UNITS = 300; // 30 m/s
   const TRACK_MAP_LIVE_POLL_MS = 500;
-  const TRACK_MAP_LIVE_DELAY_MS = 2000;     // render behind the newest sample so there is always one ahead
-  const TRACK_MAP_LIVE_MAX_DELAY_MS = 5000;
+  const TRACK_MAP_LIVE_DELAY_MS = 6200;     // smoothing look-ahead (3.5 sigma) + timing settle 1s + feed gaps (~2.2s) + poll
+  const TRACK_MAP_LIVE_EDGE_WINDOW_MS = 30000; // feed latency = freshest arrival over this window
   const TRACK_MAP_LIVE_MIN_HEADROOM_MS = 400;
-  const TRACK_MAP_LIVE_SLEW = 0.1;          // live render clock may run 10% fast/slow while re-syncing
-  const TRACK_MAP_LIVE_STARVED_TAU_MS = 600; // buffer running low: ease playback toward a stop at the newest sample
+  const TRACK_MAP_LIVE_SLEW = 0.02;         // live render clock runs at most 2% fast/slow while re-syncing
+  const TRACK_MAP_LIVE_STARVED_TAU_MS = 600;
+  const TRACK_MAP_LIVE_RATE_TAU_MS = 300;   // playback-rate changes ease in over this time constant // buffer running low: ease playback toward a stop at the newest sample
   const TRACK_MAP_LIVE_RESYNC_MS = 5000;
   const TRACK_MAP_LIVE_SAMPLE_MIN = 200;    // live trace points before it replaces the per-car fit
-  const TRACK_MAP_LIVE_SAMPLE_RETRY_MS = 10000;
+  const TRACK_MAP_LIVE_SAMPLE_RETRY_MS = 3000;
   const TRACK_MAP_RESNAP_WINDOW_PX = 110;
   const TRACK_MAP_Z_WEIGHT = 2;             // snap-cost px per projected px of elevation mismatch
   const TRACK_MAP_Z_PENALTY_MAX_PX = 18;    // cap: z arbitrates near-ties only; a stale z reading
@@ -278,6 +289,44 @@
     if (bestNear && bestNear.cost <= best.cost + 14) return { ...bestNear, total: len };
     return { ...best, total: len };
   }
+  // Allocation-free nearest point on the closed polyline, for the map fit's
+  // hot loops (tens of thousands of queries). Segment geometry is cached per
+  // outline array.
+  const trackSegmentCache = new WeakMap();
+  function trackSegments(pts) {
+    let segs = trackSegmentCache.get(pts);
+    if (segs) return segs;
+    const n = pts.length;
+    segs = { n, ax: new Float64Array(n), ay: new Float64Array(n), vx: new Float64Array(n), vy: new Float64Array(n), len2: new Float64Array(n), len: new Float64Array(n), cum: new Float64Array(n), total: 0 };
+    for (let i = 0; i < n; i += 1) {
+      const a = pts[i], b = pts[(i + 1) % n];
+      segs.ax[i] = a[0]; segs.ay[i] = a[1]; segs.vx[i] = b[0] - a[0]; segs.vy[i] = b[1] - a[1];
+      segs.len2[i] = segs.vx[i] ** 2 + segs.vy[i] ** 2 || 1;
+      segs.len[i] = Math.sqrt(segs.vx[i] ** 2 + segs.vy[i] ** 2);
+      segs.cum[i] = segs.total;
+      segs.total += segs.len[i];
+    }
+    trackSegmentCache.set(pts, segs);
+    return segs;
+  }
+  function nearestOnTrack(segs, x, y) {
+    let bestD2 = Infinity, bestI = 0, bestT = 0;
+    for (let i = 0; i < segs.n; i += 1) {
+      const wx = x - segs.ax[i], wy = y - segs.ay[i];
+      let t = (wx * segs.vx[i] + wy * segs.vy[i]) / segs.len2[i];
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const dx = wx - segs.vx[i] * t, dy = wy - segs.vy[i] * t;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) { bestD2 = d2; bestI = i; bestT = t; }
+    }
+    return {
+      x: segs.ax[bestI] + segs.vx[bestI] * bestT,
+      y: segs.ay[bestI] + segs.vy[bestI] * bestT,
+      d: Math.sqrt(bestD2),
+      s: segs.cum[bestI] + bestT * segs.len[bestI],
+      total: segs.total,
+    };
+  }
   // Official Formula 1 telemetry uses a session-local coordinate frame that is
   // rotated by an arbitrary angle relative to the drawn OSM centerline. Axis
   // flips/swaps alone leave whole track sections up to ~130px off the road, and
@@ -358,11 +407,13 @@
     tr = Math.sqrt(tr / trackPts.length) || 1;
     const baseScale = tr / sr;
     if (!Number.isFinite(baseScale) || baseScale <= 0) return null;
+    const segs = trackSegments(trackPts);
     const BACKWARD_PENALTY_PX = 40;
     const score = (fit, sample) => {
       let sum = 0, backward = 0, pairs = 0, lastS = null;
       for (const p of sample) {
-        const snapped = nearestTrackPoint(applyOfficialFit(p, fit), trackPts);
+        const projected = applyOfficialFit(p, fit);
+        const snapped = nearestOnTrack(segs, projected.x, projected.y);
         sum += snapped.d;
         if (lastS != null) {
           let ds = snapped.s - lastS;
@@ -383,74 +434,73 @@
     };
     const coarseStep = Math.max(1, Math.floor(points.length / 60));
     const coarseSample = points.filter((_, index) => index % coarseStep === 0);
-    let best = null;
-    for (let deg = 0; deg < 360; deg += 6) {
-      const fit = makeFit(true, deg, baseScale, tcx, tcy);
-      const value = score(fit, coarseSample);
-      if (!best || value < best.score) best = { fit, score: value };
-    }
-    if (!best) return null;
-    const refine = (degSpan, degStep, scales) => {
-      const current = best.fit;
-      for (let deg = current.deg - degSpan; deg <= current.deg + degSpan + 1e-9; deg += degStep) {
-        for (const scale of scales) {
-          if (deg === current.deg && scale === current.scale) continue;
-          const fit = makeFit(current.mirror, deg, scale, current.tx, current.ty);
-          const value = score(fit, points);
-          if (value < best.score) best = { fit, score: value };
-        }
+    // The RMS-radius scale guess can be 10%+ off (long, narrow circuits, or a
+    // trace heavy on one section), so the coarse search sweeps scale too, and
+    // the best few distinct coarse candidates are each polished (multi-start):
+    // a single start can settle in a wrong-scale basin that ICP cannot leave.
+    const coarse = [];
+    for (const k of [0.85, 0.92, 1, 1.08, 1.16]) {
+      for (let deg = 0; deg < 360; deg += 6) {
+        const fit = makeFit(true, deg, baseScale * k, tcx, tcy);
+        coarse.push({ fit, score: score(fit, coarseSample) });
       }
+    }
+    coarse.sort((a, b) => a.score - b.score);
+    const starts = [];
+    for (const candidate of coarse) {
+      const distinct = starts.every((other) => {
+        const dDeg = Math.abs(((candidate.fit.deg - other.fit.deg + 540) % 360) - 180);
+        return dDeg > 12 || Math.abs(candidate.fit.scale / other.fit.scale - 1) > 0.05;
+      });
+      if (distinct) starts.push(candidate);
+      if (starts.length >= 8) break;
+    }
+    const polish = (start) => {
+      let best = { fit: start.fit, score: score(start.fit, points) };
+      // ICP: re-solve rotation, scale and translation in closed form against
+      // each point's nearest track point.
+      for (let iter = 0; iter < 30; iter += 1) {
+        const fit = best.fit;
+        const kept = points.map((p) => {
+          const q = applyOfficialFit(p, fit);
+          return { a: { x: (p.x - fit.scx) * (fit.mirror ? -1 : 1), y: p.y - fit.scy }, b: nearestOnTrack(segs, q.x, q.y) };
+        });
+        let ax = 0, ay = 0, bx = 0, by = 0;
+        kept.forEach(({ a, b }) => { ax += a.x; ay += a.y; bx += b.x; by += b.y; });
+        ax /= kept.length; ay /= kept.length; bx /= kept.length; by /= kept.length;
+        let sxx = 0, sxy = 0, saa = 0;
+        kept.forEach(({ a, b }) => {
+          const px = a.x - ax, py = a.y - ay, qx = b.x - bx, qy = b.y - by;
+          sxx += px * qx + py * qy;
+          sxy += px * qy - py * qx;
+          saa += px * px + py * py;
+        });
+        if (!saa) break;
+        const rad = Math.atan2(sxy, sxx);
+        const scale = Math.hypot(sxx, sxy) / saa;
+        const cos = Math.cos(rad), sin = Math.sin(rad);
+        const next = {
+          ...fit, deg: (rad * 180) / Math.PI, cos, sin, scale,
+          tx: bx - (cos * ax - sin * ay) * scale,
+          ty: by - (sin * ax + cos * ay) * scale,
+        };
+        const nextScore = score(next, points);
+        if (!(nextScore < best.score - 0.01)) break;
+        best = { fit: next, score: nextScore };
+      }
+      return best;
     };
-    refine(6, 1, [best.fit.scale]);
-    refine(1, 0.25, [best.fit.scale]);
-    for (let pass = 0; pass < 2; pass += 1) {
-      let dx = 0, dy = 0;
-      points.forEach((p) => {
-        const projected = applyOfficialFit(p, best.fit);
-        const snapped = nearestTrackPoint(projected, trackPts);
-        dx += snapped.x - projected.x;
-        dy += snapped.y - projected.y;
-      });
-      const shifted = { ...best.fit, tx: best.fit.tx + dx / points.length, ty: best.fit.ty + dy / points.length };
-      const shiftedScore = score(shifted, points);
-      if (shiftedScore < best.score) best = { fit: shifted, score: shiftedScore };
-      refine(0, 1, [0.97, 0.98, 0.99, 1.01, 1.02, 1.03].map((k) => k * best.fit.scale));
-      refine(0.75, 0.25, [best.fit.scale]);
-    }
-    // ICP: re-solve rotation, scale and translation in closed form against each
-    // point's nearest track point. The RMS-radius scale guess is ~10% off on
-    // long, narrow circuits (Montreal), beyond what the grid refine can reach.
-    for (let iter = 0; iter < 20; iter += 1) {
-      const fit = best.fit;
-      const src = points.map((p) => ({ x: (p.x - fit.scx) * (fit.mirror ? -1 : 1), y: p.y - fit.scy }));
-      const dst = points.map((p) => nearestTrackPoint(applyOfficialFit(p, fit), trackPts));
-      let ax = 0, ay = 0, bx = 0, by = 0;
-      src.forEach((a, i) => { ax += a.x; ay += a.y; bx += dst[i].x; by += dst[i].y; });
-      ax /= src.length; ay /= src.length; bx /= src.length; by /= src.length;
-      let sxx = 0, sxy = 0, saa = 0;
-      src.forEach((a, i) => {
-        const px = a.x - ax, py = a.y - ay, qx = dst[i].x - bx, qy = dst[i].y - by;
-        sxx += px * qx + py * qy;
-        sxy += px * qy - py * qx;
-        saa += px * px + py * py;
-      });
-      if (!saa) break;
-      const rad = Math.atan2(sxy, sxx);
-      const scale = Math.hypot(sxx, sxy) / saa;
-      const cos = Math.cos(rad), sin = Math.sin(rad);
-      const next = {
-        ...fit, deg: (rad * 180) / Math.PI, cos, sin, scale,
-        tx: bx - (cos * ax - sin * ay) * scale,
-        ty: by - (sin * ax + cos * ay) * scale,
-      };
-      const nextScore = score(next, points);
-      if (!(nextScore < best.score - 0.01)) break;
-      best = { fit: next, score: nextScore };
-    }
+    let best = null;
+    starts.forEach((start) => {
+      const polished = polish(start);
+      if (!best || polished.score < best.score) best = polished;
+    });
+    if (!best) return null;
     // Which way the trace runs along the polyline, for forward-biased motion.
     let forward = 0, backward = 0, lastS = null;
     points.forEach((p) => {
-      const snapped = nearestTrackPoint(applyOfficialFit(p, best.fit), trackPts);
+      const projected = applyOfficialFit(p, best.fit);
+      const snapped = nearestOnTrack(segs, projected.x, projected.y);
       if (lastS != null) {
         let ds = snapped.s - lastS;
         if (ds < -snapped.total / 2) ds += snapped.total;
@@ -503,13 +553,16 @@
       if (officialFitCache.size > 40) officialFitCache.delete(officialFitCache.keys().next().value);
     }
     if (!entry.best.fit) return null;
-    const fit = entry.best.fit;
-    // Returns the raw projected point; the motion layer snaps it to the track
-    // with continuity so hairpin legs are not crossed.
-    const project = (point) => applyOfficialFit(point, fit);
-    project.zInfo = entry.zAt ? { zAt: entry.zAt, weight: TRACK_MAP_Z_WEIGHT * fit.scale } : null;
-    project.reversed = Boolean(entry.best.reversed);
-    return project;
+    // One function per fit: the renderer treats a new projector identity as
+    // a fit swap (and glides every car), so a cache hit must return the same.
+    if (!entry.project) {
+      const fit = entry.best.fit;
+      const project = (point) => applyOfficialFit(point, fit);
+      project.zInfo = entry.zAt ? { zAt: entry.zAt, weight: TRACK_MAP_Z_WEIGHT * fit.scale } : null;
+      project.reversed = Boolean(entry.best.reversed);
+      entry.project = project;
+    }
+    return entry.project;
   }
 
   /* ====================================================================== */
@@ -810,8 +863,11 @@
         const a = pts[i], b = pts[(i + 1) % pts.length];
         trackTotal += Math.hypot(b[0] - a[0], b[1] - a[1]);
       }
-      let interimProjector = null, interimAt = -Infinity;
-      let snapCache = new WeakMap(), snapCacheProjector = null;
+      let interimAt = -Infinity;
+      // The interim fit lives in persistent state: this effect restarts on
+      // pause/geometry changes, and losing the fit would re-place every car.
+      if (st.interimGeom !== geom) { st.interimGeom = geom; st.interimProjector = null; }
+      const segs = trackSegments(pts);
       const wrapMod = (s) => ((s % trackTotal) + trackTotal) % trackTotal;
       // Forward-biased: cars race forward, which is decreasing s on outlines
       // drawn against the driving direction.
@@ -820,100 +876,186 @@
         const forward = m > trackTotal * 0.85 ? m - trackTotal : m;
         return reversed ? -forward : forward;
       };
-      // Official point -> track snap, or null when unusable. hintS keeps the
-      // snap on the car's current leg (hairpins, tunnel over/under).
-      const snapPoint = (tp, hintS, project) => {
-        const zRaw = Number(tp?.z);
-        // (0,0) with no elevation is the feed's dropout sentinel, not a place.
-        if (!project || !tp || (tp.x === 0 && tp.y === 0 && !(zRaw > 0))) return null;
-        const hint = hintS != null ? { s: hintS, total: trackTotal, window: TRACK_MAP_RESNAP_WINDOW_PX } : null;
-        const zInfo = project.zInfo && zRaw > 0 ? { zAt: project.zInfo.zAt, weight: project.zInfo.weight, z: zRaw } : null;
-        const snap = nearestTrackPoint(project(tp), pts, hint, zInfo);
-        return snap && snap.d <= (hint ? TRACK_MAP_PIT_SNAP_MAX_DIST_PX : TRACK_MAP_SNAP_MAX_DIST_PX) ? snap : null;
+      // Early live, before any session trace exists (the first session of a
+      // weekend): fit every car's buffered racing-speed running once it covers
+      // most of the lap (a grid-bunched field cannot pin the rotation), then
+      // keep that fit rather than refitting.
+      const interimFit = (feed) => {
+        const points = feed.buffer.fastSamples(400);
+        if (points.length < 60) return null;
+        const candidate = officialPositionProjector([], geom, null, points);
+        if (!candidate) return null;
+        const bins = new Set(points.map((p) => {
+          const q = candidate(p);
+          return Math.floor((nearestOnTrack(segs, q.x, q.y).s / segs.total) * 10);
+        }));
+        return bins.size >= 7 ? candidate : null;
       };
-      // Each buffered sample is snapped once; cars then blend along the track
-      // between the two samples around the render time, so a snap that jumps
-      // across a corner spreads over the sample interval instead of one frame.
-      const snapSample = (sample, hintS, project) => {
-        if (snapCacheProjector !== project) { snapCache = new WeakMap(); snapCacheProjector = project; }
-        if (!snapCache.has(sample)) snapCache.set(sample, snapPoint(sample, hintS, project));
-        return snapCache.get(sample);
+      // Mean distance of the field's recent racing-speed samples from the
+      // drawn centerline under a fit: the arbiter between competing fits.
+      const fitError = (project, points) => {
+        let sum = 0;
+        points.forEach((p) => { const q = project(p); sum += nearestOnTrack(segs, q.x, q.y).d; });
+        return sum / points.length;
+      };
+      // Never swap to a worse fit: a live session trace shorter than a lap,
+      // for instance, can fit worse than the field-wide interim fit. Each new
+      // candidate is scored once against the buffer; the fit only changes for
+      // a clearly better one (every change glides the whole field).
+      const chooseProjector = (candidate, feed, feedHasData) => {
+        if (!candidate) return st.chosenProjector && st.chosenGeom === geom ? st.chosenProjector : null;
+        if (st.chosenGeom !== geom) { st.chosenGeom = geom; st.chosenProjector = null; st.chosenError = Infinity; st.scored = new WeakMap(); }
+        if (candidate === st.chosenProjector) return candidate;
+        const points = feedHasData ? feed.buffer.fastSamples(300) : [];
+        if (points.length < 60) {
+          // Nothing to judge by yet: a session trace fit is the best guess.
+          if (!st.chosenProjector) { st.chosenProjector = candidate; st.chosenError = Infinity; }
+          return st.chosenProjector;
+        }
+        if (!st.scored.has(candidate)) st.scored.set(candidate, fitError(candidate, points));
+        const error = st.scored.get(candidate);
+        if (!Number.isFinite(st.chosenError) && st.chosenProjector) st.chosenError = fitError(st.chosenProjector, points);
+        if (!st.chosenProjector || error < st.chosenError - TRACK_MAP_FIT_SWAP_MARGIN_PX) {
+          st.chosenProjector = candidate;
+          st.chosenError = error;
+        }
+        return st.chosenProjector;
+      };
+      const setTrail = (el, dx, dy) => {
+        const trail = el.querySelector(".tm-car__trail");
+        if (trail) { trail.setAttribute("x2", dx.toFixed(2)); trail.setAttribute("y2", dy.toFixed(2)); }
+      };
+      // Buffered official data: the car is drawn exactly at its smoothed,
+      // projected position. Only a discontinuity in that target (a fit swap,
+      // data resuming after a dropout) is absorbed into an offset that decays,
+      // so cars glide instead of jumping. Cars without data are hidden, never
+      // parked in made-up gap slots.
+      const placeFeedCar = (c, el, motion, now, dtFrame, project, feed, clockMs, projectorSwapped) => {
+        let next = motion && motion.feed && now - motion.seenAt <= TRACK_MAP_OFFICIAL_LOST_MS ? motion : null;
+        const track = project && clockMs != null ? advanceTrackCar(feed.buffer, c.number, clockMs, next?.track) : null;
+        const p = track?.p;
+        // (0,0) with no elevation is the feed's dropout sentinel, not a place.
+        const usable = p && !(p.x === 0 && p.y === 0 && !(p.z > 0));
+        if (usable) {
+          const target = project(p);
+          const ahead = project({ x: p.x + p.vx * 0.1, y: p.y + p.vy * 0.1 });
+          if (!next) {
+            next = { feed: true, x: target.x, y: target.y, tx: target.x, ty: target.y, ox: 0, oy: 0, hx: 0, hy: 0, seenAt: now };
+          } else {
+            const jx = target.x - next.tx, jy = target.y - next.ty;
+            // A new map fit moves every car at once: always glide that.
+            const absorb = projectorSwapped || Math.hypot(jx, jy) > TRACK_MAP_GLIDE_JUMP_PX;
+            const offsetX = absorb ? next.ox - jx : next.ox;
+            const offsetY = absorb ? next.oy - jy : next.oy;
+            // A fit swap settles slowly so the field eases over together.
+            const glideTau = projectorSwapped ? TRACK_MAP_FIT_SWAP_GLIDE_TAU_MS
+              : absorb ? Math.max(TRACK_MAP_GLIDE_TAU_MS, next.glideTau || 0)
+                : Math.hypot(next.ox, next.oy) < 0.05 ? TRACK_MAP_GLIDE_TAU_MS : next.glideTau || TRACK_MAP_GLIDE_TAU_MS;
+            const decay = Math.exp(-dtFrame * 1000 / glideTau);
+            next = { ...next, glideTau, tx: target.x, ty: target.y, ox: offsetX * decay, oy: offsetY * decay, seenAt: now };
+          }
+          const hx = ahead.x - target.x, hy = ahead.y - target.y, h = Math.hypot(hx, hy);
+          next = { ...next, track, x: target.x + next.ox, y: target.y + next.oy, ...(h > 0.3 ? { hx: hx / h, hy: hy / h } : {}) };
+        }
+        if (!next) {
+          el.style.visibility = "hidden";
+          return null;
+        }
+        el.style.visibility = "";
+        el.style.transform = `translate(${next.x.toFixed(2)}px, ${next.y.toFixed(2)}px)`;
+        setTrail(el, -next.hx * 9, -next.hy * 9);
+        return next;
+      };
+      // No position feed (e.g. a timing source without coordinates): place the
+      // car's single official point on the centerline, or space cars by gap.
+      const placeLegacyCar = (c, el, motion, now, dtFrame, project, u, path, L) => {
+        const tp = c.trackPosition;
+        const zRaw = Number(tp?.z);
+        let official = null;
+        if (project && tp && !(tp.x === 0 && tp.y === 0 && !(zRaw > 0))) {
+          const hint = motion?.official ? { s: wrapMod(motion.targetS), total: trackTotal, window: TRACK_MAP_RESNAP_WINDOW_PX } : null;
+          const zInfo = project.zInfo && zRaw > 0 ? { zAt: project.zInfo.zAt, weight: project.zInfo.weight, z: zRaw } : null;
+          const snap = nearestTrackPoint(project(tp), pts, hint, zInfo);
+          official = snap && snap.d <= TRACK_MAP_SNAP_MAX_DIST_PX ? snap : null;
+        }
+        const reversed = project?.reversed;
+        const fallbackS = wrapMod((reversed ? -1 : 1) * ((u - c.frac + 1) % 1) * trackTotal);
+        let next = motion && !motion.feed ? { ...motion } : { s: official ? official.s : fallbackS, targetS: official ? official.s : fallbackS, official: false, officialAt: -Infinity };
+        if (official) {
+          const dTarget = wrapDelta(official.s - wrapMod(next.targetS), reversed);
+          next.targetS += dTarget;
+          if (!next.official || Math.abs(dTarget) > TRACK_MAP_OFFICIAL_TELEPORT_PX) next.s = next.targetS;
+          next.official = true;
+          next.officialAt = now;
+        } else if (!next.official || now - next.officialAt > TRACK_MAP_OFFICIAL_LOST_MS) {
+          next.official = false;
+          const dFallback = wrapDelta(fallbackS - wrapMod(next.targetS), reversed);
+          if (Math.abs(dFallback) > TRACK_MAP_OFFICIAL_TELEPORT_PX * 2) {
+            next.targetS += dFallback;
+            next.s = next.targetS;
+          } else {
+            next.targetS += dFallback * (1 - Math.exp(-dtFrame * 1000 / TRACK_MAP_FALLBACK_TAU_MS));
+          }
+        }
+        next.s += (next.targetS - next.s) * (1 - Math.exp(-dtFrame * 1000 / TRACK_MAP_MOTION_TAU_MS));
+        const sMod = wrapMod(next.s);
+        const pt = path.getPointAtLength((sMod / trackTotal) * L);
+        const back = path.getPointAtLength((wrapMod(sMod + (reversed ? 9 : -9)) / trackTotal) * L);
+        el.style.visibility = "";
+        el.style.transform = `translate(${pt.x.toFixed(2)}px, ${pt.y.toFixed(2)}px)`;
+        setTrail(el, back.x - pt.x, back.y - pt.y);
+        return next;
       };
       const place = (u, now = performance.now()) => {
         const path = pathRef.current, L = path && path.getTotalLength();
         if (!L || !trackTotal) return false;
         const cars = carsRef.current;
         const feed = feedRef.current;
+        // A seek or mode switch clears the buffer: place cars afresh rather
+        // than gliding them across the map from where they were.
+        if (feed && feed.buffer.generation() !== st.generation) {
+          st.generation = feed.buffer.generation();
+          st.generationAt = now;
+          st.interimProjector = null;
+          st.chosenProjector = null;
+          st.chosenError = Infinity;
+          motionRef.current = {};
+        }
+        // While a position feed is active, cars wait (hidden) for its data
+        // rather than flashing to made-up slots; only a feed that stays empty
+        // falls back to the snapshot/gap placement.
         const feedHasData = Boolean(feed && feed.buffer.size());
+        const useFeed = feedHasData || Boolean(feed?.active && now - Math.max(feed.since, st.generationAt ?? -Infinity) < TRACK_MAP_FEED_GRACE_MS);
         // A paused live map freezes its render time; the replay clock pauses itself.
         if (!paused || st.clockMs == null) st.clockMs = feed ? feed.clockMs() : null;
         const clockMs = st.clockMs;
-        const positionOf = (c) => feedHasData
-          ? (clockMs != null ? feed.buffer.sampleAt(c.number, clockMs) : null)
-          : c.trackPosition;
-        let projectOfficialPosition = projectorRef.current;
-        if (!projectOfficialPosition && feedHasData) {
-          // No session trace yet (early live): fit the field's current spread,
-          // refreshed occasionally rather than every frame.
-          if (now - interimAt > 3000) {
-            interimAt = now;
-            interimProjector = officialPositionProjector(cars.map((c) => ({ trackPosition: positionOf(c) })), geom, null, null);
-          }
-          projectOfficialPosition = interimProjector;
+        // Candidate fits: the session trace (replay, or live once long enough
+        // or from an earlier session of the meeting) and, while there is none,
+        // an interim fit of the field's recent running. The chooser keeps
+        // whichever fits the field better.
+        const traceProjector = projectorRef.current;
+        if (!traceProjector && feedHasData && !st.interimProjector
+          && now - interimAt > 2000 && now - (feed.since ?? 0) > TRACK_MAP_INTERIM_FIT_WAIT_MS) {
+          // Give the session trace a few seconds to arrive first.
+          interimAt = now;
+          st.interimProjector = interimFit(feed);
         }
+        const project = chooseProjector(traceProjector || st.interimProjector, feed, feedHasData);
+        // Any change of fit once cars are on screen is a swap to glide; a
+        // frame without a fit must not reset that memory.
+        const projectorSwapped = Boolean(project && st.project && st.project !== project);
+        if (project) st.project = project;
         const activeCodes = new Set(cars.map((car) => car.code));
         cars.forEach((c) => {
           const el = carRefs.current[c.code];
           if (!el) return;
-          let motion = motionRef.current[c.code] || null;
-          const hintS = motion?.official ? wrapMod(motion.targetS) : null;
-          let official = null;
-          if (feedHasData) {
-            const bracket = clockMs != null ? feed.buffer.bracketAt(c.number, clockMs) : null;
-            const snapA = bracket ? snapSample(bracket.a, hintS, projectOfficialPosition) : null;
-            const snapB = snapA && bracket.b ? snapSample(bracket.b, snapA.s, projectOfficialPosition) : null;
-            official = snapB ? { s: snapA.s + wrapDelta(snapB.s - snapA.s, projectOfficialPosition.reversed) * bracket.k, d: Math.max(snapA.d, snapB.d) } : snapA;
-          } else {
-            official = snapPoint(c.trackPosition, hintS, projectOfficialPosition);
-          }
-          const fallbackS = wrapMod((projectOfficialPosition?.reversed ? -1 : 1) * ((u - c.frac + 1) % 1) * trackTotal);
-          if (!motion) {
-            const startS = official ? official.s : fallbackS;
-            motion = { s: startS, targetS: startS, frameAt: now, official: false, officialAt: -Infinity };
-          }
-          const dtFrame = Math.max(0, Math.min(0.1, (now - motion.frameAt) / 1000));
-          motion.frameAt = now;
-          if (official) {
-            const dTarget = wrapDelta(official.s - wrapMod(motion.targetS), projectOfficialPosition?.reversed);
-            motion.targetS += dTarget;
-            // First fix, seek, or data resume: jump rather than racing around the lap.
-            if (!motion.official || Math.abs(dTarget) > TRACK_MAP_OFFICIAL_TELEPORT_PX) motion.s = motion.targetS;
-            motion.official = true;
-            motion.officialAt = now;
-            motion.offLine = official.d > TRACK_MAP_OFF_LINE_PX;
-          } else if (!motion.official || now - motion.officialAt > TRACK_MAP_OFFICIAL_LOST_MS) {
-            // No official data for this car: ease toward the gap-spaced slot.
-            motion.official = false;
-            const dFallback = wrapDelta(fallbackS - wrapMod(motion.targetS), projectOfficialPosition?.reversed);
-            if (Math.abs(dFallback) > TRACK_MAP_OFFICIAL_TELEPORT_PX * 2) {
-              motion.targetS += dFallback;
-              motion.s = motion.targetS;
-            } else {
-              motion.targetS += dFallback * (1 - Math.exp(-dtFrame * 1000 / TRACK_MAP_FALLBACK_TAU_MS));
-            }
-          }
-          // Otherwise a brief dropout: hold the last official spot.
-          // Ease the smoothing itself so leaving the pit lane never lurches.
-          const tauTarget = motion.offLine ? TRACK_MAP_OFF_LINE_TAU_MS : TRACK_MAP_MOTION_TAU_MS;
-          motion.tau = motion.tau == null ? tauTarget : motion.tau + (tauTarget - motion.tau) * (1 - Math.exp(-dtFrame * 1000 / TRACK_MAP_OFF_LINE_TAU_MS));
-          motion.s += (motion.targetS - motion.s) * (1 - Math.exp(-dtFrame * 1000 / motion.tau));
-          motionRef.current[c.code] = motion;
-          const sMod = wrapMod(motion.s);
-          const pt = path.getPointAtLength((sMod / trackTotal) * L);
-          const back = path.getPointAtLength((wrapMod(sMod - 9) / trackTotal) * L);
-          el.style.transform = `translate(${pt.x.toFixed(2)}px, ${pt.y.toFixed(2)}px)`;
-          const trail = el.querySelector(".tm-car__trail");
-          if (trail) { trail.setAttribute("x2", (back.x - pt.x).toFixed(2)); trail.setAttribute("y2", (back.y - pt.y).toFixed(2)); }
+          const motion = motionRef.current[c.code] || null;
+          const dtFrame = motion?.frameAt == null ? 0 : Math.max(0, Math.min(0.1, (now - motion.frameAt) / 1000));
+          const next = useFeed
+            ? placeFeedCar(c, el, motion, now, dtFrame, project, feed, clockMs, projectorSwapped)
+            : placeLegacyCar(c, el, motion, now, dtFrame, project, u, path, L);
+          if (next) motionRef.current[c.code] = { ...next, frameAt: now };
+          else delete motionRef.current[c.code];
         });
         Object.keys(motionRef.current).forEach((code) => { if (!activeCodes.has(code)) delete motionRef.current[code]; });
         return true;
@@ -1322,7 +1464,8 @@
   }
 
   function createReplayElapsedClock(initialSeconds, onCommit, timers = {
-    now: () => Date.now(),
+    // Sub-millisecond clock: ms-quantised time jitters per-frame motion at 120Hz.
+    now: () => performance.now(),
     // Wrapped: browsers throw "Illegal invocation" when the native timers are
     // called as methods of this object.
     setInterval: (callback, ms) => setInterval(callback, ms),
@@ -1400,12 +1543,17 @@
   // render clock's unit: replay elapsed ms, or live feed UTC ms.
   function createTrackPositionBuffer() {
     let byDriver = new Map();
+    let generation = 0;
     return {
-      clear() { byDriver = new Map(); },
+      clear() { byDriver = new Map(); generation += 1; },
       size() { return byDriver.size; },
+      // Bumped by clear(): lets the renderer re-place cars after a seek.
+      generation() { return generation; },
       // drivers: { [number]: [[time, x, y, z], ...] }. Incoming samples replace
       // the overlapping tail, so re-sent replay windows and seeks stay ordered.
-      merge(drivers, toTime, keepAfterMs) {
+      // renderMs: the current render time, so timing corrections never touch
+      // samples the smoothing window is already drawing from.
+      merge(drivers, toTime, keepAfterMs, renderMs = null) {
         const next = new Map();
         byDriver.forEach((list, number) => {
           const kept = list.filter((p) => p.t >= keepAfterMs);
@@ -1418,90 +1566,252 @@
             .sort((a, b) => a.t - b.t);
           if (!incoming.length) return;
           const number = Number(numberText);
-          const existing = next.get(number) || [];
-          // Re-sent samples keep their identity so the renderer's per-sample
-          // snap cache (and so the car's track leg) stays stable across polls.
-          const known = new Map(existing.map((p) => [Math.round(p.t), p]));
-          const before = existing.filter((p) => p.t < incoming[0].t);
-          next.set(number, before.concat(incoming.map((p) => known.get(Math.round(p.t)) || p)));
+          const before = (next.get(number) || []).filter((p) => p.t < incoming[0].t);
+          next.set(number, before.concat(incoming));
         });
+        correctPacketTiming(next, renderMs);
         byDriver = next;
       },
-      // The samples bracketing t: { a, b, k } to blend a -> b by k, or one
-      // held edge sample as { a, b: null, k: 0 }.
-      bracketAt(number, t) {
-        const list = byDriver.get(Number(number));
-        if (!list || !list.length || !Number.isFinite(t)) return null;
-        let lo = 0, hi = list.length;
-        while (lo < hi) {
-          const mid = (lo + hi) >> 1;
-          if (list[mid].t <= t) lo = mid + 1;
-          else hi = mid;
-        }
-        const prev = list[lo - 1], next = list[lo];
-        if (prev && next && next.t - prev.t <= TRACK_MAP_TRAIL_MAX_GAP_MS) {
-          return { a: prev, b: next, k: (t - prev.t) / ((next.t - prev.t) || 1) };
-        }
-        if (prev && t - prev.t <= TRACK_MAP_TRAIL_HOLD_MS) return { a: prev, b: null, k: 0 };
-        if (next && next.t - t <= TRACK_MAP_TRAIL_HOLD_MS) return { a: next, b: null, k: 0 };
-        return null;
+      smoothAt(number, t) {
+        return smoothTrackPosition(byDriver.get(Number(number)), t);
       },
-      sampleAt(number, t) {
-        const bracket = this.bracketAt(number, t);
-        if (!bracket) return null;
-        const { a, b, k } = bracket;
-        if (!b) return a;
-        return {
-          x: a.x + (b.x - a.x) * k,
-          y: a.y + (b.y - a.y) * k,
-          z: a.z != null && b.z != null ? a.z + (b.z - a.z) * k : a.z,
-        };
+      // Racing-speed samples from every car (pit-lane crawling and parked cars
+      // excluded), for fitting the map before a session trace exists.
+      fastSamples(limit) {
+        const fast = [];
+        byDriver.forEach((list) => {
+          for (let i = 1; i < list.length; i += 1) {
+            const a = list[i - 1], b = list[i];
+            const dtS = (b.t - a.t) / 1000;
+            if (dtS > 0 && dtS < 1 && Math.hypot(b.x - a.x, b.y - a.y) / dtS > TRACK_MAP_TIMING_MIN_SPEED_UNITS) fast.push({ x: b.x, y: b.y, z: b.z });
+          }
+        });
+        const step = Math.max(1, Math.ceil(fast.length / limit));
+        return fast.filter((_, index) => index % step === 0);
       },
     };
   }
 
-  // Live render clock in feed UTC ms: an adaptive jitter buffer. It trails
-  // the feed's newest-sample edge by a delay that grows to cover the longest
-  // recent gap between feed messages, slews (never steps) toward new
-  // estimates, and slows playback down instead of freezing when the buffer
-  // runs low, so arrival jitter cannot jerk or stall the cars.
-  function createLiveTrackClock(now = () => Date.now()) {
-    let offset = null, edge = null, latest = null, observedAt = null, readAt = null, peakGapMs = 0;
-    const delayMs = () => Math.min(TRACK_MAP_LIVE_MAX_DELAY_MS, Math.max(TRACK_MAP_LIVE_DELAY_MS, peakGapMs + TRACK_MAP_LIVE_MIN_HEADROOM_MS * 2));
+  // Position packets are stamped when sent, not when measured: every car in a
+  // packet shares a timing error (typically 30ms, 80ms+ at p90; within a
+  // packet cars agree to ~10ms), which at 80 m/s jolts the whole field 2-6m
+  // at once. Once a packet has settled data on both sides, estimate its offset
+  // as the median, over moving cars, of how far along its own smoothed path
+  // (leaving the sample out) each car's sample sits, and store the corrected
+  // time as tc. Render time trails the newest data by more than the settle
+  // time, so corrections land before the samples are drawn.
+  function correctPacketTiming(byDriver, renderMs = null) {
+    let newest = -Infinity;
+    byDriver.forEach((list) => { if (list.length) newest = Math.max(newest, list[list.length - 1].t); });
+    // Samples already inside the smoothing window stay as they are: shifting
+    // them would move a trajectory that is on screen.
+    const drawnUntil = Number.isFinite(renderMs) ? renderMs + TRACK_MAP_SMOOTH_SIGMA_MS * 3.5 + TRACK_MAP_TIMING_MAX_OFFSET_MS : -Infinity;
+    const packets = new Map();
+    byDriver.forEach((list) => list.forEach((p, index) => {
+      if (p.tc !== undefined || p.t > newest - TRACK_MAP_TIMING_SETTLE_MS) return;
+      if (p.t <= drawnUntil) {
+        list[index] = { ...p, tc: p.t };
+        return;
+      }
+      const key = Math.round(p.t);
+      if (!packets.has(key)) packets.set(key, []);
+      packets.get(key).push({ list, index });
+    }));
+    packets.forEach((members) => {
+      const offsets = [];
+      members.forEach(({ list, index }) => {
+        const p = list[index];
+        const fit = smoothTrackPosition(list, p.t, p);
+        const v2 = fit ? fit.vx * fit.vx + fit.vy * fit.vy : 0;
+        // Only cars at racing speed carry a measurable along-track offset.
+        if (v2 < TRACK_MAP_TIMING_MIN_SPEED_UNITS ** 2) return;
+        offsets.push((((p.x - fit.x) * fit.vx + (p.y - fit.y) * fit.vy) / v2) * 1000);
+      });
+      offsets.sort((a, b) => a - b);
+      const offset = offsets.length >= 3
+        ? Math.max(-TRACK_MAP_TIMING_MAX_OFFSET_MS, Math.min(TRACK_MAP_TIMING_MAX_OFFSET_MS, offsets[offsets.length >> 1]))
+        : 0;
+      members.forEach(({ list, index }) => { list[index] = { ...list[index], tc: list[index].t + offset }; });
+    });
+  }
+
+  // Smoothed official position (feed units) and velocity (units/s) at t:
+  // Gaussian-weighted local-quadratic regression over the buffered samples
+  // plus one robust reweighting pass. The feed is noisy: implied speed swings
+  // by +-50% between consecutive ~250ms samples, it occasionally rewinds a few
+  // samples, and a lagging car's position sometimes catches up 50-100m in one
+  // sample. Interpolating sample-to-sample turns all of that into surges and
+  // hops; a wide window spreads a catch-up over seconds, and the quadratic
+  // term keeps that wide window from cutting corners. The fit is centred on t
+  // (no lag) and never extrapolates past the data.
+  // skip: a sample to leave out (packet timing estimation).
+  function smoothTrackPosition(list, t, skip = null) {
+    if (!list || !list.length || !Number.isFinite(t)) return null;
+    const sigma = TRACK_MAP_SMOOTH_SIGMA_MS, span = sigma * 3.5;
+    // Corrected times (tc) differ from the sort key t by at most the timing
+    // clamp, so widen the index window by that much.
+    const margin = span + TRACK_MAP_TIMING_MAX_OFFSET_MS;
+    let lo = 0, hi = list.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (list[mid].t < t - margin) lo = mid + 1;
+      else hi = mid;
+    }
+    let end = lo;
+    while (end < list.length && list[end].t <= t + margin) end += 1;
+    let earliest = Infinity, latest = -Infinity;
+    for (let i = lo; i < end; i += 1) {
+      const ti = list[i].tc ?? list[i].t;
+      if (list[i] === skip || Math.abs(ti - t) > span) continue;
+      earliest = Math.min(earliest, ti);
+      latest = Math.max(latest, ti);
+    }
+    if (earliest > latest) return null;
+    const te = Math.min(Math.max(t, earliest), latest);
+    const sigmaS = sigma / 1000;
+    // Tapered to exactly zero at the window edge, so samples fade in and out
+    // of the fit instead of stepping it.
+    const edgeWeight = Math.exp(-(span * span) / (2 * sigma * sigma));
+    const fit = (curve) => {
+      let s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0;
+      let x0 = 0, x1 = 0, x2 = 0, y0 = 0, y1 = 0, y2 = 0, sz = 0, wz = 0;
+      for (let i = lo; i < end; i += 1) {
+        const p = list[i];
+        const ti = p.tc ?? p.t;
+        if (p === skip || Math.abs(ti - t) > span) continue;
+        const d = (ti - te) / 1000;
+        let w = Math.max(0, Math.exp(-((ti - t) ** 2) / (2 * sigma * sigma)) - edgeWeight);
+        if (curve) {
+          // Bisquare with a fixed cutoff: continuous in t, drops rewound samples.
+          const r = Math.hypot(p.x - (curve.x + curve.vx * d + curve.cx * d * d), p.y - (curve.y + curve.vy * d + curve.cy * d * d)) / TRACK_MAP_SMOOTH_OUTLIER_UNITS;
+          w *= r >= 1 ? 0 : (1 - r * r) ** 2;
+        }
+        const d2 = d * d;
+        s0 += w; s1 += w * d; s2 += w * d2; s3 += w * d2 * d; s4 += w * d2 * d2;
+        x0 += w * p.x; x1 += w * d * p.x; x2 += w * d2 * p.x;
+        y0 += w * p.y; y1 += w * d * p.y; y2 += w * d2 * p.y;
+        if (p.z != null) { sz += w * p.z; wz += w; }
+      }
+      if (s0 < 1e-9) return null;
+      const z = wz ? sz / wz : null;
+      // Small ridge terms on the slope and curvature keep sparse windows
+      // (one sample, or a gap) well posed without any branch: a switch to a
+      // simpler fit at a threshold would make the curve jump in time.
+      const q2 = s2 + 1e-3 * s0 * sigmaS ** 2;
+      const q4 = s4 + 1e-3 * s0 * sigmaS ** 4;
+      const det = s0 * (q2 * q4 - s3 * s3) - s1 * (s1 * q4 - s3 * s2) + s2 * (s1 * s3 - q2 * s2);
+      const i00 = (q2 * q4 - s3 * s3) / det, i01 = -(s1 * q4 - s2 * s3) / det, i02 = (s1 * s3 - q2 * s2) / det;
+      const i11 = (s0 * q4 - s2 * s2) / det, i12 = -(s0 * s3 - s1 * s2) / det, i22 = (s0 * q2 - s1 * s1) / det;
+      return {
+        x: i00 * x0 + i01 * x1 + i02 * x2, y: i00 * y0 + i01 * y1 + i02 * y2,
+        vx: i01 * x0 + i11 * x1 + i12 * x2, vy: i01 * y0 + i11 * y1 + i12 * y2,
+        cx: i02 * x0 + i12 * x1 + i22 * x2, cy: i02 * y0 + i12 * y1 + i22 * y2,
+        z,
+      };
+    };
+    const first = fit(null);
+    return (first && fit(first)) || first;
+  }
+
+  // Per-car playback governor. The smoothed trajectory can still carry a
+  // short surge where a lagging car's reported position catches up 50-100m in
+  // one sample (several times a minute across a field). Each car plays its own
+  // trajectory with a small time lag: whenever the trajectory would speed up
+  // harder than a real car can (20 m/s²), that car's local clock slows
+  // instead, and the lag is then recovered by playing at most 10% fast. Cars
+  // stay exactly on their path; only their pace through a glitch is spread.
+  function advanceTrackCar(buffer, number, clockMs, prev) {
+    const fresh = () => {
+      const p = buffer.smoothAt(number, clockMs);
+      return p ? { p, lagMs: 0, speed: Math.hypot(p.vx, p.vy), clockMs } : null;
+    };
+    if (!prev) return fresh();
+    const dtMs = Math.max(0, clockMs - prev.clockMs);
+    const local0 = prev.clockMs - prev.lagMs;
+    // Steps are measured along the current curve: new samples and timing
+    // corrections reshape it slightly, and measuring from last frame's point
+    // would read that reshaping as motion and freeze the car.
+    const base = buffer.smoothAt(number, local0);
+    // The car's local time fell into a hole in its data: resync to the clock.
+    if (!base) return fresh();
+    if (dtMs <= 0) return { ...prev, p: base, clockMs };
+    // Recover lag faster the more there is (10% fast at 1s of lag, 30% at 3s),
+    // so it can never pile up into a forced jump.
+    const catchUp = Math.min(TRACK_MAP_CATCHUP_RATE * Math.max(1, prev.lagMs / 1000), 0.3);
+    const target = Math.min(clockMs, local0 + (prev.lagMs > 0 ? 1 + catchUp : 1) * dtMs);
+    const dt = dtMs / 1000;
+    // Below 15 m/s motion passes freely: a stationary car's smoothed position
+    // jitters by centimetres, which must not read as over-acceleration.
+    const maxStep = Math.max(prev.speed + TRACK_MAP_MAX_ACCEL_UNITS * dt, TRACK_MAP_GOVERN_MIN_SPEED_UNITS) * dt;
+    let local = target;
+    let p = buffer.smoothAt(number, target);
+    if (!p) return fresh();
+    const nudge = buffer.smoothAt(number, local0 + (target - local0) / 256);
+    // Even a tiny advance overshooting means the curve itself jumped (not the
+    // car's pace): accept it rather than freeze; placeFeedCar glides big jumps.
+    const curveJumped = !nudge || Math.hypot(nudge.x - base.x, nudge.y - base.y) > maxStep;
+    if (!curveJumped && Math.hypot(p.x - base.x, p.y - base.y) > maxStep) {
+      // Through a catch-up the curve is far from linear in time, so find the
+      // largest allowed advance by bisection rather than scaling.
+      let lo = 0, hi = 1;
+      p = base;
+      for (let i = 0; i < 8; i += 1) {
+        const mid = (lo + hi) / 2;
+        const candidate = buffer.smoothAt(number, local0 + (target - local0) * mid);
+        if (candidate && Math.hypot(candidate.x - base.x, candidate.y - base.y) <= maxStep) { lo = mid; p = candidate; }
+        else hi = mid;
+      }
+      local = local0 + (target - local0) * lo;
+    }
+    // Hard ceiling only for pathological data; the adaptive catch-up above
+    // keeps real lag far below it.
+    if (clockMs - local > TRACK_MAP_MAX_LAG_MS) {
+      local = clockMs - TRACK_MAP_MAX_LAG_MS;
+      p = buffer.smoothAt(number, local) || p;
+    }
+    // An accepted curve jump is not pace: it must not raise the speed that
+    // bounds the next frames.
+    const measured = Math.hypot(p.x - base.x, p.y - base.y) / dt;
+    return { p, lagMs: clockMs - local, speed: curveJumped ? Math.min(measured, prev.speed) : measured, clockMs };
+  }
+
+  // Live render clock in feed UTC ms. The feed's lead over this machine's
+  // clock is the freshest arrival seen in the last 30s (stable: arrival jitter
+  // only ever makes data look older), and render time trails that edge by a
+  // fixed delay so the smoothing always has samples ahead. Corrections slew at
+  // most 2%, which is invisible; if the feed stalls anyway, playback glides
+  // toward a stop just short of the newest sample instead of running dry.
+  function createLiveTrackClock(now = () => performance.timeOrigin + performance.now()) {
+    let offset = null, latest = null, readAt = null, rate = 1;
+    let leads = [];
+    const edge = () => leads.reduce((best, entry) => Math.max(best, entry.lead), -Infinity);
     return {
-      reset() { offset = null; edge = null; latest = null; observedAt = null; readAt = null; peakGapMs = 0; },
+      reset() { offset = null; latest = null; readAt = null; rate = 1; leads = []; },
       // Call when the feed's newest sample time advances.
       observe(latestUtcMs) {
         if (!Number.isFinite(latestUtcMs)) return;
         const at = now();
-        const lead = latestUtcMs - at;
-        if (edge == null || Math.abs(lead - edge) > TRACK_MAP_LIVE_RESYNC_MS) {
-          edge = lead;
-          peakGapMs = 0;
-          offset = edge - delayMs();
-        } else {
-          peakGapMs = Math.max(at - observedAt, peakGapMs * 0.98);
-          // Freshest arrival wins; slowly decay so a growing feed delay is followed.
-          edge = Math.max(lead, edge - (at - observedAt) * 0.02);
-        }
+        leads = leads.filter((entry) => at - entry.at <= TRACK_MAP_LIVE_EDGE_WINDOW_MS).concat({ at, lead: latestUtcMs - at });
         latest = latestUtcMs;
-        observedAt = at;
+        const target = edge() - TRACK_MAP_LIVE_DELAY_MS;
+        if (offset == null || Math.abs(target - offset) > TRACK_MAP_LIVE_RESYNC_MS) offset = target;
       },
       nowMs() {
         if (offset == null) return null;
         const at = now();
         const dt = readAt == null ? 0 : Math.max(0, at - readAt);
         readAt = at;
-        const target = edge - delayMs();
+        if (dt <= 0) return at + offset;
+        const target = edge() - TRACK_MAP_LIVE_DELAY_MS;
         const starvedTarget = latest - at - TRACK_MAP_LIVE_MIN_HEADROOM_MS;
-        if (starvedTarget < target) {
-          // No newer data for a while: glide toward a stop just short of the
-          // newest sample rather than run dry and freeze abruptly.
-          offset += (starvedTarget - offset) * (1 - Math.exp(-dt / TRACK_MAP_LIVE_STARVED_TAU_MS));
-        } else {
-          const step = dt * TRACK_MAP_LIVE_SLEW;
-          offset += Math.max(-step, Math.min(step, target - offset));
-        }
+        // Desired playback rate: re-sync at most 2% off real time, or glide
+        // toward a stop short of the newest sample when the feed stalls.
+        const desired = starvedTarget < target
+          ? 1 + ((starvedTarget - offset) * (1 - Math.exp(-dt / TRACK_MAP_LIVE_STARVED_TAU_MS))) / dt
+          : 1 + Math.max(-TRACK_MAP_LIVE_SLEW, Math.min(TRACK_MAP_LIVE_SLEW, (target - offset) / dt));
+        // Ease the rate itself so switching between those never lurches.
+        rate += (Math.max(0, desired) - rate) * (1 - Math.exp(-dt / TRACK_MAP_LIVE_RATE_TAU_MS));
+        offset += (rate - 1) * dt;
         return at + offset;
       },
     };
@@ -1612,10 +1922,12 @@
           const trail = result?.positionTrail;
           if (trail?.drivers && Number.isFinite(trail.originUtcMs) && Number.isFinite(trail.originElapsedSeconds)) {
             const originMs = trail.originElapsedSeconds * 1000;
+            const playheadMs = replayElapsedClock.getPreciseElapsedSeconds() * 1000;
             positionBufferRef.current.merge(
               trail.drivers,
               (utcMs) => originMs + (utcMs - trail.originUtcMs),
-              replayElapsedClock.getPreciseElapsedSeconds() * 1000 - TRACK_MAP_TRAIL_KEEP_MS,
+              playheadMs - TRACK_MAP_TRAIL_KEEP_MS,
+              playheadMs,
             );
           }
           setReplay((current) => ({ ...current, loading: false, data: result || null, error: result?.ok === false ? result.message || "Replay timing is unavailable." : "" }));
@@ -1675,7 +1987,8 @@
           }
           if (result.latestUtcMs !== sinceUtcMs) clock.observe(result.latestUtcMs);
           sinceUtcMs = result.latestUtcMs;
-          buffer.merge(result.drivers, (utcMs) => utcMs, (clock.nowMs() ?? result.latestUtcMs) - TRACK_MAP_TRAIL_KEEP_MS);
+          const renderMs = clock.nowMs();
+          buffer.merge(result.drivers, (utcMs) => utcMs, (renderMs ?? result.latestUtcMs) - TRACK_MAP_TRAIL_KEEP_MS, renderMs);
           if (includeSample && Array.isArray(result.sample) && result.sample.length >= TRACK_MAP_LIVE_SAMPLE_MIN) {
             sampleSize = result.sample.length;
             setLiveTrackSample(result.sample);
@@ -1695,10 +2008,12 @@
     }, [liveTrackPositionsActive]);
     const positionFeed = useMemo(() => ({
       buffer: positionBufferRef.current,
+      active: replayActive || liveTrackPositionsActive,
+      since: performance.now(),
       clockMs: replayActive
         ? () => replayElapsedClock.getPreciseElapsedSeconds() * 1000
         : () => liveTrackClockRef.current.nowMs(),
-    }), [replayActive]);
+    }), [replayActive, liveTrackPositionsActive]);
 
     function startTrackMapReplay(race, session) {
       const kind = session?.kind || "Race";

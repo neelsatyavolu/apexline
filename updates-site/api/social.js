@@ -20,15 +20,35 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+const MAX_BODY_BYTES = 16 * 1024;
+
+class BodyTooLargeError extends Error {}
+
 function readBody(req) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let text = "";
-    req.on("data", (chunk) => { text += chunk; });
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(new BodyTooLargeError("Request body too large"));
+        req.destroy();
+        return;
+      }
+      text += chunk;
+    });
+    req.on("error", reject);
     req.on("end", () => {
       try { resolve(text ? JSON.parse(text) : {}); }
       catch { resolve({}); }
     });
   });
+}
+
+// Only a UNIQUE collision on a random code is worth retrying with a new code;
+// any other failure (DB down, bad SQL) must surface instead of faking success.
+function isUniqueViolation(error) {
+  return error?.code === "23505";
 }
 
 function clean(value, limit = 120) {
@@ -120,7 +140,8 @@ async function bootstrap(body) {
       try {
         await db`INSERT INTO apexline_users (id, friend_code, display_name, created_at, token_hash) VALUES (${userId}, ${code}, ${displayName}, ${Date.now()}, ${tokenHash}) ON CONFLICT (id) DO UPDATE SET display_name = ${displayName}, token_hash = ${tokenHash}`;
         break;
-      } catch {
+      } catch (error) {
+        if (!isUniqueViolation(error) || i === 3) throw error;
         code = friendCode();
       }
     }
@@ -219,7 +240,8 @@ async function roomCreate(body) {
       try {
         await db`INSERT INTO apexline_rooms (id, code, host_id, label, content_fingerprint, created_at) VALUES (${room.id}, ${room.code}, ${room.hostId}, ${room.label}, ${room.contentFingerprint}, ${room.createdAt})`;
         break;
-      } catch {
+      } catch (error) {
+        if (!isUniqueViolation(error) || i === 3) throw error;
         room.code = friendCode();
       }
     }
@@ -312,7 +334,13 @@ async function ablyToken(body) {
 module.exports = async function handler(req, res) {
   if (req.method === "OPTIONS") return json(res, 204, {});
   if (req.method !== "POST") return json(res, 405, { error: "POST required" });
-  const body = await readBody(req);
+  let body;
+  try {
+    body = await readBody(req);
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) return json(res, 413, { error: "Request body too large" });
+    return json(res, 400, { error: "Bad request" });
+  }
   const action = clean(body.action, 40);
   try {
     const data = await ({

@@ -1,4 +1,5 @@
 const { Readable } = require("node:stream");
+const { pipeline } = require("node:stream/promises");
 
 // Read-only OpenF1 proxy. The server authenticates with its own OpenF1 account
 // and returns only the requested data; the access token never leaves this
@@ -9,6 +10,12 @@ const TOKEN_REFRESH_MARGIN_MS = 60 * 1000;
 const MAX_QUERY_LENGTH = 1024;
 const LIVE_CACHE_SECONDS = 3;
 const ARCHIVE_CACHE_SECONDS = 300;
+// Serve a stale copy while the CDN refetches in the background, so a burst of
+// clients never waits on OpenF1. Archive data rarely changes after a session.
+const LIVE_STALE_SECONDS = 15;
+const ARCHIVE_STALE_SECONDS = 3600;
+const TOKEN_TIMEOUT_MS = 5000;
+const UPSTREAM_TIMEOUT_MS = 10000;
 const ALLOWED_ENDPOINTS = new Set([
   "car_data",
   "championship_drivers",
@@ -45,6 +52,7 @@ async function fetchAccessToken(username, password) {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ username, password }).toString(),
+    signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
   });
   const data = await upstream.json().catch(() => ({}));
   const accessToken = String(data?.access_token || "");
@@ -92,18 +100,24 @@ module.exports = async function handler(req, res) {
 
   try {
     const target = `${OPENF1_API_BASE}/${endpoint}${query ? `?${query}` : ""}`;
-    const upstream = await fetch(target, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const upstream = await fetch(target, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
     if (upstream.status === 401) memory.accessToken = "";
     res.statusCode = upstream.status;
     res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json; charset=utf-8");
     const retryAfter = upstream.headers.get("retry-after");
     if (retryAfter) res.setHeader("Retry-After", retryAfter);
     const seconds = cacheSeconds(query);
-    res.setHeader("Cache-Control", upstream.ok ? `public, max-age=0, s-maxage=${seconds}, stale-while-revalidate=${seconds}` : "no-store");
+    const stale = seconds === LIVE_CACHE_SECONDS ? LIVE_STALE_SECONDS : ARCHIVE_STALE_SECONDS;
+    res.setHeader("Cache-Control", upstream.ok ? `public, max-age=0, s-maxage=${seconds}, stale-while-revalidate=${stale}` : "no-store");
     if (!upstream.body) return res.end();
-    Readable.fromWeb(upstream.body).pipe(res);
+    await pipeline(Readable.fromWeb(upstream.body), res);
   } catch (error) {
     console.error("[openf1] upstream request failed:", error?.message);
-    return json(res, 502, { error: "OpenF1 request failed." });
+    // Headers already went out if the body failed mid-stream; just drop it.
+    if (res.headersSent) return res.destroy();
+    return json(res, error?.name === "TimeoutError" ? 504 : 502, { error: "OpenF1 request failed." });
   }
 };

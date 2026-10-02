@@ -178,10 +178,12 @@ const FUNCTION_NAMES = [
   "f1TimingKnownCompoundsByNumber",
   "decodeF1TimingZPayload",
   "f1TimingLivePayload",
+  "f1TimingLiveCompactionIndex",
   "compactF1TimingLiveEntries",
   "boundedF1TimingLiveEntries",
   "f1TimingLiveDataWithFeedTime",
   "f1LiveTimingFeedLatencySeconds",
+  "f1LiveTimingStreamAlignmentSeconds",
   "f1LiveTimingEntrySeconds",
   "applyF1TimingLiveFeed",
   "applyF1TimingSignalRMessage",
@@ -227,10 +229,13 @@ async function main() {
   const sandbox = vm.runInNewContext(`(() => {
     const F1_TIMING_LIVE_STALE_MS = 30000;
     const F1_TIMING_LIVE_FEED_LATENCY_MAX_SECONDS = 15;
-    const F1_TIMING_LIVE_FEED_LATENCY_SAMPLE_LIMIT = 48;
-    const F1_TIMING_LIVE_STREAM_ALIGNMENT_SECONDS = 4.6;
+    const F1_TIMING_LIVE_FEED_LATENCY_SAMPLE_LIMIT = 50;
+    const F1_TIMING_LIVE_SYNC_OFFSET_SECONDS = 4.5;
     const F1_TIMING_LIVE_ENTRY_SOFT_LIMIT = 1000;
     const F1_TIMING_LIVE_ENTRY_KEEP = 700;
+    const F1_TIMING_LIVE_ENTRY_KEEP_SECONDS = 150;
+    const F1_TIMING_LIVE_ENTRY_MIN_FOLD = 200;
+    const F1_TIMING_LIVE_ENTRY_HARD_LIMIT = 20000;
     const F1_TIMING_LIVE_CONNECT_RETRY_MS = 4000;
     const F1_TIMING_LIVE_CLOSE_RETRY_MS = 2500;
     const F1_TIMING_NEGOTIATE_URL = "https://livetiming.formula1.com/signalrcore/negotiate";

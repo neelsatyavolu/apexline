@@ -615,7 +615,11 @@ assert.match(trackMapSource, /pitwall\.data\.trackMapReplayTiming/, "Track Map s
 assert.doesNotMatch(trackMapSource, /pitwall\.data\.replayTiming/, "Track Map should not reuse Live Racing replay timing IPC");
 assert.match(trackMapSource, /tm-replayprogress/, "Track Map should render a replay progress control next to the map selector");
 assert.match(trackMapSource, /const TRACK_MAP_REPLAY_DATA_POLL_MS = 1000/, "Track Map replay data should promote elapsed state at roughly 1 Hz instead of every visual tick");
-assert.match(trackMapSource, /const activeTiming = replayActive\s*\?\s*\(Array\.isArray\(replay\.data\?\.timing\) \? replay\.data\.timing : \[\]\)\s*:\s*timing/, "Track Map replay loading should not render stale dashboard timing rows");
+assert.match(trackMapSource, /const activeTiming = replayActive\s*\?\s*\(Array\.isArray\(replay\.data\?\.timing\) \? replay\.data\.timing : \[\]\)\s*:\s*liveTimingRows/, "Track Map replay loading should not render stale dashboard timing rows");
+assert.match(trackMapSource, /pitwall\.data\.liveTiming\(/, "Track Map live tower should poll Formula 1 live timing instead of the minutes-stale dashboard snapshot");
+assert.match(trackMapSource, /const liveTimingRows = liveTiming\?\.timing\?\.length \? liveTiming\.timing : timing/, "Track Map live tower should fall back to dashboard rows only when Formula 1 live timing has none");
+assert.match(trackMapSource, /captureAligned: true/, "Track Map live timing should be read at the map's render time so the tower matches the drawn cars");
+assert.match(trackMapSource, /liveTiming\?\.sessionClock\?\.lapCount\?\.lap/, "Track Map live header should show the live lap count");
 assert.match(trackMapSource, /loading: !current\.data/, "Track Map replay polling should only show a loading state before the first replay snapshot");
 assert.match(trackMapSource, /raceRelative: true/, "Track Map replay should request race-relative official livetiming snapshots");
 assert.match(trackMapSource, /preStartSeconds: 5/, "Track Map replay should start five seconds before the race-relative start anchor");
@@ -653,6 +657,25 @@ assert.match(trackMapCircuitsSource, /belgium:[\s\S]*Eau Rouge[\s\S]*Raidillon[\
 assert.match(trackMapCircuitsSource, /bahrain:[\s\S]*Michael Schumacher/, "Bahrain Track Map should include its named first corner");
 assert.match(trackMapCircuitsSource, /usa:[\s\S]*Big Red[\s\S]*Epstein/, "COTA Track Map should include named corners");
 assert.match(trackMapCircuitsSource, /abudhabi:[\s\S]*North Hairpin[\s\S]*Marsa Corner/, "Yas Marina Track Map should include named corners");
+const trackMapCircuitSandbox = vm.runInNewContext(`(() => {
+  const window = {};
+  ${trackMapCircuitsSource}
+  const CIRCUITS = window.PW_TRACKMAP_CIRCUITS;
+  const CIRCUIT_ORDER = window.PW_TRACKMAP_ORDER;
+  ${extractNamedFunction(trackMapSource, "resolveCircuit")}
+  return { CIRCUITS, resolveCircuit };
+})()`);
+assert.equal(
+  trackMapCircuitSandbox.resolveCircuit({ name: "Bahrain Grand Prix in Malaysia", circuit: "Sepang International Circuit", loc: "Kuala Lumpur, Malaysia" })?.id,
+  "sepang",
+  "Track Map should draw Sepang, not Sakhir, for the relocated 2026 Bahrain Grand Prix"
+);
+assert.equal(
+  trackMapCircuitSandbox.resolveCircuit({ name: "Bahrain Grand Prix", circuit: "Bahrain International Circuit", loc: "Sakhir, Bahrain" })?.id,
+  "bahrain",
+  "Track Map should still draw Sakhir for a Bahrain Grand Prix held in Bahrain"
+);
+assert.ok(trackMapCircuitSandbox.CIRCUITS.sepang?.points?.length > 50, "Sepang Track Map should carry a real circuit outline");
 assert.doesNotMatch(trackMapSource, /const live = timing\.length > 0 && Number\(data\.race\?\.lap\) > 0/, "Track Map live mode should not depend on a missing snapshot race lap field");
 assert.match(trackMapSource, /liveSession[\s\S]*const live = \(Array\.isArray\(data\.timing\) \? data\.timing\.length : 0\) > 0 && Boolean/, "Track Map should activate live mode from live timing rows and live session context");
 assert.match(liveRacingSource, /function VolumeControl[\s\S]*aria-label="Volume level"[\s\S]*onInput=/, "Broadcast panes should expose an exact volume level control that updates continuously while dragging");
@@ -785,6 +808,14 @@ assert.match(liveRacingSource, /function publishPartyTyping[\s\S]*publishTyping/
 assert.match(liveRacingSource, /renderPartyTypingIndicator[\s\S]*typing/, "Watch Party should show who is typing in the party tray");
 assert.match(liveRacingSource, /const partyPlaybackLocked = Boolean\(partyRoom && partySyncRole !== "host"\)/, "Watch Party guests should enter a host-authoritative playback lock");
 assert.match(extractNamedFunction(liveRacingSource, "applyRemotePartySync"), /partySync\.liveDecision[\s\S]*setSyncSettings[\s\S]*syncLivePlayersToTarget\("WORLD", nextSettings\)/, "Watch Party guests should actively nudge live players to the host latency target");
+assert.match(extractNamedFunction(liveRacingSource, "publishHostSync"), /actualLatency: replaySync\.mode === "live" \? hostLiveActualLatencySeconds\(\)/, "Watch Party hosts should publish where their main feed picture actually is");
+assert.match(liveRacingSource, /setInterval\(\(\) => publishHostSyncRef\.current\?\.\(\), PARTY_HOST_SYNC_INTERVAL_MS\)/, "Watch Party hosts should re-publish sync periodically so stalls get corrected");
+assert.match(liveRacingSource, /function alignLivePlayersToWorld\(players, offsetFor, nowMs = Date\.now\(\), partyActualLatency = null\)[\s\S]*Number\(partyActualLatency\) \* 1000/, "Watch Party live guests should align their main feed to the host's picture position");
+assert.match(extractNamedFunction(liveRacingSource, "applyRemotePartySync"), /decision\.actualLatency != null && playerRefs\.current\.WORLD[\s\S]*partyLiveTargetRef\.current = null;[\s\S]*syncLivePlayersToTarget\("WORLD", nextSettings\)/, "Watch Party guests should drop a stale host picture target before legacy edge sync, and use it only with a main-feed pane");
+assert.match(extractNamedFunction(liveRacingSource, "registerPlayer"), /key === "WORLD"[\s\S]*publishHostSync\(\)/, "Watch Party hosts should republish when their main feed (re)loads");
+assert.match(extractNamedFunction(liveRacingSource, "computePartySyncState"), /partyLastHostSync\.playing === false[\s\S]*Paused/, "Watch Party status should show a paused host instead of drifting to Out of sync");
+assert.match(extractNamedFunction(liveRacingSource, "applyRemotePartySync"), /decision\.shouldSeek/, "Watch Party replay guests should only seek when drifted");
+assert.match(extractNamedFunction(liveRacingSource, "computePartySyncState"), /hostActualLatency/, "Watch Party live status should compare picture positions, not configured targets");
 assert.match(liveRacingSource, /const partySyncState = computePartySyncState[\s\S]*partySyncLabel/, "Watch Party sync pill should use drift-aware state instead of a fixed label");
 assert.match(liveRacingSource, /function computePartySyncState[\s\S]*Out of sync[\s\S]*Catching up[\s\S]*In sync/, "Watch Party sync status should distinguish drift states");
 assert.match(liveRacingSource, /!isHost && <button type="button" className="wpc__resync" onClick=\{\(\) => window\.PW_SOCIAL\?\.requestHostSync\?\.\(\)\}/, "Watch Party guests should get a Sync To Host button");
@@ -1122,6 +1153,12 @@ assert.equal(partySync.replayDecision({ masterTime: 42, playing: false }, { cont
 assert.ok(Math.abs(partySync.replayDecision({ masterTime: 42, playing: true, sentAt: Date.now() - 3000 }, {}).masterTime - 45) < 0.25, "Watch party replay sync should project the host clock forward while playing");
 assert.equal(partySync.liveDecision({ targetLatency: 8, playing: false }, { liveLatency: 9 }).playing, false, "Watch party live sync should preserve host pause state");
 assert.equal(partySync.liveDecision({ targetLatency: 8 }, { liveLatency: 9 }).playbackRate, 1.2, "Watch party live sync should reuse latency catch-up behavior");
+assert.equal(partySync.liveDecision({ targetLatency: 36, actualLatency: 44.2 }, {}).actualLatency, 44.2, "Watch party live sync should carry the host's picture position (actual latency)");
+assert.equal(partySync.liveDecision({ targetLatency: 36 }, {}).actualLatency, null, "Watch party live sync from older hosts should have no actual latency");
+assert.equal(partySync.replayDecision({ masterTime: 42, playing: true, sentAt: Date.now() }, { localTime: 42.2 }).shouldSeek, false, "Watch party replay guests already in sync should not seek on every host update");
+assert.equal(partySync.replayDecision({ masterTime: 42, playing: true, sentAt: Date.now() }, { localTime: 40 }).shouldSeek, true, "Watch party replay guests that drifted should seek to the host");
+assert.equal(partySync.replayDecision({ masterTime: 42, playing: false }, { localTime: 42.3 }).shouldSeek, true, "Paused watch party replays should match the host frame exactly");
+assert.equal(partySync.replayDecision({ masterTime: 42, playing: true }, {}).shouldSeek, true, "Watch party replay guests without a local clock should seek");
 
 function extractNamedFunction(source, name) {
   let start = source.indexOf(`function ${name}`);
@@ -1849,6 +1886,18 @@ const mergeDataSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(dataProviderSource, "mergeData")}
   return { mergeData };
 })()`);
+const relocatedBahrainMerge = mergeDataSandbox.mergeData({
+  schedule: [
+    { rnd: 4, name: "Bahrain Grand Prix", startsAt: "2026-04-12T15:00:00.000Z" },
+    { rnd: 15, name: "Azerbaijan Grand Prix", startsAt: "2026-09-26T11:00:00.000Z" },
+    { rnd: 16, name: "Bahrain Grand Prix in Malaysia", startsAt: "2026-10-04T07:00:00.000Z" },
+  ],
+}, {});
+assert.deepEqual(
+  relocatedBahrainMerge.schedule.map((race) => [race.name, race.rnd]),
+  [["Azerbaijan Grand Prix", 1], ["Bahrain Grand Prix in Malaysia", 2]],
+  "Renderer schedule normalization should keep the relocated October 2026 Bahrain Grand Prix"
+);
 const sparseRecentFormMerge = mergeDataSandbox.mergeData({
   drivers: [{ code: "ANT", name: "Kimi Antonelli" }],
   driverForm: { ANT: [4, 2] },
@@ -2105,8 +2154,25 @@ assert.match(liveRacingSource, /shaka:\s*\{[\s\S]*streaming:\s*\{[\s\S]*lowLaten
 assert.match(liveRacingSource, /await player\.load\(descriptor\.manifestUrl[\s\S]*syncLiveVideoToTargetLatency\(video, targetLatency\)/, "Protected Shaka live players should seek to target latency immediately after load instead of drifting from the live edge at 0.8x");
 assert.match(liveRacingSource, /shouldSeekLiveVideoToTarget\(liveLatency, targetLatency, liveInitialTargetSync\)/, "Protected Shaka players should keep seeking to target when latency is far outside the normal HLS sawtooth window");
 assert.match(liveRacingSource, /const reportSync = \(\) => \{[\s\S]*shouldSeekLiveVideoToTarget\(liveLatency, targetLatency, liveInitialTargetSync\)[\s\S]*syncLiveVideoToTargetLatency\(video, targetLatency\)/, "Protected Shaka live players should retry the target seek after load once Shaka exposes a usable live range");
-assert.match(liveRacingSource, /if \(!player && !video\.paused && descriptor\.playbackMode !== "replay"[\s\S]*video\.playbackRate = decision\.playbackRate/, "Manual playback-rate sync should only run when Shaka is not controlling live sync");
+assert.match(liveRacingSource, /if \(!utcFollower && !player && !video\.paused && descriptor\.playbackMode !== "replay"[\s\S]*video\.playbackRate = decision\.playbackRate/, "Manual playback-rate sync should only run when Shaka is not controlling live sync");
 assert.match(liveRacingSource, /player\?\.seekRange\?\.\(\)[\s\S]*liveLatency = range\.end - video\.currentTime/, "Protected Shaka sync metrics should use Shaka's seek range when available");
+const centerWeekendSandbox = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(liveRacingSource, "centerSessionLibraryWeekend")}
+  return { centerSessionLibraryWeekend };
+})()`);
+const libraryRows = Array.from({ length: 20 }, (_, index) => ({ offsetHeight: 60, getBoundingClientRect: () => ({ top: 100 + index * 60 }) }));
+const libraryScroll = {
+  scrollTop: 0,
+  clientHeight: 600,
+  getBoundingClientRect: () => ({ top: 100 }),
+  querySelectorAll: () => libraryRows,
+};
+centerWeekendSandbox.centerSessionLibraryWeekend(libraryScroll, 17, 20);
+assert.equal(libraryScroll.scrollTop, 17 * 60 - (600 - 60) / 2, "Session library should open with the current weekend centred in the list");
+libraryScroll.scrollTop = 0;
+centerWeekendSandbox.centerSessionLibraryWeekend(libraryScroll, 17, 20);
+assert.equal(libraryScroll.scrollTop, 0, "Session library should only auto-centre once, not fight the user's scrolling on re-render");
+assert.match(liveRacingSource, /className="session-library__season-scroll" ref=\{\(node\) => centerSessionLibraryWeekend\(node, currentF1TvWeekendIndex, f1TvRaces\.length\)\}/, "Session library scroller should centre the current weekend on open");
 const liveTimingRequestSandbox = vm.runInNewContext(`(() => {
   const DEFAULT_WORLD_SYNC_TARGET = 36;
   const LIVE_TIMING_STREAM_ALIGNMENT_DELAY_SECONDS = 4.6;
@@ -2114,8 +2180,9 @@ const liveTimingRequestSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(liveRacingSource, "dateLikeMs")}
   ${extractNamedFunction(liveRacingSource, "liveVideoPlayheadUtcMs")}
   ${extractNamedFunction(liveRacingSource, "liveTimingRequestForMetrics")}
+  ${extractNamedFunction(liveRacingSource, "id3CaptureUtcMs")}
   ${extractNamedFunction(liveRacingSource, "liveTimingTargetUtcNow")}
-  return { liveVideoPlayheadUtcMs, liveTimingRequestForMetrics, liveTimingTargetUtcNow };
+  return { liveVideoPlayheadUtcMs, liveTimingRequestForMetrics, liveTimingTargetUtcNow, id3CaptureUtcMs };
 })()`);
 const liveTimingCatchUpUiSandbox = vm.runInNewContext(`(() => {
   ${extractNamedFunction(liveRacingSource, "liveTimingCatchUpRemainingForDisplay")}
@@ -2133,9 +2200,8 @@ assert.equal(liveTimingCatchUpUiSandbox.formatLiveTimingCatchUpRemaining(null), 
 assert.match(liveRacingSource, /const LIVE_TIMING_STREAM_ALIGNMENT_DELAY_SECONDS = 4\.6;/, "Live timing should mirror MultiViewer's 4.6s F1 timing stream offset");
 assert.deepEqual(JSON.parse(JSON.stringify(liveTimingRequestSandbox.liveTimingRequestForMetrics({ targetLatency: 36, liveLatency: 37.9, videoTimeUtcMs: liveFrameUtcMs }, 36))), { targetLatencySeconds: 40.6, targetUtcMs: liveFrameUtcMs }, "Live timing should send the raw video playhead UTC; the measured feed latency is subtracted in the main process like MultiViewer");
 assert.deepEqual(JSON.parse(JSON.stringify(liveTimingRequestSandbox.liveTimingRequestForMetrics({ targetLatency: 36, liveLatency: 37.9, videoTimeUtcMs: liveFrameUtcMs, videoTimeAtMs: 5000 }, 36))), { targetLatencySeconds: 40.6, targetUtcMs: liveFrameUtcMs, videoTimeAtMs: 5000 }, "Live timing requests should carry the wall-clock instant the playhead was measured");
-assert.match(mainProcess, /const F1_TIMING_LIVE_STREAM_ALIGNMENT_SECONDS = 4\.6/, "Live timing should keep the empirical 4.6s F1 TV stream alignment floor");
-assert.match(mainProcess, /function f1LiveTimingStreamAlignmentSeconds/, "Live timing should peak-hold stream alignment so Q-session sample refresh cannot jump the tower ahead");
-assert.match(mainProcess, /F1_TIMING_LIVE_ALIGNMENT_DECAY_PER_MINUTE/, "Live timing alignment should only slowly decay toward a faster feed median");
+assert.match(mainProcess, /const F1_TIMING_LIVE_SYNC_OFFSET_SECONDS = 4\.5/, "Live timing should use the picture-verified 4.5s live-timing sync offset");
+assert.match(mainProcess, /function f1LiveTimingStreamAlignmentSeconds[\s\S]*f1LiveTimingFeedLatencySeconds\(state\?\.feedLatencySamples\) \+ F1_TIMING_LIVE_SYNC_OFFSET_SECONDS/, "Live timing alignment should add the feed transport latency to the sync offset, like MultiViewer");
 assert.match(mainProcess, /f1TimingArchiveSecondsForUtc\(sessionData, targetUtcMs\) - streamAlignmentSeconds/, "Live timing video-UTC targets should subtract the stream alignment in the main process");
 assert.match(liveRacingSource, /videoTimeAtMs: videoTimeUtcMs != null && Number\.isFinite\(measuredAtMs\) \? measuredAtMs : null/, "Live sync metrics should retain videoTimeAtMs so timing can extrapolate the playhead between reports");
 assert.deepEqual(JSON.parse(JSON.stringify(liveTimingRequestSandbox.liveTimingRequestForMetrics({ liveLatency: 32.1, targetLatency: 36 }, 36))), { targetLatencySeconds: 40.6 }, "Live timing should include the stream alignment delay when falling back to latency-based sampling");
@@ -2162,6 +2228,33 @@ assert.match(liveRacingSource, /const sessionClockAnchorRef = React\.useRef\(nul
 assert.match(liveRacingSource, /clockAnchorRef: sessionClockAnchorRef/, "The session clock label should tick from the live countdown anchor");
 assert.match(liveRacingSource, /videoTimeAtMs: Date\.now\(\)/, "Live sync metrics should record when the video playhead was measured");
 assert.match(liveRacingSource, /targetUtcMs: liveTimingTargetUtcNow\(timingSync, Date\.now\(\)\)/, "Live timing polls should extrapolate the playhead target at request time");
+assert.deepEqual(JSON.parse(JSON.stringify(liveTimingRequestSandbox.liveTimingRequestForMetrics({ targetLatency: 36, liveLatency: 37.9, videoTimeUtcMs: liveFrameUtcMs }, 36, 2.5))), { targetLatencySeconds: 43.1, targetUtcMs: liveFrameUtcMs - 2500 }, "A live timing delay should hold timing that much further behind the main feed's playhead");
+assert.match(liveRacingSource, /onLiveTimingDelayAdjust\?\.\(-0\.5\)[\s\S]*onLiveTimingDelayReset[\s\S]*onLiveTimingDelayAdjust\?\.\(0\.5\)/, "Live Sync menu should let the user nudge live timing against the main feed");
+assert.match(liveRacingSource, /liveTimingRequestForMetrics\(syncMetrics\.WORLD, syncTargetFor\("WORLD"\), liveTimingDelay\)/, "Live timing polling should apply the user's live timing delay");
+assert.equal(liveTimingRequestSandbox.id3CaptureUtcMs({ key: "PRIV", data: "ID3\u0000com.formula1\u00002026-09-26T11:20:03.400Z" }), Date.parse("2026-09-26T11:20:03.400Z"), "F1 TV ID3 metadata should yield the frame's capture time from its trailing date field");
+assert.equal(liveTimingRequestSandbox.id3CaptureUtcMs({ key: "TXXX", description: "", data: "not a date" }), null, "Non-date ID3 metadata should be ignored");
+assert.deepEqual(JSON.parse(JSON.stringify(liveTimingRequestSandbox.liveTimingRequestForMetrics({ targetLatency: 36, liveLatency: 37.9, videoTimeUtcMs: liveFrameUtcMs, captureOffsetSeconds: 7.2 }, 36, 0.5))), { targetLatencySeconds: 41.1, targetUtcMs: liveFrameUtcMs - 7700, captureAligned: true }, "With ID3 capture offsets, live timing should target the frame's capture time instead of program-date-time minus a fixed guess");
+assert.equal(liveTimingRequestSandbox.liveTimingRequestForMetrics({ targetLatency: 36, videoTimeUtcMs: liveFrameUtcMs, captureOffsetSeconds: 1.2 }, 36).captureAligned, undefined, "Implausibly small ID3 capture offsets should fall back to the stream-alignment floor");
+const playlistEdgeSandbox = vm.runInNewContext(`(() => {
+  ${extractNamedFunction(liveRacingSource, "hlsPlaylistEdgePdtMs")}
+  return { hlsPlaylistEdgePdtMs };
+})()`, { TextDecoder, Date, Number, Math });
+assert.equal(playlistEdgeSandbox.hlsPlaylistEdgePdtMs(new TextEncoder().encode([
+  "#EXTM3U", "#EXT-X-PROGRAM-DATE-TIME:2026-10-02T05:00:00.000Z", "#EXTINF:1.92,", "a.m4s", "#EXTINF:1.92,", "b.m4s",
+].join("\n"))), Date.parse("2026-10-02T05:00:03.840Z"), "Playlist edge PDT should be the newest segment's PDT plus its duration");
+assert.equal(playlistEdgeSandbox.hlsPlaylistEdgePdtMs("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8"), null, "Master playlists carry no edge PDT");
+assert.match(liveRacingSource, /worldDiag = \{[\s\S]*actualLatency[\s\S]*edgeLatency[\s\S]*gap: world\.__pitwallEdgeMappingGap/, "live.sync should log the main feed's PDT mapping drift diagnostics");
+const liveTimingDelaySandbox = vm.runInNewContext(`(() => {
+  const LIVE_TIMING_DELAY_STORAGE_KEY = "pw-live-timing-delay-v2";
+  let stored = null;
+  const localStorage = { getItem: () => stored };
+  ${extractNamedFunction(liveRacingSource, "clampLiveTimingDelay")}
+  ${extractNamedFunction(liveRacingSource, "readLiveTimingDelay")}
+  return { readLiveTimingDelay, setStored: (value) => { stored = value; } };
+})()`);
+assert.equal(liveTimingDelaySandbox.readLiveTimingDelay(), 0, "Live timing should default to no extra delay on top of MultiViewer's alignment");
+liveTimingDelaySandbox.setStored("-0.5");
+assert.equal(liveTimingDelaySandbox.readLiveTimingDelay(), -0.5, "A saved live timing delay should override the default");
 assert.match(liveRacingSource, /liveTimingSyncRef = React\.useRef\(liveTimingRequestForMetrics\(null, DEFAULT_WORLD_SYNC_TARGET\)\)/, "Initial live timing polling should include the same F1 timing offset before video sync metrics arrive");
 assert.match(liveRacingSource, /videoTimeUtcMs/, "Live sync metrics should carry the current video program-date timestamp for timing alignment");
 assert.match(liveRacingSource, /targetUtcMs/, "Live timing polling should request rows by video UTC when the player exposes it");
@@ -2436,6 +2529,38 @@ assert.deepEqual(
   partiallyMatchedSchedule.map((race) => race.name),
   ["Australian Grand Prix", "Chinese Grand Prix", "Japanese Grand Prix", "Miami Grand Prix"],
   "Schedule normalization should preserve unmatched non-cancelled races"
+);
+const relocatedBahrainSchedule = jolpicaScheduleSandbox.parseSchedule({
+  MRData: {
+    RaceTable: {
+      season: "2026",
+      Races: [
+        { round: "15", raceName: "Azerbaijan Grand Prix", date: "2026-09-26", time: "11:00:00Z", Circuit: { circuitName: "Baku City Circuit", Location: { locality: "Baku", country: "Azerbaijan" } } },
+        { round: "16", raceName: "Bahrain Grand Prix in Malaysia", date: "2026-10-04", time: "07:00:00Z", Circuit: { circuitName: "Sepang International Circuit", Location: { locality: "Kuala Lumpur", country: "Malaysia" } } },
+        { round: "17", raceName: "Singapore Grand Prix", date: "2026-10-11", time: "12:00:00Z", Circuit: { circuitName: "Marina Bay Street Circuit", Location: { locality: "Marina Bay", country: "Singapore" } } },
+      ],
+    },
+  },
+}, [
+  { meeting_key: 1300, meeting_name: "Azerbaijan Grand Prix", circuit_short_name: "Baku", location: "Baku", country_name: "Azerbaijan", date_start: "2026-09-24T08:30:00+00:00" },
+  { meeting_key: 1301, meeting_name: "Bahrain Grand Prix", circuit_short_name: "Sepang", location: "Kuala Lumpur", country_name: "Malaysia", date_start: "2026-10-02T03:30:00+00:00" },
+  { meeting_key: 1302, meeting_name: "Singapore Grand Prix", circuit_short_name: "Singapore", location: "Marina Bay", country_name: "Singapore", date_start: "2026-10-09T09:30:00+00:00" },
+]);
+assert.deepEqual(
+  relocatedBahrainSchedule.map((race) => [race.name, race.meetingKey]),
+  [["Azerbaijan Grand Prix", 1300], ["Bahrain Grand Prix in Malaysia", 1301], ["Singapore Grand Prix", 1302]],
+  "The October 2026 Bahrain Grand Prix relocated to Sepang should stay on the schedule"
+);
+const relocatedBahrainRows = jolpicaScheduleSandbox.normalizeScheduleRoundOrder([
+  { rnd: 4, name: "Bahrain Grand Prix", startsAt: "2026-04-12T15:00:00.000Z", meetingKey: null },
+  { rnd: 5, name: "Saudi Arabian Grand Prix", startsAt: "2026-04-19T17:00:00.000Z", meetingKey: null },
+  { rnd: 15, name: "Azerbaijan Grand Prix", startsAt: "2026-09-26T11:00:00.000Z", meetingKey: 1300 },
+  { rnd: 16, name: "Bahrain Grand Prix in Malaysia", startsAt: "2026-10-04T07:00:00.000Z", meetingKey: 1301 },
+], { removeCancelled2026: true });
+assert.deepEqual(
+  relocatedBahrainRows.map((race) => [race.name, race.rnd]),
+  [["Azerbaijan Grand Prix", 1], ["Bahrain Grand Prix in Malaysia", 2]],
+  "Only the cancelled April Bahrain and Saudi rows should be dropped from cached 2026 schedules"
 );
 assert.match(dataProviderSource, /isCancelledF12026RaceName[\s\S]*normalizeScheduleRoundOrder[\s\S]*normalizeScheduleData/, "Renderer data provider should normalize stale 2026 cancelled-race schedules before any screen renders");
 assert.match(liveRacingSource, /isCancelledF12026RaceName[\s\S]*normalizeRaceLibrary[\s\S]*races:[\s\S]*filter[\s\S]*map/, "Live Racing session library should normalize stale 2026 cancelled-race weekends");
@@ -3379,11 +3504,13 @@ assert.equal(Math.round(f1TimingClockSandbox.f1TimingVideoStartArchiveSeconds(sp
 const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
   const F1_TIMING_LIVE_STALE_MS = 30000;
   const F1_TIMING_LIVE_FEED_LATENCY_MAX_SECONDS = 15;
-  const F1_TIMING_LIVE_FEED_LATENCY_SAMPLE_LIMIT = 48;
-  const F1_TIMING_LIVE_STREAM_ALIGNMENT_SECONDS = 4.6;
-  const F1_TIMING_LIVE_ALIGNMENT_DECAY_PER_MINUTE = 0.2;
+  const F1_TIMING_LIVE_FEED_LATENCY_SAMPLE_LIMIT = 50;
+  const F1_TIMING_LIVE_SYNC_OFFSET_SECONDS = 4.5;
   const F1_TIMING_LIVE_ENTRY_SOFT_LIMIT = 1000;
   const F1_TIMING_LIVE_ENTRY_KEEP = 700;
+  const F1_TIMING_LIVE_ENTRY_KEEP_SECONDS = 150;
+  const F1_TIMING_LIVE_ENTRY_MIN_FOLD = 200;
+  const F1_TIMING_LIVE_ENTRY_HARD_LIMIT = 20000;
   const f1TimingTelemetrySampleCache = new WeakMap();
   const f1TimingPositionSampleCache = new WeakMap();
   const f1TimingStateCursorCache = new WeakMap();
@@ -3440,6 +3567,7 @@ const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
     "f1TimingKnownCompoundsByNumber",
     "decodeF1TimingZPayload",
     "f1TimingLivePayload",
+    "f1TimingLiveCompactionIndex",
     "compactF1TimingLiveEntries",
     "boundedF1TimingLiveEntries",
     "f1TimingLiveDataWithFeedTime",
@@ -4028,8 +4156,8 @@ const sectorCompactionTimingEntries = () => [
   } } } } },
   // New lap: the feed only lights S1 and leaves last lap's S2/S3 in place.
   { seconds: 11, data: { Lines: { "44": { NumberOfLaps: 40, Sectors: { "0": { Value: "", Segments: { "0": { Status: 2049 } } } } } } } },
-  ...Array.from({ length: 1400 }, (_, index) => ({ seconds: 12 + index * 0.05, data: { Lines: { "44": { IntervalToPositionAhead: { Value: `+${index}` } } } } })),
-  { seconds: 120, data: { Lines: { "44": { Sectors: { "0": { Segments: { "1": { Status: 2049 } } } } } } } },
+  ...Array.from({ length: 1400 }, (_, index) => ({ seconds: 12 + index * 0.2, data: { Lines: { "44": { IntervalToPositionAhead: { Value: `+${index}` } } } } })),
+  { seconds: 300, data: { Lines: { "44": { Sectors: { "0": { Segments: { "1": { Status: 2049 } } } } } } } },
 ];
 const sectorCompactionSession = (timingEntries) => ({
   driverListEntries: [{ seconds: 0, data: { "44": { Tla: "HAM" } } }],
@@ -4060,6 +4188,17 @@ assert.deepEqual(
   JSON.parse(JSON.stringify({ sectors: sectorCompactedRow.sectors, sectorTimes: sectorCompactedRow.sectorTimes, sessionLap: sectorCompactedRow.sessionLap })),
   JSON.parse(JSON.stringify({ sectors: sectorUncompactedRow.sectors, sectorTimes: sectorUncompactedRow.sectorTimes, sessionLap: sectorUncompactedRow.sessionLap })),
   "Live Formula 1 sector progress should match the uncompacted feed after compaction",
+);
+// Race-start bursts: 2000 TimingData deltas in 40s. The video plays ~40s
+// behind the feed, so compaction must never fold past a delayed target.
+const burstCompactedEntries = [];
+[{ seconds: 0, data: { Lines: { "44": { Position: "1", NumberOfLaps: 1 } } } }]
+  .concat(Array.from({ length: 2000 }, (_, index) => ({ seconds: 100 + index * 0.02, data: { Lines: { "44": { IntervalToPositionAhead: { Value: `+${index}` } } } } })))
+  .forEach((entry) => f1TimingRaceControlSandbox.compactF1TimingLiveEntries(burstCompactedEntries).push(entry));
+const burstLatestSeconds = burstCompactedEntries.at(-1).seconds;
+assert.ok(
+  f1TimingRaceControlSandbox.parseF1TimingArchiveRows(sectorCompactionSession(burstCompactedEntries), burstLatestSeconds - 40, { preserveSectorProgress: true }).timing.length > 0,
+  "Live timing compaction should keep rows a ~40s-delayed video target lands on during high-rate TimingData bursts",
 );
 const inPitGarageSession = {
   driverListEntries: [{ seconds: 0, data: { "44": { Tla: "HAM" } } }],
@@ -4578,7 +4717,7 @@ assert.equal(
     TimingData: [{ seconds: liveSignalRSeconds, data: { Lines: { "44": { RacingNumber: "44", Position: 1 } } } }],
     ExtrapolatedClock: [{ seconds: liveSignalRSeconds, data: { Utc: "2026-06-09T20:00:00.000Z" } }],
   }, { targetUtcMs: Date.parse("2026-06-09T19:59:24.000Z") }),
-  40.6,
+  40.5,
   "Live timing catch-up should estimate how long until the stream-aligned target reaches retained SignalR rows",
 );
 assert.equal(
@@ -4618,7 +4757,7 @@ f1TimingRaceControlSandbox.setF1LiveTimingState({
 });
 const utcAlignedSnapshot = f1TimingRaceControlSandbox.getF1LiveTimingSnapshot({ targetUtcMs: Date.parse("2026-06-09T19:59:24.000Z") });
 assert.equal(utcAlignedSnapshot.timing[0].pos, 2, "Video UTC live timing should render the row matching the F1 TV playhead, not the newest timing row");
-assert.equal(utcAlignedSnapshot.diagnostics.targetSeconds, Date.parse("2026-06-09T19:59:24.000Z") / 1000 - 4.6, "Video UTC live timing should sit behind the playhead by the 4.6s stream alignment floor when the feed is fast");
+assert.equal(utcAlignedSnapshot.diagnostics.targetSeconds, Date.parse("2026-06-09T19:59:24.000Z") / 1000 - 4.5, "Video UTC live timing should sit behind the playhead by the 4.5s sync offset when no feed latency is measured");
 f1TimingRaceControlSandbox.setF1LiveTimingState({
   lastMessageAt: Date.now(),
   lastTopic: "TimingData",
@@ -4635,17 +4774,15 @@ f1TimingRaceControlSandbox.setF1LiveTimingState({
   },
 });
 const latencyAlignedSnapshot = f1TimingRaceControlSandbox.getF1LiveTimingSnapshot({ targetUtcMs: Date.parse("2026-06-09T19:59:24.000Z") });
-assert.equal(latencyAlignedSnapshot.diagnostics.targetSeconds, Date.parse("2026-06-09T19:59:24.000Z") / 1000 - 6, "A slow timing feed should widen the alignment beyond the 4.6s floor, like MultiViewer's measured delay");
-assert.equal(latencyAlignedSnapshot.timing[0].pos, 2, "Measured feed latency should shift which timing row matches the playhead");
-// Simulate Q2→Q3: latency samples collapse from a slow median (~7.6s effective peak)
-// to a fast median under the 4.6s floor. Peak-hold must keep timing from jumping ~3s ahead.
+assert.equal(latencyAlignedSnapshot.diagnostics.targetSeconds, Date.parse("2026-06-09T19:59:24.000Z") / 1000 - 10.5, "Measured feed latency should add to the sync offset, like MultiViewer's live engine");
+assert.equal(latencyAlignedSnapshot.timing[0].pos, 1, "Measured feed latency should shift which timing row matches the playhead");
+// Latency samples collapsing (e.g. a Q2→Q3 re-arm burst) move the alignment with
+// the median both ways, as MultiViewer's 50-sample latency window does.
 f1TimingRaceControlSandbox.setF1LiveTimingState({
   lastMessageAt: Date.now(),
   lastTopic: "TimingData",
   lastError: "",
   feedLatencySamples: [7.6, 7.5, 7.7],
-  streamAlignmentPeak: null,
-  streamAlignmentPeakAtMs: null,
   entriesByTopic: {
     DriverList: [{ seconds: liveUtcClockMs / 1000 - 60, data: { "1": { Tla: "VER", RacingNumber: "1" } } }],
     ExtrapolatedClock: [{ seconds: liveUtcClockMs / 1000, data: { Utc: new Date(liveUtcClockMs).toISOString(), Remaining: "01:10:00", Extrapolating: true } }],
@@ -4657,15 +4794,13 @@ f1TimingRaceControlSandbox.setF1LiveTimingState({
   },
 });
 const peakAlignSnapshot = f1TimingRaceControlSandbox.getF1LiveTimingSnapshot({ targetUtcMs: Date.parse("2026-06-09T19:59:24.000Z") });
-assert.equal(peakAlignSnapshot.diagnostics.streamAlignmentSeconds, 7.6, "Live timing should raise stream alignment to the measured slow-feed median");
+assert.equal(peakAlignSnapshot.diagnostics.streamAlignmentSeconds, 12.1, "Live timing should add the slow-feed median to the sync offset");
 f1TimingRaceControlSandbox.getF1LiveTimingState().feedLatencySamples = [1.1, 1.0, 1.2];
 const heldAlignSnapshot = f1TimingRaceControlSandbox.getF1LiveTimingSnapshot({ targetUtcMs: Date.parse("2026-06-09T19:59:24.000Z") });
-assert.equal(heldAlignSnapshot.diagnostics.streamAlignmentSeconds, 7.6, "After a Q-session latency-sample collapse, stream alignment should peak-hold instead of dropping to the 4.6s floor");
-assert.equal(heldAlignSnapshot.diagnostics.targetSeconds, Date.parse("2026-06-09T19:59:24.000Z") / 1000 - 7.6, "Peak-held alignment should keep the same playhead-relative target after sample refresh");
-f1TimingRaceControlSandbox.setF1LiveTimingState({ lastMessageAt: Date.now(), lastTopic: "TimingData", lastError: "", feedLatencySamples: [3, 3, 3], streamAlignmentPeak: 7.6, streamAlignmentPeakAtMs: Date.now(), entriesByTopic: {} });
+assert.ok(Math.abs(heldAlignSnapshot.diagnostics.streamAlignmentSeconds - 5.6) < 1e-9, "Stream alignment should follow the feed-latency median back down, like MultiViewer");
+f1TimingRaceControlSandbox.setF1LiveTimingState({ lastMessageAt: Date.now(), lastTopic: "TimingData", lastError: "", feedLatencySamples: [3, 3, 3], entriesByTopic: {} });
 f1TimingRaceControlSandbox.resyncF1LiveTiming();
 assert.deepEqual(JSON.parse(JSON.stringify(f1TimingRaceControlSandbox.getF1LiveTimingState().feedLatencySamples)), [], "Manual resync should clear measured feed-latency samples so sync re-measures from scratch");
-assert.equal(f1TimingRaceControlSandbox.getF1LiveTimingState().streamAlignmentPeak, null, "Manual resync should clear peak-held stream alignment");
 assert.match(mainProcess, /ipcMain\.handle\("pitwall:data:liveTimingResync", \(\) => resyncF1LiveTiming\(\)\)/, "Main should expose a manual live timing resync IPC channel");
 assert.match(preload, /liveTimingResync: \(\) => ipcRenderer\.invoke\("pitwall:data:liveTimingResync"\)/, "Preload should expose manual live timing resync to the renderer");
 assert.match(liveRacingSource, />Resync timing<\/button>/, "The sync menu should offer a manual live timing resync button");
@@ -4726,7 +4861,7 @@ f1TimingRaceControlSandbox.setF1LiveTimingState({
   },
 });
 f1TimingRaceControlSandbox.applyF1TimingSignalRMessage({ type: 1, target: "feed", arguments: ["CarData.z", compressedCarDataWithoutUtc, compressedLiveUtc] });
-const timestampedCarDataSnapshot = f1TimingRaceControlSandbox.getF1LiveTimingSnapshot({ targetUtcMs: Date.parse(compressedLiveUtc) + 4600 });
+const timestampedCarDataSnapshot = f1TimingRaceControlSandbox.getF1LiveTimingSnapshot({ targetUtcMs: Date.parse(compressedLiveUtc) + 10000 });
 assert.equal(timestampedCarDataSnapshot.timing[0].telemetry.speed, 291, "Formula 1 SignalR live timing should timestamp compressed CarData rows that omit per-entry Utc");
 assert.equal(timestampedCarDataSnapshot.timing[0].telemetry.gear, 8, "Formula 1 SignalR live timing should keep gear populated from timestamped compressed CarData rows");
 f1TimingRaceControlSandbox.setF1TimingSmokeNowMs(null);
@@ -6996,6 +7131,109 @@ vm.runInContext(fs.readFileSync(path.join(root, "ui_kits/pitwall/sync.js"), "utf
 const syncPlayer = { currentTime: 120, playbackRate: 1 };
 syncHelperSandbox.window.PW_SYNC.syncReplayPlayers([{ player: syncPlayer, targetTime: 116 }], 120, { seekThreshold: 0.5, rateThreshold: 0.075 });
 assert.equal(syncPlayer.currentTime, 116, "Replay sync helper should seek players to their per-feed target time instead of the leader media time");
+const timingProbe = require(path.join(root, "electron/f1tv-timing-probe.cjs"));
+const probeBox = (type, payload) => {
+  const header = Buffer.alloc(8);
+  header.writeUInt32BE(8 + payload.length, 0);
+  header.write(type, 4, "latin1");
+  return Buffer.concat([header, payload]);
+};
+const probeCaptureMs = Date.parse("2026-09-26T11:20:00.250Z");
+const probePrftPayload = Buffer.alloc(24);
+probePrftPayload.writeUInt8(1, 0);
+probePrftPayload.writeUInt32BE(1, 4);
+probePrftPayload.writeUInt32BE(Math.floor(probeCaptureMs / 1000) + 2208988800, 8);
+probePrftPayload.writeUInt32BE(Math.round(0.25 * 2 ** 32), 12);
+probePrftPayload.writeBigUInt64BE(900000n, 16);
+const probeEmsgFixed = Buffer.alloc(24);
+probeEmsgFixed.writeUInt8(1, 0);
+probeEmsgFixed.writeUInt32BE(90000, 4);
+probeEmsgFixed.writeBigUInt64BE(900000n, 8);
+const probeEmsgPayload = Buffer.concat([probeEmsgFixed, Buffer.from("https://aomedia.org/emsg/ID3\0\0ID3\x04\0\0\0\0\0\0com.f1\0" + "2026-09-26T11:20:00.250Z", "latin1")]);
+const probeTfdt = Buffer.alloc(12);
+probeTfdt.writeUInt8(1, 0);
+probeTfdt.writeBigUInt64BE(900000n, 4);
+const probeSegment = Buffer.concat([
+  probeBox("styp", Buffer.from("msdh\0\0\0\0", "latin1")),
+  probeBox("prft", probePrftPayload),
+  probeBox("emsg", probeEmsgPayload),
+  probeBox("moof", probeBox("traf", probeBox("tfdt", probeTfdt))),
+  probeBox("mdat", Buffer.alloc(16)),
+]);
+const probeSignals = timingProbe.segmentTimingSignals(probeSegment);
+assert.equal(probeSignals.container, "fmp4", "Timing probe should recognise fragmented MP4 segments");
+assert.equal(probeSignals.prft[0].utcMs, probeCaptureMs, "Timing probe should decode prft encoder wall-clock NTP time");
+assert.equal(probeSignals.emsg[0].scheme, "https://aomedia.org/emsg/ID3", "Timing probe should read emsg scheme ids");
+assert.equal(probeSignals.emsg[0].captureUtcMs, probeCaptureMs, "Timing probe should read the ID3 capture date from emsg payloads");
+assert.equal(probeSignals.tfdt, 900000, "Timing probe should read the fragment decode time");
+assert.deepEqual(JSON.parse(JSON.stringify(timingProbe.segmentTimingSignals(Buffer.from([0x47, 0x40, 0x11, 0x10, 0x49, 0x44, 0x33])))), { container: "ts", id3: true }, "Timing probe should flag ID3 inside MPEG-TS segments");
+const probePlaylist = timingProbe.hlsMediaPlaylistSummary([
+  "#EXTM3U", '#EXT-X-MAP:URI="init.mp4"', "#EXT-X-PROGRAM-DATE-TIME:2026-09-26T11:20:00.000Z",
+  "#EXTINF:2.0,", "seg1.m4s", "#EXTINF:2.0,", "seg2.m4s",
+].join("\n"), "https://example.test/live/index.m3u8");
+assert.equal(probePlaylist.last.pdtMs, Date.parse("2026-09-26T11:20:02.000Z"), "Timing probe should carry program-date-time forward to the latest HLS segment");
+assert.equal(probePlaylist.mapUrl, "https://example.test/live/init.mp4", "Timing probe should resolve the HLS init segment");
+const probeDashSegment = timingProbe.dashLatestVideoSegment(`<MPD><Period><AdaptationSet contentType="video"><SegmentTemplate media="v/$RepresentationID$/$Time$.m4s" initialization="v/$RepresentationID$/init.mp4" timescale="90000"><SegmentTimeline><S t="1000" d="180000" r="2"/><S d="90000"/></SegmentTimeline></SegmentTemplate><Representation id="v1" bandwidth="1"/></AdaptationSet></Period></MPD>`, "https://example.test/live/manifest.mpd");
+assert.equal(probeDashSegment.segmentUrl, "https://example.test/live/v/v1/541000.m4s", "Timing probe should resolve the latest DASH SegmentTimeline segment");
+const probeDashRecent = timingProbe.dashRecentSegments(`<MPD><Period><AdaptationSet contentType="audio"><SegmentTemplate media="a/$Number$.m4s" timescale="48000" startNumber="10"><SegmentTimeline><S t="0" d="96000" r="3"/></SegmentTimeline></SegmentTemplate><Representation id="a1" bandwidth="1"/></AdaptationSet></Period></MPD>`, "https://example.test/live/manifest.mpd", { kind: "audio", count: 2 });
+assert.deepEqual(JSON.parse(JSON.stringify(probeDashRecent.segmentUrls)), ["https://example.test/live/a/12.m4s", "https://example.test/live/a/13.m4s"], "Timing probe should list the most recent DASH segments per track");
+assert.equal(timingProbe.isoDurationSeconds("PT1H2M3.5S"), 3723.5, "Timing probe should parse DASH Period start durations");
+assert.equal(timingProbe.findManifestUrl({ resultObj: { url: "https://example.test/a.mpd?x=1" } }, /\.mpd(?:[?#]|$)/i), "https://example.test/a.mpd?x=1", "Timing probe should find the DASH manifest in the play response");
+assert.deepEqual(JSON.parse(JSON.stringify(timingProbe.playResponseShape({ resultObj: { url: "https://example.test/live/manifest.mpd?t=1", streamType: "DASHWV", entitlementToken: "secret" } }))), { resultKeys: ["url", "streamType", "entitlementToken"], streamType: "DASHWV", urlExtensions: ["mpd"] }, "Timing probe should describe the play response shape without URLs or token values");
+assert.match(mainProcess, /scheduleF1TvTimingProbe\(/, "Live F1 TV resolves should run the one-off timing-signal probe");
+const partyAlignSandbox = vm.runInNewContext(`(() => {
+  const window = {};
+  ${fs.readFileSync(path.join(root, "ui_kits/pitwall/sync.js"), "utf8")}
+  const LIVE_UTC_ALIGN_SEEK_COOLDOWN_MS = 2500;
+  const LIVE_UTC_ALIGN_LOG_INTERVAL_MS = 5000;
+  const logs = [];
+  function logPitWallDebug(area, payload) { logs.push({ area, payload }); }
+  ${["validVideoUtcMs", "dateLikeMs", "liveVideoPlayheadUtcMs", "liveVideoSeekRange", "yieldShakaLiveSync", "clearLiveUtcFollower", "livePlayheadUtcMsForVideo", "applyLiveUtcDecision", "alignLivePlayersToWorld"].map((name) => extractNamedFunction(liveRacingSource, name)).join("\n")}
+  let liveUtcAlignLastLogAt = 0;
+  ${extractNamedFunction(liveRacingSource, "reportLiveUtcAlign")}
+  function fakeVideo(startUtcMs, currentTime) {
+    const video = { paused: false, seeking: false, readyState: 4, currentTime, playbackRate: 1 };
+    video.__pitwallShakaPlayer = {
+      getPlayheadTimeAsDate: () => new Date(startUtcMs + video.currentTime * 1000),
+      seekRange: () => ({ start: 0, end: 600 }),
+      configure: () => {},
+    };
+    return video;
+  }
+  return { alignLivePlayersToWorld, fakeVideo, logs };
+})()`, { Date, Math, Number, Object, String, Boolean, JSON, Array, Infinity, NaN, isFinite });
+const partyNowMs = Date.now();
+// Guest main feed shows a frame 48s old; the host's picture is 44s behind now.
+const partyWorld = partyAlignSandbox.fakeVideo(partyNowMs - 48000 - 300 * 1000, 300);
+const partyOnboard = partyAlignSandbox.fakeVideo(partyNowMs - 50000 - 200 * 1000, 200);
+partyAlignSandbox.alignLivePlayersToWorld({ WORLD: partyWorld, VER: partyOnboard }, () => 0, partyNowMs, 44);
+assert.ok(Math.abs(partyWorld.currentTime - 304) < 0.01, "A Watch Party guest's main feed should seek 4s forward to the host's picture position");
+assert.equal(partyWorld.__pitwallUtcFollower, true, "The guest main feed should hand rate/seek control to the party aligner");
+assert.ok(Math.abs(partyOnboard.currentTime - 206) < 0.01, "Guest onboards should follow the guest's re-aligned main feed (frame age 50s -> 44s)");
+partyAlignSandbox.alignLivePlayersToWorld({ WORLD: partyWorld }, () => 0, partyNowMs + 6000, null);
+assert.equal(partyWorld.__pitwallUtcFollower, undefined, "Leaving the party should return the main feed to its own live-edge sync");
+// An onboard 2s behind the main feed whose own CDN edge is only 0.5s ahead must
+// hold, not seek backwards toward its edge clamp.
+const edgeNowMs = Date.now();
+const edgeWorld = partyAlignSandbox.fakeVideo(edgeNowMs - 40000 - 300 * 1000, 300);
+const edgeOnboard = partyAlignSandbox.fakeVideo(edgeNowMs - 42000 - 100 * 1000, 100);
+edgeOnboard.__pitwallShakaPlayer.seekRange = () => ({ start: 0, end: 100.5 });
+partyAlignSandbox.alignLivePlayersToWorld({ WORLD: edgeWorld, VER: edgeOnboard }, () => 0, edgeNowMs, null);
+assert.equal(edgeOnboard.currentTime, 100, "A pane behind the main feed but pinned near its own CDN edge should hold instead of seeking backwards");
+const liveUtcAlign = syncHelperSandbox.window.PW_SYNC.liveUtcAlign;
+const worldPlayheadUtcMs = Date.parse("2026-09-26T13:00:30.000Z");
+assert.deepEqual(JSON.parse(JSON.stringify(liveUtcAlign(worldPlayheadUtcMs, worldPlayheadUtcMs - 3500, 0))), { action: "seek", drift: -3.5, playbackRate: 1 }, "Live onboards 3.5s behind the main feed's playhead UTC should seek forward to it");
+assert.equal(liveUtcAlign(worldPlayheadUtcMs, worldPlayheadUtcMs - 2000, 2).action, "hold", "A manual per-feed sync offset should shift the onboard's UTC target");
+assert.deepEqual(JSON.parse(JSON.stringify(liveUtcAlign(worldPlayheadUtcMs, worldPlayheadUtcMs + 300, 0))), { action: "rate", drift: 0.3, playbackRate: 0.9 }, "Small live UTC drift should be absorbed with a gentle rate nudge instead of a seek");
+assert.equal(liveUtcAlign(worldPlayheadUtcMs, worldPlayheadUtcMs - 50, 0).action, "hold", "Live UTC drift within tolerance should hold at 1x");
+assert.equal(liveUtcAlign(worldPlayheadUtcMs, worldPlayheadUtcMs - 5 * 60 * 1000, 0).action, "none", "Implausible live UTC gaps should not seek on untrustworthy stream timestamps");
+assert.equal(liveUtcAlign(null, worldPlayheadUtcMs, 0).action, "none", "Live UTC alignment should wait until both playheads report a UTC time");
+assert.match(source["LiveRacing.jsx"], /function alignLivePlayersToWorld[\s\S]*PW_SYNC\?\.liveUtcAlign/, "Live followers should align to the main feed's playhead UTC like MultiViewer's actual-latency sync");
+assert.match(source["LiveRacing.jsx"], /logPitWallDebug\("live\.sync"/, "Live main-feed/onboard drift should be logged for verification");
+assert.match(source["LiveRacing.jsx"], /function yieldShakaLiveSync[\s\S]*streaming\.liveSync\.enabled", false/, "Main-feed aligned followers should stop Shaka liveSync from resetting their catch-up playback rate");
+assert.match(source["LiveRacing.jsx"], /dispatchAllEmsgBoxes: !replay/, "Live Shaka players should surface emsg ID3 capture timestamps");
+assert.match(source["LiveRacing.jsx"], /addEventListener\("emsg"[\s\S]*recordCaptureOffset/, "Live players should read capture dates from emsg boxes");
+assert.match(source["LiveRacing.jsx"], /__pitwallUtcFollower/, "Per-player live edge sync should yield to main-feed UTC alignment");
 assert.match(source["LiveRacing.jsx"], /RequestType\.LICENSE[\s\S]*request\.uris = \[licenseServer\]/, "Clean F1 TV player should force Shaka license requests to the resolved F1 TV license endpoint");
 assert.match(source["LiveRacing.jsx"], /F1 TV license rejected/, "Clean F1 TV player should surface license-server rejection hints before Shaka masks them");
 assert.match(source["LiveRacing.jsx"], /visibleDetail[\s\S]*!\/\^https\?:\\\/\\\//, "Clean F1 TV player errors should avoid showing raw playback URLs");
@@ -7193,6 +7431,19 @@ const f1TvSessionGateSandbox = vm.runInNewContext(`(() => {
   return { canLoadF1TvSession, normalizeF1TvSessionKind, normalizeRaceLibrary, orderedF1TvSessions };
 })()`);
 assert.equal(f1TvSessionGateSandbox.normalizeF1TvSessionKind("Sprint Shootout"), "Sprint Qualifying", "Session library should present Sprint Shootout aliases as Sprint Qualifying");
+const relocatedBahrainLibrary = f1TvSessionGateSandbox.normalizeRaceLibrary({
+  season: "2026",
+  races: [
+    { rnd: 4, name: "Bahrain Grand Prix", startsAt: "2026-04-12T15:00:00Z", sessions: [] },
+    { rnd: 15, name: "Azerbaijan Grand Prix", startsAt: "2026-09-26T11:00:00Z", sessions: [] },
+    { rnd: 16, name: "Bahrain Grand Prix", startsAt: "2026-10-04T07:00:00Z", sessions: [] },
+  ],
+}, "2026", Date.parse("2026-10-02T04:00:00Z"));
+assert.deepEqual(
+  relocatedBahrainLibrary.races.map((race) => [race.name, race.startsAt, race.rnd]),
+  [["Azerbaijan Grand Prix", "2026-09-26T11:00:00Z", 1], ["Bahrain Grand Prix", "2026-10-04T07:00:00Z", 2]],
+  "Session library should keep the relocated October 2026 Bahrain weekend"
+);
 const staleFp1Library = f1TvSessionGateSandbox.normalizeRaceLibrary({
   season: "2026",
   races: [{
@@ -7691,7 +7942,7 @@ assert.match(source["LiveRacing.jsx"], /pitwall\.data\.liveTiming\(\{[\s\S]*sour
 assert.match(mainProcess, /catchingUp: true[\s\S]*catchUpRemainingSeconds[\s\S]*Formula 1 live timing is catching up to the video buffer/, "Formula 1 live timing should report warm target buffers as catching up with an ETA when known");
 assert.match(mainProcess, /targetLatencySeconds/, "Formula 1 live timing snapshots should accept a target latency for video alignment");
 assert.match(mainProcess, /Date\.now\(\) \/ 1000 - targetLatencySeconds/, "Formula 1 live timing should render buffered rows at the video target latency");
-assert.match(mainProcess, /getF1LiveTimingSnapshot\(\{\s*targetLatencySeconds,\s*targetUtcMs\s*\}\)/, "Live timing IPC should forward the video UTC target to the Formula 1 timing snapshot");
+assert.match(mainProcess, /getF1LiveTimingSnapshot\(\{\s*targetLatencySeconds,\s*targetUtcMs,\s*captureAligned\s*\}\)/, "Live timing IPC should forward the video UTC target to the Formula 1 timing snapshot");
 assert.match(mainProcess, /getPlayheadTimeAsDate/, "F1 TV live sync diagnostics should expose the video playhead UTC used for live timing alignment");
 assert.match(mainProcess, /PITWALL_F1TV_LIVE_SYNC_CHECK_TIMING[\s\S]*targetUtcMs: finalPlayheadUtcMs/, "F1 TV live sync diagnostics should verify live timing at the probed video UTC");
 assert.match(mainProcess, /signalrcore/, "Live timing should connect to Formula 1's SignalR Core live timing stream");
@@ -7831,6 +8082,21 @@ assert.doesNotMatch(source["Copilot.jsx"], /% likely|Model confidence|Pole\s*→
 assert.doesNotMatch(source["Copilot.jsx"], /Math\.max\(0\.15,\s*0\.45\s*-\s*index\s*\*\s*0\.1\)/, "Copilot should not use hardcoded title-probability placeholders");
 assert.doesNotMatch(source["Copilot.jsx"], /className="insight-meta"|className="insight-list"|className="insight-item"|selectedPage\.bullets\.map/, "Copilot should not render daily metadata rows or stacked bullet callouts above the insight boards");
 assert.match(source["Copilot.jsx"], /No AI projection computed/, "Copilot should disclose when it has not computed a projection");
+const copilotCircuitFactsSandbox = vm.runInNewContext(`(() => {
+  ${source["Copilot.jsx"].match(/const CIRCUIT_FACTS = \{[\s\S]*?\n  \};/)[0]}
+  ${extractNamedFunction(source["Copilot.jsx"], "circuitFacts")}
+  return { circuitFacts };
+})()`);
+assert.equal(
+  copilotCircuitFactsSandbox.circuitFacts({ name: "Bahrain Grand Prix in Malaysia", circuit: "Sepang International Circuit", loc: "Kuala Lumpur, Malaysia" })?.len,
+  "5.543",
+  "Copilot next-weekend facts should use Sepang for the relocated 2026 Bahrain Grand Prix"
+);
+assert.equal(
+  copilotCircuitFactsSandbox.circuitFacts({ name: "Bahrain Grand Prix", circuit: "Kuala Lumpur", loc: "Kuala Lumpur, Bahrain" })?.len,
+  "5.543",
+  "Copilot facts should use Sepang when live timing names the relocated meeting only by Kuala Lumpur"
+);
 assert.match(mainProcess, /predictions:[\s\S]*winner[\s\S]*podium[\s\S]*leaderboard[\s\S]*watchlist/, "AI response schema should allow computed race prediction leaderboards");
 assert.match(mainProcess, /const AI_PROVIDER_TIMEOUT_MS = 90000/, "Daily AI projection providers should get a longer timeout than normal JSON posts");
 assert.match(mainProcess, /requestTextPost\(targetUrl, body,\s*\{[\s\S]*Accept[\s\S]*\}, AI_PROVIDER_TIMEOUT_MS\)/, "Codex streaming responses should use the AI provider timeout");

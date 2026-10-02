@@ -336,16 +336,20 @@
     return { ...base, ...incoming, daily };
   }
 
-  function isCancelledF12026RaceName(value) {
+  // Bahrain and Saudi Arabia lost their April 2026 slots; the Bahrain GP was re-run
+  // at Sepang in October, so only rows dated before May (or undated) are cancelled.
+  function isCancelledF12026RaceName(value, startsAt) {
     const text = String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    return /\bbahrain grand prix\b/.test(text) || /\bsaudi arabian grand prix\b/.test(text);
+    if (!/\bbahrain grand prix\b/.test(text) && !/\bsaudi arabian grand prix\b/.test(text)) return false;
+    const start = Date.parse(startsAt || "");
+    return !Number.isFinite(start) || start < Date.parse("2026-05-01T00:00:00Z");
   }
 
   function normalizeScheduleRoundOrder(schedule) {
     const rows = Array.isArray(schedule) ? schedule.slice() : [];
-    if (!rows.some((race) => isCancelledF12026RaceName(race?.name || race?.raceName))) return rows;
+    if (!rows.some((race) => isCancelledF12026RaceName(race?.name || race?.raceName, race?.startsAt))) return rows;
     return rows
-      .filter((race) => !isCancelledF12026RaceName(race?.name || race?.raceName))
+      .filter((race) => !isCancelledF12026RaceName(race?.name || race?.raceName, race?.startsAt))
       .map((race, index) => ({ ...race, rnd: index + 1 }));
   }
 

@@ -49,6 +49,7 @@
   const TRACK_MAP_LIVE_RESYNC_MS = 5000;
   const TRACK_MAP_LIVE_SAMPLE_MIN = 200;    // live trace points before it replaces the per-car fit
   const TRACK_MAP_LIVE_SAMPLE_RETRY_MS = 3000;
+  const TRACK_MAP_LIVE_TIMING_POLL_MS = 1000;
   const TRACK_MAP_RESNAP_WINDOW_PX = 110;
   const TRACK_MAP_Z_WEIGHT = 2;             // snap-cost px per projected px of elevation mismatch
   const TRACK_MAP_Z_PENALTY_MAX_PX = 18;    // cap: z arbitrates near-ties only; a stale z reading
@@ -1842,6 +1843,7 @@
     const liveTrackClockRef = useRef(null);
     if (!liveTrackClockRef.current) liveTrackClockRef.current = createLiveTrackClock();
     const [liveTrackSample, setLiveTrackSample] = useState(null);
+    const [liveTiming, setLiveTiming] = useState(null);
     replayElapsedClock.setOnCommit((elapsedSeconds) => {
       setReplay((current) => current.active && current.elapsedSeconds !== elapsedSeconds
         ? { ...current, elapsedSeconds }
@@ -1862,7 +1864,10 @@
     } = invariantModel;
     const geom = useMemo(() => (circuit ? buildGeom(circuit) : null), [circuit]);
     const replayActive = replay.active && replay.raceKey === selectedRaceValue;
-    const activeTiming = replayActive ? (Array.isArray(replay.data?.timing) ? replay.data.timing : []) : timing;
+    // The dashboard snapshot is OpenF1, refreshed every few minutes and without
+    // practice/qualifying intervals; prefer the Formula 1 live feed when it has rows.
+    const liveTimingRows = liveTiming?.timing?.length ? liveTiming.timing : timing;
+    const activeTiming = replayActive ? (Array.isArray(replay.data?.timing) ? replay.data.timing : []) : liveTimingRows;
     const mapTracking = mapLive || replayActive;
     const replayDataBucket = replayActive ? Math.floor((Number(replay.elapsedSeconds || 0) * 1000) / TRACK_MAP_REPLAY_DATA_POLL_MS) : 0;
     replayIdentityRef.current = replayActive ? `${selectedRaceValue}:${replay.sessionKind}` : "";
@@ -2006,6 +2011,37 @@
         clearInterval(timer);
       };
     }, [liveTrackPositionsActive]);
+
+    // Live tower: Formula 1 timing read at the map's render time so positions,
+    // intervals and lap count match the drawn cars.
+    const liveTimingActive = mapLive && !replayActive && Boolean(window.pitwall?.data?.liveTiming);
+    useEffect(() => {
+      setLiveTiming(null);
+      if (!liveTimingActive) return undefined;
+      let cancelled = false, inFlight = false;
+      const poll = async () => {
+        if (inFlight || document.hidden) return;
+        inFlight = true;
+        try {
+          const renderUtcMs = liveTrackClockRef.current.nowMs();
+          const result = await window.pitwall.data.liveTiming(renderUtcMs != null
+            ? { source: "f1", targetUtcMs: renderUtcMs, captureAligned: true }
+            : { source: "f1", targetLatencySeconds: 0 });
+          // Keep the last good rows through catch-up gaps instead of flashing back to the snapshot.
+          if (!cancelled && result?.timing?.length) setLiveTiming(result);
+        } catch (error) {
+          console.warn("Track Map live timing unavailable", error?.message || error);
+        } finally {
+          inFlight = false;
+        }
+      };
+      poll();
+      const timer = setInterval(poll, TRACK_MAP_LIVE_TIMING_POLL_MS);
+      return () => {
+        cancelled = true;
+        clearInterval(timer);
+      };
+    }, [liveTimingActive]);
     const positionFeed = useMemo(() => ({
       buffer: positionBufferRef.current,
       active: replayActive || liveTrackPositionsActive,
@@ -2057,8 +2093,8 @@
     const headerRace = useMemo(
       () => replayActive
         ? { ...(selectedRace || {}), lap: replayLap, laps: replayLaps, weather: replay.data?.weather || {} }
-        : mapLive ? { ...(data.race || {}), lap: data.race?.lap || "-", laps: data.race?.laps || "-" } : selectedRace,
-      [replayActive, selectedRace, replayLap, replayLaps, replay.data?.weather, mapLive, data.race]
+        : mapLive ? { ...(data.race || {}), lap: liveTiming?.sessionClock?.lapCount?.lap || data.race?.lap || "-", laps: liveTiming?.sessionClock?.lapCount?.laps || data.race?.laps || "-" } : selectedRace,
+      [replayActive, selectedRace, replayLap, replayLaps, replay.data?.weather, mapLive, data.race, liveTiming?.sessionClock?.lapCount?.lap, liveTiming?.sessionClock?.lapCount?.laps]
     );
 
     const circuitId = circuit?.id || "none";

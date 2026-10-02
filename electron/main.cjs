@@ -12,6 +12,7 @@ const vm = require("node:vm");
 const zlib = require("node:zlib");
 const sharedAuth = require("@neelsatyavolu/shared-ai-auth");
 const { createUsageStats } = require("./usage-stats.cjs");
+const { probeF1TvTimingSignals } = require("./f1tv-timing-probe.cjs");
 
 let appPackage = {};
 try {
@@ -3047,9 +3048,13 @@ function matchOpenF1Meeting(race, meetings = []) {
   return scored[0]?.score > 0 ? scored[0].meeting : null;
 }
 
-function isCancelledF12026RaceName(value) {
+// Bahrain and Saudi Arabia lost their April 2026 slots; the Bahrain GP was re-run
+// at Sepang in October, so only rows dated before May (or undated) are cancelled.
+function isCancelledF12026RaceName(value, startsAt) {
   const text = compactText(value);
-  return /\bbahrain grand prix\b/.test(text) || /\bsaudi arabian grand prix\b/.test(text);
+  if (!/\bbahrain grand prix\b/.test(text) && !/\bsaudi arabian grand prix\b/.test(text)) return false;
+  const start = Date.parse(startsAt || "");
+  return !Number.isFinite(start) || start < Date.parse("2026-05-01T00:00:00Z");
 }
 
 function parseSchedule(json, openF1Meetings = []) {
@@ -3060,11 +3065,11 @@ function parseSchedule(json, openF1Meetings = []) {
   const now = Date.now();
   const activeMeetings = (openF1Meetings || [])
     .filter((meeting) => /grand prix/i.test(String(meeting?.meeting_name || "")) && Number.isFinite(Date.parse(meeting?.date_start || "")))
-    .filter((meeting) => season !== "2026" || !isCancelledF12026RaceName(meeting?.meeting_name || meeting?.official_name || ""))
+    .filter((meeting) => season !== "2026" || !isCancelledF12026RaceName(meeting?.meeting_name || meeting?.official_name || "", meeting?.date_start))
     .sort((a, b) => Date.parse(a.date_start || "") - Date.parse(b.date_start || ""));
   const shouldUseActiveMeetingOrder = races.length > 0 && activeMeetings.length >= Math.max(1, Math.floor(races.length * 0.7));
   const activeRoundByMeetingKey = new Map(activeMeetings.map((meeting, index) => [String(meeting.meeting_key || ""), index + 1]));
-  const parsed = races.filter((race) => season !== "2026" || !isCancelledF12026RaceName(race?.raceName || "")).map((race) => {
+  const parsed = races.filter((race) => season !== "2026" || !isCancelledF12026RaceName(race?.raceName || "", sessionDate(race))).map((race) => {
     const meeting = matchOpenF1Meeting(race, openF1Meetings);
     const raceDate = Date.parse(sessionDate(race));
     const done = Number.isFinite(raceDate) && raceDate + 1000 * 60 * 60 * 5 < now;
@@ -3121,8 +3126,8 @@ function snapshotIs2026Schedule(data = {}) {
 function normalizeScheduleRoundOrder(schedule = [], options) {
   options = options || {};
   const rows = Array.isArray(schedule) ? schedule.slice() : [];
-  const hasCancelled2026Rows = options.removeCancelled2026 === true && rows.some((race) => isCancelledF12026RaceName(race?.name || race?.raceName || ""));
-  const eligibleRows = hasCancelled2026Rows ? rows.filter((race) => !isCancelledF12026RaceName(race?.name || race?.raceName || "")) : rows;
+  const hasCancelled2026Rows = options.removeCancelled2026 === true && rows.some((race) => isCancelledF12026RaceName(race?.name || race?.raceName || "", race?.startsAt));
+  const eligibleRows = hasCancelled2026Rows ? rows.filter((race) => !isCancelledF12026RaceName(race?.name || race?.raceName || "", race?.startsAt)) : rows;
   const matched = eligibleRows.filter((race) => race?.meetingKey);
   if (hasCancelled2026Rows) return eligibleRows.map((race, index) => ({ ...race, rnd: index + 1 }));
   if (!rows.length || matched.length < Math.max(1, Math.floor(rows.length * 0.7))) return rows;
@@ -5932,10 +5937,28 @@ function requestF1TimingJsonPost(targetUrl, timeout = 10000, headers = {}) {
 // length. Fold history into one merged base entry instead.
 const F1_TIMING_LIVE_ENTRY_SOFT_LIMIT = 1000;
 const F1_TIMING_LIVE_ENTRY_KEEP = 700;
+// The folded base is stamped at its newest row, so never fold rows a delayed
+// video target can still land on (90s max latency + stream alignment). At race
+// start TimingData bursts past 700 rows in well under the ~40s video delay,
+// which otherwise leaves the target before every row ("catching up" flicker).
+const F1_TIMING_LIVE_ENTRY_KEEP_SECONDS = 150;
+const F1_TIMING_LIVE_ENTRY_MIN_FOLD = 200;
+const F1_TIMING_LIVE_ENTRY_HARD_LIMIT = 20000;
+
+function f1TimingLiveCompactionIndex(rows) {
+  let keepFrom = Math.max(1, rows.length - F1_TIMING_LIVE_ENTRY_KEEP);
+  const latestSeconds = finiteNumber(rows.at(-1)?.seconds);
+  if (latestSeconds == null) return keepFrom;
+  const horizonSeconds = latestSeconds - F1_TIMING_LIVE_ENTRY_KEEP_SECONDS;
+  while (keepFrom > 1 && (finiteNumber(rows[keepFrom - 1]?.seconds) ?? -Infinity) >= horizonSeconds) keepFrom -= 1;
+  return Math.max(keepFrom, rows.length - F1_TIMING_LIVE_ENTRY_HARD_LIMIT);
+}
 
 function compactF1TimingLiveEntries(rows) {
   if (!Array.isArray(rows) || rows.length <= F1_TIMING_LIVE_ENTRY_SOFT_LIMIT) return rows;
-  const keepFrom = Math.max(1, rows.length - F1_TIMING_LIVE_ENTRY_KEEP);
+  const keepFrom = f1TimingLiveCompactionIndex(rows);
+  // Fold in batches so a long in-horizon history is not re-merged every push.
+  if (keepFrom < F1_TIMING_LIVE_ENTRY_MIN_FOLD) return rows;
   let base = {};
   for (let index = 0; index < keepFrom; index += 1) {
     base = mergeF1TimingDelta(base, rows[index]?.data);
@@ -5988,15 +6011,15 @@ function f1TimingLiveDataWithFeedTime(topic, data, feedUtc) {
 }
 
 const F1_TIMING_LIVE_FEED_LATENCY_MAX_SECONDS = 15;
-const F1_TIMING_LIVE_FEED_LATENCY_SAMPLE_LIMIT = 48;
-// Empirical F1 TV offset between the stream's program-date playhead and the
-// picture on screen; the measured feed latency can exceed it but never shrinks
-// the alignment below this floor.
-const F1_TIMING_LIVE_STREAM_ALIGNMENT_SECONDS = 4.6;
-// When Q2→Q3 (or any session re-arm) refreshes latency samples, the median can
-// fall several seconds in one poll. Peak-hold alignment and only slowly decay so
-// live timing does not suddenly run ahead of the picture mid-session.
-const F1_TIMING_LIVE_ALIGNMENT_DECAY_PER_MINUTE = 0.2;
+// MultiViewer's live-timing model (v2.9.0 ltEngine): timing shows the feed at
+// video frame timestamp − timing-feed transport latency (median of the last 50
+// arrival−stamp samples) − a live-timing sync offset. MultiViewer serves 5.5s
+// (all 2026 sessions since its v2.8.0); against the F1 TV picture that ran ~1s
+// late in a live session on 2026-10-02 (user-verified), so Apexline uses 4.5s.
+// F1 TV streams carry no capture clock (no emsg/ID3/prft in live HLS or DASH),
+// so this cannot be measured per session; it can drift ~1s between sessions.
+const F1_TIMING_LIVE_FEED_LATENCY_SAMPLE_LIMIT = 50;
+const F1_TIMING_LIVE_SYNC_OFFSET_SECONDS = 4.5;
 
 function f1LiveTimingFeedLatencySeconds(samples) {
   const values = (Array.isArray(samples) ? samples : [])
@@ -6008,29 +6031,8 @@ function f1LiveTimingFeedLatencySeconds(samples) {
   return Math.max(0, Math.min(F1_TIMING_LIVE_FEED_LATENCY_MAX_SECONDS, median));
 }
 
-function f1LiveTimingStreamAlignmentSeconds(state = f1LiveTimingState, nowMs = Date.now()) {
-  const floor = F1_TIMING_LIVE_STREAM_ALIGNMENT_SECONDS;
-  const measured = f1LiveTimingFeedLatencySeconds(state?.feedLatencySamples);
-  const instant = Math.max(measured, floor);
-  if (!state || typeof state !== "object") return instant;
-  const peak = finiteNumber(state.streamAlignmentPeak);
-  const wallMs = Number(nowMs);
-  if (peak == null || instant > peak) {
-    state.streamAlignmentPeak = instant;
-    state.streamAlignmentPeakAtMs = wallMs;
-    return instant;
-  }
-  // Decay only slowly toward the current instant. A 3s Q-session jump-ahead
-  // would otherwise take the median collapsing from ~7.6s to the 4.6s floor.
-  const sinceMs = Math.max(0, wallMs - (finiteNumber(state.streamAlignmentPeakAtMs) ?? wallMs));
-  const decay = (sinceMs / 60000) * F1_TIMING_LIVE_ALIGNMENT_DECAY_PER_MINUTE;
-  if (decay >= 0.05 && peak > instant) {
-    const nextPeak = Math.max(instant, peak - decay);
-    state.streamAlignmentPeak = nextPeak;
-    state.streamAlignmentPeakAtMs = wallMs;
-    return nextPeak;
-  }
-  return Math.max(peak, floor);
+function f1LiveTimingStreamAlignmentSeconds(state = f1LiveTimingState) {
+  return f1LiveTimingFeedLatencySeconds(state?.feedLatencySamples) + F1_TIMING_LIVE_SYNC_OFFSET_SECONDS;
 }
 
 function f1LiveTimingEntrySeconds(feedUtcMs, nowMs, feedLatencySeconds) {
@@ -6140,7 +6142,7 @@ function f1LiveTimingCatchUpRemainingSeconds(entriesByTopic = {}, options = {}) 
   const targetUtcMs = Number.isFinite(parsedTargetUtcMs) ? parsedTargetUtcMs : null;
   const targetLatencySeconds = Math.max(0, Math.min(90, Number(options.targetLatencySeconds || 0)));
   const targetSeconds = targetUtcMs != null
-    ? f1TimingArchiveSecondsForUtc({ clockEntries: entriesByTopic.ExtrapolatedClock || [], archiveStartUtcMs: 0 }, targetUtcMs) - f1LiveTimingStreamAlignmentSeconds(f1LiveTimingState)
+    ? f1TimingArchiveSecondsForUtc({ clockEntries: entriesByTopic.ExtrapolatedClock || [], archiveStartUtcMs: 0 }, targetUtcMs) - (options.captureAligned ? 0 : f1LiveTimingStreamAlignmentSeconds(f1LiveTimingState))
     : Date.now() / 1000 - targetLatencySeconds;
   const remainingSeconds = firstTimingSeconds - targetSeconds;
   if (!Number.isFinite(remainingSeconds) || remainingSeconds <= 0) return null;
@@ -6186,8 +6188,6 @@ function recoverStaleF1TimingLiveClient(nowMs = Date.now()) {
 function resyncF1LiveTiming() {
   if (f1LiveTimingState) {
     f1LiveTimingState.feedLatencySamples = [];
-    f1LiveTimingState.streamAlignmentPeak = null;
-    f1LiveTimingState.streamAlignmentPeakAtMs = null;
   }
   closeF1TimingLiveClient(f1LiveTimingClient);
   f1LiveTimingClient = null;
@@ -6296,7 +6296,7 @@ function getF1LiveTimingSnapshot(options = {}) {
   const parsedTargetUtcMs = typeof rawTargetUtcMs === "string" ? Date.parse(rawTargetUtcMs) : Number(rawTargetUtcMs);
   const targetUtcMs = Number.isFinite(parsedTargetUtcMs) ? parsedTargetUtcMs : null;
   const feedLatencySeconds = f1LiveTimingFeedLatencySeconds(f1LiveTimingState?.feedLatencySamples);
-  const streamAlignmentSeconds = f1LiveTimingStreamAlignmentSeconds(f1LiveTimingState);
+  const streamAlignmentSeconds = options.captureAligned && targetUtcMs != null ? 0 : f1LiveTimingStreamAlignmentSeconds(f1LiveTimingState);
   const targetSeconds = targetUtcMs != null
     ? f1TimingArchiveSecondsForUtc(sessionData, targetUtcMs) - streamAlignmentSeconds
     : Date.now() / 1000 - targetLatencySeconds;
@@ -6744,10 +6744,13 @@ async function getLiveTimingSnapshot(options = {}) {
   const targetUtcMs = Number.isFinite(parsedTargetUtcMs) ? parsedTargetUtcMs : undefined;
   const requestedSource = String(options.source || options.provider || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
   const f1Only = requestedSource === "f1" || requestedSource === "formula1";
-  const f1Timing = getF1LiveTimingSnapshot({ targetLatencySeconds, targetUtcMs });
+  // captureAligned: the renderer already mapped the video to its ID3 capture
+  // time, so the fixed stream-alignment guess must not be applied again.
+  const captureAligned = options.captureAligned === true && targetUtcMs != null;
+  const f1Timing = getF1LiveTimingSnapshot({ targetLatencySeconds, targetUtcMs, captureAligned });
   if (f1Timing?.timing?.length) return f1Timing;
   if (f1Only && f1LiveTimingState?.lastMessageAt) {
-    const catchUpRemainingSeconds = f1LiveTimingCatchUpRemainingSeconds(f1LiveTimingState.entriesByTopic || {}, { targetLatencySeconds, targetUtcMs });
+    const catchUpRemainingSeconds = f1LiveTimingCatchUpRemainingSeconds(f1LiveTimingState.entriesByTopic || {}, { targetLatencySeconds, targetUtcMs, captureAligned });
     return {
       ok: true,
       catchingUp: true,
@@ -9783,6 +9786,47 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const F1TV_TIMING_PROBE_DELAY_MS = 5000;
+// Test switch: also probe replays (recorded live streams) between live sessions.
+const F1TV_TIMING_PROBE_REPLAYS = process.env.APEXLINE_TIMING_PROBE_REPLAY === "1";
+const f1TvTimingProbedContent = new Set();
+
+// One-off per live content per run: log whether F1 TV's HLS/DASH streams carry
+// a capture clock (prft / emsg ID3 / ProducerReferenceTime) that could align
+// live timing to the picture without a manual offset. Diagnostic only.
+function scheduleF1TvTimingProbe(contentId, feed) {
+  const id = String(contentId || "");
+  if (!id || !feed || f1TvTimingProbedContent.has(id)) return;
+  f1TvTimingProbedContent.add(id);
+  const fetchBuffer = async (targetUrl) => {
+    // Never send F1 TV auth headers to hosts outside the F1 TV media allowlist.
+    if (!isF1TvMediaUrl(targetUrl)) return { ok: false, status: "host-not-allowlisted" };
+    const response = await requestBuffer(targetUrl, {
+      headers: feed.headers || {},
+      cookieHeader: await f1TvCookieHeaderForUrl(targetUrl),
+      timeoutMs: 8000,
+    });
+    const ok = response.status >= 200 && response.status < 300 && Boolean(response.body?.length);
+    return { ok, status: response.status, body: response.body };
+  };
+  setTimeout(() => {
+    probeF1TvTimingSignals({
+      contentId: id,
+      hlsManifestUrl: feed.manifestType === "hls" ? feed.manifestUrl : "",
+      fetchBuffer,
+    }).then(({ hls, dash }) => {
+      writePitWallDebugLog("f1tv.timing-probe.hls", { contentId: id, ...hls });
+      const { tracks, ...dashSummary } = dash || {};
+      writePitWallDebugLog("f1tv.timing-probe.dash", { contentId: id, ...dashSummary });
+      Object.entries(tracks || {}).forEach(([kind, track]) => {
+        writePitWallDebugLog("f1tv.timing-probe.dash-track", { contentId: id, kind, ...track });
+      });
+    }).catch((error) => {
+      writePitWallDebugLog("f1tv.timing-probe", { contentId: id, error: String(error?.message || error || "failed").slice(0, 120) });
+    });
+  }, F1TV_TIMING_PROBE_DELAY_MS);
+}
+
 async function resolveF1TvContent(_event, options = {}) {
   installF1TvPlaybackPermissions();
   installF1TvStreamCapture();
@@ -9968,6 +10012,7 @@ async function resolveF1TvContent(_event, options = {}) {
     licenseHost: licenseDebug.host,
     licensePathHint: licenseDebug.pathHint,
   });
+  if (result.ok && (result.playbackMode === "live" || F1TV_TIMING_PROBE_REPLAYS)) scheduleF1TvTimingProbe(result.contentId, timingFeed);
   return result;
 }
 
@@ -10666,7 +10711,7 @@ async function refreshF1TvLibrary(year) {
   const sessions = sessionsResult.status === "fulfilled" ? sessionsResult.value : [];
   const cmsItems = cmsResult.status === "fulfilled" ? cmsResult.value : [];
   const races = parseOpenF1Schedule(meetings, sessions)
-  .filter((race) => year !== "2026" || !isCancelledF12026RaceName(race.name || ""))
+  .filter((race) => year !== "2026" || !isCancelledF12026RaceName(race.name || "", race.startsAt))
   .map((race, index) => ({
     rnd: index + 1,
     name: race.name,
@@ -12048,7 +12093,7 @@ async function resolveAnalyticsSession(options = {}) {
     const meetings = await requestOpenF1Json(openF1ApiUrl("meetings", { year: season }), { priority: options.priority });
     const grandPrixMeetings = (meetings || [])
       .filter((meeting) => /grand prix/i.test(String(meeting?.meeting_name || "")))
-      .filter((meeting) => season !== "2026" || !isCancelledF12026RaceName(meeting?.meeting_name || meeting?.official_name || ""))
+      .filter((meeting) => season !== "2026" || !isCancelledF12026RaceName(meeting?.meeting_name || meeting?.official_name || "", meeting?.date_start))
       .sort((a, b) => Date.parse(a.date_start || "") - Date.parse(b.date_start || ""));
     meetingKey = finiteNumber(grandPrixMeetings[round - 1]?.meeting_key);
   }

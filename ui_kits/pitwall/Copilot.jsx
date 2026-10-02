@@ -358,6 +358,8 @@
   // keyed by normalized circuit or location name. Used only to enrich the Next
   // weekend panel; unknown fields fall back to "—".
   const CIRCUIT_FACTS = {
+    sepang: { len: "5.543", laps: 56, turns: 15, drs: 2, rec: "1:34.080", recBy: "Vettel '17" },
+    kualalumpur: { len: "5.543", laps: 56, turns: 15, drs: 2, rec: "1:34.080", recBy: "Vettel '17" },
     bahrain: { len: "5.412", laps: 57, turns: 15, drs: 3, rec: "1:31.447", recBy: "DeLaRosa '05" },
     jeddah: { len: "6.174", laps: 50, turns: 27, drs: 3, rec: "1:30.734", recBy: "Hamilton '21" },
     melbourne: { len: "5.278", laps: 58, turns: 14, drs: 4, rec: "1:19.813", recBy: "Leclerc '24" },

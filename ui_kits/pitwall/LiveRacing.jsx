@@ -799,6 +799,9 @@
   }
   const SYNC_STORAGE_KEY = "pw-sync-settings";
   const TIMING_OFFSET_STORAGE_KEY = "pw-replay-timing-offset-v2";
+  // v2: the main process now applies MultiViewer's alignment, so delays tuned
+  // against the old 4.6s floor (v1 key) must not be added on top of it.
+  const LIVE_TIMING_DELAY_STORAGE_KEY = "pw-live-timing-delay-v2";
   const PARTY_TRAY_STORAGE_KEY = "pw-party-tray-position";
   const DEFAULT_REPLAY_TIMING_OFFSET = -8;
   const DEFAULT_WORLD_SYNC_TARGET = 36;
@@ -807,6 +810,11 @@
   const SYNC_EPSILON = 0.075;
   const SHAKA_LIVE_SYNC_TOLERANCE_MIN = 3;
   const SHAKA_LIVE_SYNC_TOLERANCE_MAX = 8;
+  const LIVE_UTC_ALIGN_INTERVAL_MS = 1000;
+  const LIVE_UTC_ALIGN_SEEK_COOLDOWN_MS = 2500;
+  const LIVE_UTC_ALIGN_LOG_INTERVAL_MS = 5000;
+  // Hosts re-publish so a guest that stalls or buffers is pulled back in.
+  const PARTY_HOST_SYNC_INTERVAL_MS = 10000;
 
   function liveSyncToleranceForTarget(targetLatency) {
     const target = Number(targetLatency);
@@ -2379,6 +2387,17 @@
       return { debug: false, worldTarget, targets: { WORLD: worldTarget } };
     }
   }
+  function clampLiveTimingDelay(value) {
+    const number = Number(value || 0);
+    return Number.isFinite(number) ? Math.max(-10, Math.min(20, Math.round(number * 2) / 2)) : 0;
+  }
+  function readLiveTimingDelay() {
+    try {
+      return clampLiveTimingDelay(localStorage.getItem(LIVE_TIMING_DELAY_STORAGE_KEY));
+    } catch {
+      return 0;
+    }
+  }
   function clampReplayTimingOffset(value) {
     const number = Number(value || 0);
     return Number.isFinite(number) ? Math.max(-600, Math.min(600, Math.round(number))) : 0;
@@ -2417,19 +2436,85 @@
     if (startMs != null && Number.isFinite(currentTime)) return validVideoUtcMs(startMs + currentTime * 1000);
     return null;
   }
-  function liveTimingRequestForMetrics(metrics, fallbackTarget) {
+  // End of the newest segment in an HLS media playlist, by its own
+  // EXT-X-PROGRAM-DATE-TIME. Shaka's getPlayheadTimeAsDate() is the first
+  // segment's PDT fixed at load plus media time, so comparing it with this over
+  // time shows whether that mapping drifts during a long live session.
+  function hlsPlaylistEdgePdtMs(data) {
+    let text = "";
+    try {
+      text = typeof data === "string" ? data : new TextDecoder().decode(data);
+    } catch {
+      return null;
+    }
+    if (!/#EXT-X-PROGRAM-DATE-TIME/i.test(text) || !/#EXTINF/i.test(text)) return null;
+    let pdtMs = null;
+    let duration = 0;
+    let edgeMs = null;
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line) continue;
+      if (/^#EXT-X-PROGRAM-DATE-TIME:/i.test(line)) {
+        const parsed = Date.parse(line.slice(line.indexOf(":") + 1));
+        pdtMs = Number.isFinite(parsed) ? parsed : null;
+      } else if (/^#EXTINF:/i.test(line)) {
+        duration = Number.parseFloat(line.slice(8)) || 0;
+      } else if (!line.startsWith("#") && pdtMs != null) {
+        pdtMs += duration * 1000;
+        edgeMs = pdtMs;
+        duration = 0;
+      }
+    }
+    return edgeMs == null ? null : Math.round(edgeMs);
+  }
+  // F1 TV streams carry timed ID3 metadata whose trailing null-separated field
+  // is the frame's capture date (MultiViewer reads the same field).
+  function id3CaptureUtcMs(payload) {
+    const values = [];
+    const collect = (value) => {
+      if (typeof value === "string") values.push(value);
+      else if (value && typeof value.byteLength === "number") {
+        try { values.push(new TextDecoder().decode(value)); } catch {}
+      }
+    };
+    if (typeof payload === "string") collect(payload);
+    else if (payload && typeof payload === "object") {
+      collect(payload.data);
+      collect(payload.description);
+      collect(payload.info);
+    }
+    for (const text of values) {
+      const parts = text.split("\0").map((part) => part.trim()).filter(Boolean);
+      const ms = validVideoUtcMs(Date.parse(parts[parts.length - 1] || ""));
+      if (ms != null) return ms;
+    }
+    return null;
+  }
+  // extraDelaySeconds is the user's live timing nudge: positive holds timing
+  // further behind the main feed's picture.
+  function liveTimingRequestForMetrics(metrics, fallbackTarget, extraDelaySeconds = 0) {
     const configured = Number(metrics?.targetLatency ?? fallbackTarget);
     const value = Number.isFinite(configured) ? configured : Number(fallbackTarget);
-    const adjustedValue = Number.isFinite(value) ? value + LIVE_TIMING_STREAM_ALIGNMENT_DELAY_SECONDS : value;
+    const extraDelay = Number.isFinite(Number(extraDelaySeconds)) ? Number(extraDelaySeconds) : 0;
+    const adjustedValue = Number.isFinite(value) ? value + LIVE_TIMING_STREAM_ALIGNMENT_DELAY_SECONDS + extraDelay : value;
     const targetLatencySeconds = Number.isFinite(value)
       ? Math.max(0, Math.min(90, Math.round(adjustedValue * 10) / 10))
       : DEFAULT_WORLD_SYNC_TARGET;
     // The UTC target is the raw playhead; the main process subtracts the
     // measured feed latency (MultiViewer's trackTime = playhead - r).
-    const targetUtcMs = validVideoUtcMs(metrics?.videoTimeUtcMs);
+    const playheadUtcMs = validVideoUtcMs(metrics?.videoTimeUtcMs);
+    // Program-date-time is stamped seconds after capture. With a measured ID3
+    // capture offset, target the capture time and skip the main process's
+    // fixed stream-alignment guess.
+    const captureOffset = Number(metrics?.captureOffsetSeconds);
+    // Below the known-too-small 4.6s floor the ID3 date is not a trustworthy
+    // capture time, so fall back rather than run timing further ahead.
+    const captureAligned = metrics?.captureOffsetSeconds != null && Number.isFinite(captureOffset) && captureOffset >= LIVE_TIMING_STREAM_ALIGNMENT_DELAY_SECONDS;
+    const targetUtcMs = playheadUtcMs == null ? null : playheadUtcMs - Math.round(((captureAligned ? captureOffset : 0) + extraDelay) * 1000);
     if (targetUtcMs == null) return { targetLatencySeconds };
     const videoTimeAtMs = Number.isFinite(Number(metrics?.videoTimeAtMs)) ? Number(metrics.videoTimeAtMs) : null;
-    return videoTimeAtMs == null ? { targetLatencySeconds, targetUtcMs } : { targetLatencySeconds, targetUtcMs, videoTimeAtMs };
+    const request = videoTimeAtMs == null ? { targetLatencySeconds, targetUtcMs } : { targetLatencySeconds, targetUtcMs, videoTimeAtMs };
+    return captureAligned ? { ...request, captureAligned: true } : request;
   }
   function liveTimingTargetUtcNow(timingSync, nowMs) {
     const targetUtcMs = Number(timingSync?.targetUtcMs);
@@ -2496,6 +2581,145 @@
     video.play?.().catch?.(() => {});
     return { synced: true, targetTime, drift };
   }
+  function liveVideoSeekRange(video) {
+    const shakaRange = video?.__pitwallShakaPlayer?.seekRange?.();
+    const ranges = video?.seekable;
+    const rangeIndex = ranges?.length ? ranges.length - 1 : -1;
+    const start = shakaRange && Number.isFinite(Number(shakaRange.start)) ? Number(shakaRange.start) : rangeIndex >= 0 ? Number(ranges.start(rangeIndex)) : NaN;
+    const end = shakaRange && Number.isFinite(Number(shakaRange.end)) ? Number(shakaRange.end) : rangeIndex >= 0 ? Number(ranges.end(rangeIndex)) : NaN;
+    return Number.isFinite(start) && Number.isFinite(end) && end > start ? { start, end } : null;
+  }
+  // Shaka's liveSync (clamped to 1x) resets playbackRate on every timeupdate,
+  // which cancels the follower's 1.1x/0.9x catch-up. Hand rate control to the
+  // main-feed aligner while it owns the pane.
+  function yieldShakaLiveSync(video) {
+    const player = video?.__pitwallShakaPlayer;
+    if (!player || video.__pitwallLiveSyncYielded === player) return;
+    try {
+      player.configure("streaming.liveSync.enabled", false);
+      video.__pitwallLiveSyncYielded = player;
+    } catch {}
+  }
+  function clearLiveUtcFollower(video) {
+    if (!video?.__pitwallUtcFollower) return;
+    delete video.__pitwallUtcFollower;
+    const player = video.__pitwallShakaPlayer;
+    if (player && video.__pitwallLiveSyncYielded === player) {
+      try { player.configure("streaming.liveSync.enabled", true); } catch {}
+    }
+    delete video.__pitwallLiveSyncYielded;
+    if (!video.paused) video.playbackRate = 1;
+  }
+  function livePlayheadUtcMsForVideo(video) {
+    if (!video || video.paused || video.seeking || video.readyState < 3) return null;
+    return liveVideoPlayheadUtcMs(video, video.__pitwallShakaPlayer, video.__pitwallHls);
+  }
+  // Live panes follow the main feed by playhead wall-clock time (MultiViewer's
+  // "actual latency" sync): each feed's CDN live edge differs, so equal
+  // edge-relative latency still leaves onboards seconds off the main feed.
+  // Applies one liveUtcAlign decision to a video: seek for big gaps, a gentle
+  // rate nudge for small drift. Returns the debug-log fields.
+  function applyLiveUtcDecision(video, decision, nowMs) {
+    const logged = { drift: decision?.drift ?? null, action: decision?.action || "none" };
+    if (!decision || decision.action === "none") {
+      clearLiveUtcFollower(video);
+      return logged;
+    }
+    video.__pitwallUtcFollower = true;
+    yieldShakaLiveSync(video);
+    if (decision.action !== "seek") {
+      video.playbackRate = decision.playbackRate;
+      return { ...logged, rate: decision.playbackRate };
+    }
+    video.playbackRate = 1;
+    if (nowMs - (video.__pitwallUtcSeekAt || 0) < LIVE_UTC_ALIGN_SEEK_COOLDOWN_MS) return { ...logged, action: "seek-cooldown" };
+    const range = liveVideoSeekRange(video);
+    if (!range) return { ...logged, action: "seek-no-range" };
+    // Stay a second off this feed's own edge: if its CDN lags the target
+    // further than that, hold rather than re-seeking into a stall.
+    const targetTime = Math.max(range.start, Math.min(range.end - 1, video.currentTime - decision.drift));
+    // The edge clamp can point the other way (a pane behind the target but
+    // within a second of its own edge): hold rather than seek further off.
+    const wrongWay = Math.sign(targetTime - video.currentTime) !== Math.sign(-decision.drift);
+    if (wrongWay || Math.abs(targetTime - video.currentTime) < 0.25) return { ...logged, action: "seek-edge-hold", edgeGap: Math.round((range.end - video.currentTime) * 10) / 10 };
+    const seekBy = Math.round((targetTime - video.currentTime) * 1000) / 1000;
+    video.__pitwallUtcSeekAt = nowMs;
+    video.currentTime = targetTime;
+    return { ...logged, seekBy };
+  }
+  // Live panes follow the main feed by playhead wall-clock time (MultiViewer's
+  // "actual latency" sync): each feed's CDN live edge differs, so equal
+  // edge-relative latency still leaves onboards seconds off the main feed.
+  // A Watch Party guest's main feed in turn follows the host's picture position
+  // (partyActualLatency = host now − host frame timestamp).
+  function alignLivePlayersToWorld(players, offsetFor, nowMs = Date.now(), partyActualLatency = null) {
+    const world = players?.WORLD;
+    const followers = Object.entries(players || {}).filter(([key, video]) => key !== "WORLD" && video);
+    if (!world) {
+      followers.forEach(([, video]) => clearLiveUtcFollower(video));
+      return;
+    }
+    let party = null;
+    if (partyActualLatency != null && Number.isFinite(Number(partyActualLatency))) {
+      const worldUtcMs = livePlayheadUtcMsForVideo(world);
+      if (worldUtcMs != null) {
+        party = { hostActualLatency: Number(partyActualLatency), ...applyLiveUtcDecision(world, window.PW_SYNC?.liveUtcAlign?.(nowMs - Number(partyActualLatency) * 1000, worldUtcMs, 0), nowMs) };
+      }
+    } else {
+      clearLiveUtcFollower(world);
+    }
+    const masterUtcMs = livePlayheadUtcMsForVideo(world);
+    if (masterUtcMs == null) {
+      reportLiveUtcAlign(nowMs, { world: world.__pitwallFeedId || "", masterUtc: false, party, followers: [] }, Boolean(party?.seekBy));
+      return;
+    }
+    const report = followers.map(([key, video]) => {
+      // observedRate is read before this tick's decision: if it isn't what the
+      // previous tick set, something else is resetting the follower's rate.
+      const buffered = video.buffered?.length ? video.buffered.end(video.buffered.length - 1) - video.currentTime : null;
+      const entry = {
+        key,
+        feed: video.__pitwallFeedId || "",
+        gap: video.__pitwallEdgeMappingGap ?? null,
+        observedRate: video.playbackRate,
+        bufferAhead: buffered == null ? null : Math.round(buffered * 10) / 10,
+        waits: video.__pitwallWaitingCount || 0,
+      };
+      const followerUtcMs = livePlayheadUtcMsForVideo(video);
+      if (followerUtcMs == null) return { ...entry, action: "wait" };
+      return { ...entry, ...applyLiveUtcDecision(video, window.PW_SYNC?.liveUtcAlign?.(masterUtcMs, followerUtcMs, offsetFor(key)), nowMs) };
+    });
+    const seeked = Boolean(party?.seekBy) || report.some((item) => item.seekBy != null);
+    const captureOffset = Number.isFinite(world.__pitwallCaptureOffsetSeconds) ? Math.round(world.__pitwallCaptureOffsetSeconds * 1000) / 1000 : null;
+    const worldRange = liveVideoSeekRange(world);
+    const worldDiag = {
+      actualLatency: Math.round(nowMs - masterUtcMs) / 1000,
+      edgeLatency: worldRange ? Math.round((worldRange.end - world.currentTime) * 1000) / 1000 : null,
+      gap: world.__pitwallEdgeMappingGap ?? null,
+    };
+    reportLiveUtcAlign(nowMs, { world: world.__pitwallFeedId || "", masterUtc: true, worldDiag, captureOffset, party, followers: report }, seeked);
+  }
+  // Periodic "live.sync" debug line so main-feed/onboard drift can be verified
+  // from pitwall-debug.log during a live session; seeks are logged immediately.
+  let liveUtcAlignLastLogAt = 0;
+  function reportLiveUtcAlign(nowMs, payload, force) {
+    if (!force && nowMs - liveUtcAlignLastLogAt < LIVE_UTC_ALIGN_LOG_INTERVAL_MS) return;
+    liveUtcAlignLastLogAt = nowMs;
+    logPitWallDebug("live.sync", payload);
+  }
+  // Open the season list with the current weekend centred instead of at round 1.
+  // Runs from a callback ref on every render, so it keys on the list shape and
+  // only scrolls once per mounted list.
+  function centerSessionLibraryWeekend(node, index, count) {
+    if (!node || !count) return;
+    const key = `${count}:${index}`;
+    if (node.__pitwallCenteredKey === key) return;
+    const row = node.querySelectorAll(".session-library__spine > .slr")[index];
+    if (!row) return;
+    node.__pitwallCenteredKey = key;
+    const rowTop = row.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop;
+    node.scrollTop = Math.max(0, rowTop - (node.clientHeight - row.offsetHeight) / 2);
+  }
   function raceLibraryId(race) {
     return String(race?.rnd || race?.meetingKey || race?.name || "");
   }
@@ -2510,9 +2734,13 @@
     if (value === "unavailable") return { status: "unavailable", label: "No timing", message: "Replay live timing is not available yet." };
     return { status: "checking", label: "Checking", message: "Checking replay live timing availability." };
   }
-  function isCancelledF12026RaceName(value) {
+  // Bahrain and Saudi Arabia lost their April 2026 slots; the Bahrain GP was re-run
+  // at Sepang in October, so only rows dated before May (or undated) are cancelled.
+  function isCancelledF12026RaceName(value, startsAt) {
     const text = String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    return /\bbahrain grand prix\b/.test(text) || /\bsaudi arabian grand prix\b/.test(text);
+    if (!/\bbahrain grand prix\b/.test(text) && !/\bsaudi arabian grand prix\b/.test(text)) return false;
+    const start = Date.parse(startsAt || "");
+    return !Number.isFinite(start) || start < Date.parse("2026-05-01T00:00:00Z");
   }
   function f1TvTimeMs(value) {
     const time = Date.parse(value || "");
@@ -2557,8 +2785,8 @@
   }
   function normalizeRaceLibrary(library, season, nowMs = Date.now()) {
     const sourceRaces = Array.isArray(library?.races) ? library.races : [];
-    const shouldRemoveCancelled = String(library?.season || season || "") === "2026" && sourceRaces.some((race) => isCancelledF12026RaceName(race?.name));
-    const races = shouldRemoveCancelled ? sourceRaces.filter((race) => !isCancelledF12026RaceName(race?.name)) : sourceRaces;
+    const shouldRemoveCancelled = String(library?.season || season || "") === "2026" && sourceRaces.some((race) => isCancelledF12026RaceName(race?.name, race?.startsAt));
+    const races = shouldRemoveCancelled ? sourceRaces.filter((race) => !isCancelledF12026RaceName(race?.name, race?.startsAt)) : sourceRaces;
     return {
       ...library,
       races: races.map((race, index) => {
@@ -2806,6 +3034,9 @@
       shaka: {
         streaming: {
           lowLatencyMode: false,
+          // F1 TV carries frame capture dates as ID3 inside emsg boxes; HLS
+          // streams declare no scheme, so Shaka only surfaces them when told to.
+          dispatchAllEmsgBoxes: !replay,
           bufferingGoal: maxBufferLength,
           rebufferingGoal: replay ? 4 : 3,
           bufferBehind: backBufferLength,
@@ -2895,6 +3126,7 @@
       const licenseDebug = debugUrlParts(licenseServer);
       const playbackConfig = buildStreamPlaybackConfig(playbackProfile, targetLatency, descriptor.playbackMode, videoQuality);
       delete video.__pitwallShakaPlayer;
+      video.__pitwallFeedId = String(descriptor.feedId || descriptor.id || "").slice(0, 40);
       setReady(false);
       onPlaybackState?.(false);
       const markReady = () => {
@@ -2914,6 +3146,9 @@
         setStatus("");
         onReady?.(video);
       };
+      video.__pitwallWaitingCount = 0;
+      const countWaiting = () => { video.__pitwallWaitingCount = (video.__pitwallWaitingCount || 0) + 1; };
+      video.addEventListener("waiting", countWaiting);
       const handleVideoError = (event) => {
         const error = event.currentTarget?.error;
         logPitWallDebug("player.video-error", {
@@ -2924,6 +3159,27 @@
         });
         setStatus(playerErrorMessage(error, "Video element could not play this F1 TV stream."));
       };
+      const captureOffsetSamples = [];
+      let loggedCaptureSamples = 0;
+      // Program-date-time minus ID3 capture time at the same presentation time:
+      // how long after capture this feed's playhead timestamps are stamped.
+      const recordCaptureOffset = (event) => {
+        const captureMs = id3CaptureUtcMs(event?.payload);
+        const startTime = Number(event?.startTime);
+        const playheadMs = liveVideoPlayheadUtcMs(video, player, null);
+        if (captureMs == null || playheadMs == null || !Number.isFinite(startTime)) return;
+        const offset = (playheadMs - (video.currentTime - startTime) * 1000 - captureMs) / 1000;
+        if (loggedCaptureSamples < 5) {
+          loggedCaptureSamples += 1;
+          logPitWallDebug("player.id3-capture", { feedId: descriptor.feedId || descriptor.id || "", key: String(event?.payload?.key || ""), scheme: String(event?.scheme || "").slice(0, 60), offset: Math.round(offset * 1000) / 1000 });
+        }
+        if (!(offset > -2 && offset < 30)) return;
+        captureOffsetSamples.push(offset);
+        if (captureOffsetSamples.length > 15) captureOffsetSamples.shift();
+        const sorted = [...captureOffsetSamples].sort((a, b) => a - b);
+        video.__pitwallCaptureOffsetSeconds = sorted[Math.floor(sorted.length / 2)];
+      };
+      delete video.__pitwallCaptureOffsetSeconds;
       const reportSync = () => {
         if (!video || !sync?.onMetrics) return;
         let liveLatency = NaN;
@@ -2931,7 +3187,12 @@
         if (range && Number.isFinite(range.end)) liveLatency = range.end - video.currentTime;
         else if (video.seekable && video.seekable.length) liveLatency = video.seekable.end(video.seekable.length - 1) - video.currentTime;
         const decision = window.PW_SYNC?.liveSync ? window.PW_SYNC.liveSync(liveLatency, targetLatency, SYNC_EPSILON) : { playbackRate: 1, delta: 0 };
-        if (player && descriptor.playbackMode !== "replay" && shouldSeekLiveVideoToTarget(liveLatency, targetLatency, liveInitialTargetSync)) {
+        // Once the parent aligns this pane to the main feed's playhead UTC, its
+        // own live-edge target no longer applies (edges differ per feed).
+        const utcFollower = Boolean(video.__pitwallUtcFollower) && liveInitialTargetSync;
+        if (utcFollower) {
+          // Seeking and rate are owned by alignLivePlayersToWorld.
+        } else if (player && descriptor.playbackMode !== "replay" && shouldSeekLiveVideoToTarget(liveLatency, targetLatency, liveInitialTargetSync)) {
           const now = Date.now();
           if (now - lastLiveTargetSeekAt < 2500) {
             if (!video.paused) video.playbackRate = 1;
@@ -2947,8 +3208,8 @@
             }
           }
         }
-        if (player && descriptor.playbackMode !== "replay" && !video.paused) video.playbackRate = 1;
-        if (!player && !video.paused && descriptor.playbackMode !== "replay" && Number.isFinite(decision.delta)) video.playbackRate = decision.playbackRate;
+        if (!utcFollower && player && descriptor.playbackMode !== "replay" && !video.paused) video.playbackRate = 1;
+        if (!utcFollower && !player && !video.paused && descriptor.playbackMode !== "replay" && Number.isFinite(decision.delta)) video.playbackRate = decision.playbackRate;
         sync.onMetrics({
           targetLatency,
           liveLatency: Number.isFinite(liveLatency) ? liveLatency : null,
@@ -2956,7 +3217,16 @@
           delta: Number.isFinite(decision.delta) ? decision.delta : null,
           videoTimeUtcMs: liveVideoPlayheadUtcMs(video, player, null),
           videoTimeAtMs: Date.now(),
+          captureOffsetSeconds: Number.isFinite(video.__pitwallCaptureOffsetSeconds) ? video.__pitwallCaptureOffsetSeconds : null,
         });
+        // Playlist edge PDT minus Shaka's date for its seek-range edge. Constant
+        // apart from Shaka's presentation delay; growth means the fixed-at-load
+        // PDT mapping is drifting from the stream's own timestamps.
+        const startDateMs = dateLikeMs(player?.getPresentationStartTimeAsDate?.());
+        const edgeRange = player?.seekRange?.();
+        video.__pitwallEdgeMappingGap = startDateMs != null && video.__pitwallPlaylistEdgePdtMs && edgeRange && Number.isFinite(edgeRange.end)
+          ? Math.round(video.__pitwallPlaylistEdgePdtMs - (startDateMs + edgeRange.end * 1000)) / 1000
+          : null;
       };
       async function load() {
         video.volume = mediaVolume(volumeLevel);
@@ -2999,11 +3269,26 @@
           });
           await player.attach(video);
           video.__pitwallShakaPlayer = player;
+          if (descriptor.playbackMode !== "replay") {
+            player.addEventListener("metadata", recordCaptureOffset);
+            player.addEventListener("emsg", (event) => recordCaptureOffset({
+              startTime: event?.detail?.startTime,
+              payload: { data: event?.detail?.messageData },
+              scheme: event?.detail?.schemeIdUri,
+            }));
+          }
           player.configure({
             drm: licenseServer ? { servers: { "com.widevine.alpha": licenseServer } } : {},
             streaming: playbackConfig.shaka.streaming,
             ...(playbackConfig.shaka.abr ? { abr: playbackConfig.shaka.abr } : {}),
           });
+          if (descriptor.playbackMode !== "replay") {
+            player.getNetworkingEngine()?.registerResponseFilter((type, response) => {
+              if (type !== window.shaka.net.NetworkingEngine.RequestType.MANIFEST) return;
+              const edgeMs = hlsPlaylistEdgePdtMs(response?.data);
+              if (edgeMs != null && edgeMs > (video.__pitwallPlaylistEdgePdtMs || 0)) video.__pitwallPlaylistEdgePdtMs = edgeMs;
+            });
+          }
           player.getNetworkingEngine()?.registerRequestFilter((type, request) => {
             request.allowCrossSiteCredentials = true;
             request.headers = { ...(request.headers || {}), ...headers };
@@ -3049,6 +3334,7 @@
           });
           hls.loadSource(descriptor.manifestUrl);
           hls.attachMedia(video);
+          video.__pitwallHls = hls;
         } else {
           video.src = descriptor.manifestUrl;
         }
@@ -3080,7 +3366,11 @@
         video.removeEventListener("canplay", markReady);
         video.removeEventListener("playing", markReady);
         video.removeEventListener("error", handleVideoError);
-        if (hls) hls.destroy();
+        video.removeEventListener("waiting", countWaiting);
+        if (hls) {
+          if (video.__pitwallHls === hls) delete video.__pitwallHls;
+          hls.destroy();
+        }
         if (player) {
           if (video.__pitwallShakaPlayer === player) delete video.__pitwallShakaPlayer;
           const destroyed = player.destroy();
@@ -3142,9 +3432,10 @@
     );
   }
 
-  function SyncMenu({ open, replayMode, replayTimingOffset, debugEnabled, liveMetrics, liveTarget, onReplayTimingAdjust, onReplayTimingReset, onSyncAll, onLiveSyncToTarget, onJumpToLive, onResyncTiming, onToggleDebug }) {
+  function SyncMenu({ open, replayMode, replayTimingOffset, liveTimingDelay, debugEnabled, liveMetrics, liveTarget, onReplayTimingAdjust, onReplayTimingReset, onLiveTimingDelayAdjust, onLiveTimingDelayReset, onSyncAll, onLiveSyncToTarget, onJumpToLive, onResyncTiming, onToggleDebug }) {
     if (!open) return null;
     const timingLabel = `Timing ${replayTimingOffset > 0 ? "+" : ""}${replayTimingOffset}s`;
+    const liveTimingLabel = `Timing delay ${liveTimingDelay > 0 ? "+" : ""}${Number(liveTimingDelay || 0).toFixed(1)}s`;
     const liveStatus = liveSyncStatus(liveMetrics, liveTarget);
     return (
       <div className="sync-menu" aria-label="Sync menu">
@@ -3155,6 +3446,15 @@
             <button className="sync-menu__btn sync-menu__btn--box" type="button" onClick={onJumpToLive}>Jump to live</button>
             <button className="sync-menu__btn sync-menu__btn--box" type="button" onClick={onLiveSyncToTarget}>Match target</button>
             <button className="sync-menu__btn sync-menu__btn--box" type="button" onClick={onResyncTiming}>Resync timing</button>
+          </div>
+        )}
+        {replayMode !== "replay" && (
+          <div className="sync-menu__timing" title="Positive delay holds live timing further behind the main feed">
+            <button className="sync-menu__btn" type="button" onClick={() => onLiveTimingDelayAdjust?.(-1)}>Timing -1s</button>
+            <button className="sync-menu__btn" type="button" onClick={() => onLiveTimingDelayAdjust?.(-0.5)}>Timing -0.5s</button>
+            <button className="sync-menu__btn" type="button" data-active="true" onClick={onLiveTimingDelayReset}>{liveTimingLabel}</button>
+            <button className="sync-menu__btn" type="button" onClick={() => onLiveTimingDelayAdjust?.(0.5)}>Timing +0.5s</button>
+            <button className="sync-menu__btn" type="button" onClick={() => onLiveTimingDelayAdjust?.(1)}>Timing +1s</button>
           </div>
         )}
         {replayMode === "replay" && (
@@ -3848,6 +4148,7 @@
     const [syncSettings, setSyncSettings] = React.useState(readSyncSettings);
     const [syncMenuOpen, setSyncMenuOpen] = React.useState(false);
     const [replayTimingOffset, setReplayTimingOffset] = React.useState(readReplayTimingOffset);
+    const [liveTimingDelay, setLiveTimingDelay] = React.useState(readLiveTimingDelay);
     const [syncMetrics, setSyncMetrics] = React.useState({});
     const [panelSizes, setPanelSizes] = React.useState(readLivePanelSizes);
     const [customLayouts, setCustomLayouts] = React.useState(readCustomLayouts);
@@ -3886,6 +4187,9 @@
     const partyTrayMinimizedRef = React.useRef(partyTrayMinimized);
     const partyIdentityRef = React.useRef(partyIdentity);
     const partySyncRoleRef = React.useRef(partySyncRole);
+    // Guest only: the host's picture position (actual latency) to align to.
+    const partyLiveTargetRef = React.useRef(null);
+    const publishHostSyncRef = React.useRef(null);
     const partyLastSequenceRef = React.useRef(partyLastSequence);
     const partyMemberCountRef = React.useRef(0);
     const partyChatRef = React.useRef(null);
@@ -4071,6 +4375,9 @@
       writeLocalStorage(TIMING_OFFSET_STORAGE_KEY, String(clampReplayTimingOffset(replayTimingOffset)));
     }, [replayTimingOffset]);
     React.useEffect(() => {
+      writeLocalStorage(LIVE_TIMING_DELAY_STORAGE_KEY, String(clampLiveTimingDelay(liveTimingDelay)));
+    }, [liveTimingDelay]);
+    React.useEffect(() => {
       writeLocalStorage(PARTY_TRAY_STORAGE_KEY, JSON.stringify(partyTrayPosition));
     }, [partyTrayPosition]);
     React.useEffect(() => {
@@ -4155,6 +4462,7 @@
       return window.PW_SOCIAL.on((event) => {
         if (event.type === "identity") setPartyIdentity(event.identity);
         if (event.type === "room") {
+          partyLiveTargetRef.current = null;
           setPartyRoom(event.room);
           partyMemberCountRef.current = 0;
           setPartyTyping({});
@@ -4219,6 +4527,12 @@
       if (!partyRoom || partySyncRole !== "host" || replaySync.mode !== "live") return;
       publishHostSync();
     }, [partyRoom?.id, partySyncRole, replaySync.mode, syncSettings.worldTarget]);
+    publishHostSyncRef.current = publishHostSync;
+    React.useEffect(() => {
+      if (!partyRoom || partySyncRole !== "host") return undefined;
+      const timer = setInterval(() => publishHostSyncRef.current?.(), PARTY_HOST_SYNC_INTERVAL_MS);
+      return () => clearInterval(timer);
+    }, [partyRoom?.id, partySyncRole]);
 
     function configureStream(key, label) {
       setStreamTarget({ key, label });
@@ -4247,8 +4561,12 @@
 
     function registerPlayer(key, video) {
       if (!key) return;
+      const changed = playerRefs.current[key] !== (video || undefined);
       if (video) playerRefs.current[key] = video;
       else delete playerRefs.current[key];
+      // A host whose main feed (re)loads, e.g. after a target change, publishes
+      // its new picture position; the publish fired during the reload had none.
+      if (changed && video && key === "WORLD" && replaySync.mode === "live" && partyRoom && partySyncRoleRef.current === "host") publishHostSync();
     }
 
     // The replay clock prefers the WORLD player but falls back to any mounted
@@ -4316,6 +4634,7 @@
     async function createWatchParty() {
       openPartyTray();
       partySyncRoleRef.current = "host";
+      partyLiveTargetRef.current = null;
       setPartySyncRole("host");
       try {
         const room = await window.PW_SOCIAL?.createRoom?.(currentPartyContext());
@@ -4332,6 +4651,7 @@
       if (!code) return;
       openPartyTray();
       partySyncRoleRef.current = "guest";
+      partyLiveTargetRef.current = null;
       setPartySyncRole("guest");
       try {
         const room = await window.PW_SOCIAL?.joinRoom?.(code);
@@ -4375,6 +4695,13 @@
       publishPartyTyping(Boolean(value.trim()));
     }
 
+    // Where the host's main-feed picture is: now − its frame timestamp.
+    function hostLiveActualLatencySeconds() {
+      const world = playerRefs.current.WORLD;
+      const utcMs = world ? liveVideoPlayheadUtcMs(world, world.__pitwallShakaPlayer, world.__pitwallHls) : null;
+      return utcMs == null ? null : Math.round((Date.now() - utcMs) / 10) / 100;
+    }
+
     function publishHostSync() {
       if (partySyncRoleRef.current !== "host") return null;
       const snapshot = hostPartyPlaybackSnapshot();
@@ -4384,6 +4711,7 @@
         masterTime: snapshot.masterTime,
         playing: snapshot.playing,
         targetLatency: syncTargetFor("WORLD"),
+        actualLatency: replaySync.mode === "live" ? hostLiveActualLatencySeconds() : null,
       });
       if (message?.sequence) {
         partyLastSequenceRef.current = message.sequence;
@@ -4409,14 +4737,28 @@
       setPartyLastSequence(nextSequence);
       setPartyLastHostSync(message);
       if (message.mode === "replay") {
-        const decision = window.PW_SYNC.partySync.replayDecision(message, { masterTime: replaySync.masterTime });
-        seekReplayPlayers(decision.masterTime);
+        partyLiveTargetRef.current = null;
+        const decision = window.PW_SYNC.partySync.replayDecision(message, { masterTime: replaySync.masterTime, localTime: replayMasterReading().worldElapsed });
+        if (decision.shouldSeek) seekReplayPlayers(decision.masterTime);
         const playing = applyPartyPlaybackState(decision.playing);
-        setReplaySync((sync) => ({ ...sync, mode: "replay", playing, masterTime: decision.masterTime }));
+        setReplaySync((sync) => ({ ...sync, mode: "replay", playing, ...(decision.shouldSeek ? { masterTime: decision.masterTime } : {}) }));
         setPartyStatus("Synced to host replay");
         return;
       }
       const decision = window.PW_SYNC.partySync.liveDecision(message, { liveLatency: syncMetrics.WORLD?.liveLatency, targetLatency: syncTargetFor("WORLD") });
+      if (decision.actualLatency != null && playerRefs.current.WORLD) {
+        // The alignment loop moves this guest's main feed to the host's picture;
+        // onboards and live timing follow the main feed from there.
+        partyLiveTargetRef.current = { actualLatency: decision.actualLatency, receivedAt: Date.now() };
+        applyPartyPlaybackState(decision.playing);
+        if (Math.abs(syncTargetFor("WORLD") - decision.targetLatency) > 0.05) setSyncSettings(syncSettingsForWorldTarget(syncSettings, decision.targetLatency));
+        setPartyStatus("Synced to host picture");
+        return;
+      }
+      // Legacy edge-latency sync (older host, host without a main feed, or a
+      // guest without one): drop any earlier picture target so the aligner
+      // doesn't pull the main feed back against this seek.
+      partyLiveTargetRef.current = null;
       const nextSettings = syncSettingsForWorldTarget(syncSettings, decision.targetLatency);
       applyPartyPlaybackState(decision.playing);
       setSyncSettings(nextSettings);
@@ -4441,8 +4783,18 @@
         if (drift > 0.6) return { label: "Catching up", tone: "warn", drift };
         return { label: "In sync", tone: "ok", drift };
       }
-      const liveLatency = Number(syncMetrics.WORLD?.liveLatency);
-      const targetLatency = Number(partyLastHostSync.targetLatency);
+      // A paused host's frame age keeps growing between publishes; guests are
+      // paused with it, so don't report that as drift.
+      if (partyLastHostSync.playing === false) return { label: "Paused", tone: "ok" };
+      const hostActualLatency = partyLastHostSync.actualLatency == null ? NaN : Number(partyLastHostSync.actualLatency);
+      const worldMetrics = syncMetrics.WORLD || {};
+      const localActualLatency = worldMetrics.videoTimeUtcMs != null && worldMetrics.videoTimeAtMs != null
+        ? (Number(worldMetrics.videoTimeAtMs) - Number(worldMetrics.videoTimeUtcMs)) / 1000
+        : NaN;
+      // Compare picture positions when the host sends one; older hosts only
+      // send their configured edge latency.
+      const liveLatency = Number.isFinite(hostActualLatency) ? localActualLatency : Number(worldMetrics.liveLatency);
+      const targetLatency = Number.isFinite(hostActualLatency) ? hostActualLatency : Number(partyLastHostSync.targetLatency);
       if (!Number.isFinite(liveLatency) || !Number.isFinite(targetLatency)) return { label: "Catching up", tone: "warn" };
       const drift = Math.abs(liveLatency - targetLatency);
       if (drift > 2) return { label: "Out of sync", tone: "bad", drift };
@@ -4745,6 +5097,7 @@
           // Keep the wall-clock sample time so live timing can extrapolate the
           // playhead between 750ms sync reports (and not freeze across Q restarts).
           videoTimeAtMs: videoTimeUtcMs != null && Number.isFinite(measuredAtMs) ? measuredAtMs : null,
+          captureOffsetSeconds: metrics.captureOffsetSeconds == null ? null : Math.round(metrics.captureOffsetSeconds * 10) / 10,
         };
         const previous = current[key] || {};
         if (
@@ -4753,6 +5106,7 @@
           && previous.targetLatency === rounded.targetLatency
           && previous.videoTimeUtcMs === rounded.videoTimeUtcMs
           && previous.videoTimeAtMs === rounded.videoTimeAtMs
+          && previous.captureOffsetSeconds === rounded.captureOffsetSeconds
         ) return current;
         return { ...current, [key]: rounded };
       });
@@ -5637,8 +5991,25 @@
       replayClockRef.current = replaySync.masterTime || 0;
     }, [replaySync.masterTime]);
     React.useEffect(() => {
-      liveTimingSyncRef.current = liveTimingRequestForMetrics(syncMetrics.WORLD, syncTargetFor("WORLD"));
-    }, [syncMetrics.WORLD?.liveLatency, syncMetrics.WORLD?.targetLatency, syncMetrics.WORLD?.videoTimeUtcMs, syncMetrics.WORLD?.videoTimeAtMs, syncSettings]);
+      if (replaySync.mode === "replay") {
+        Object.values(playerRefs.current).forEach(clearLiveUtcFollower);
+        return undefined;
+      }
+      // Manual per-pane nudges stay relative to the main feed's target.
+      const worldTarget = clampSyncLatency(syncSettings.worldTarget == null ? defaultSyncTarget("WORLD") : syncSettings.worldTarget);
+      const offsetFor = (key) => {
+        const value = syncSettings.targets?.[key];
+        return clampSyncLatency(value == null ? defaultSyncTarget(key, worldTarget) : value) - worldTarget;
+      };
+      const timer = setInterval(() => {
+        const partyTarget = partySyncRoleRef.current === "guest" ? partyLiveTargetRef.current : null;
+        alignLivePlayersToWorld(playerRefs.current, offsetFor, Date.now(), partyTarget?.actualLatency ?? null);
+      }, LIVE_UTC_ALIGN_INTERVAL_MS);
+      return () => clearInterval(timer);
+    }, [replaySync.mode, syncSettings]);
+    React.useEffect(() => {
+      liveTimingSyncRef.current = liveTimingRequestForMetrics(syncMetrics.WORLD, syncTargetFor("WORLD"), liveTimingDelay);
+    }, [syncMetrics.WORLD?.liveLatency, syncMetrics.WORLD?.targetLatency, syncMetrics.WORLD?.videoTimeUtcMs, syncMetrics.WORLD?.videoTimeAtMs, syncMetrics.WORLD?.captureOffsetSeconds, syncSettings, liveTimingDelay]);
     React.useEffect(() => {
       if (!liveWorkspaceReady || replaySync.mode === "replay" || pendingF1TvSelection) {
         setLiveTimingData(null);
@@ -5662,12 +6033,18 @@
         liveTimingInFlightRef.current = requestId;
         try {
           const timingSync = liveTimingSyncRef.current || { targetLatencySeconds: syncTargetFor("WORLD") };
-          const data = await window.pitwall.data.liveTiming({ source: "f1", targetUtcMs: liveTimingTargetUtcNow(timingSync, Date.now()), targetLatencySeconds: timingSync.targetLatencySeconds });
+          const data = await window.pitwall.data.liveTiming({ source: "f1", targetUtcMs: liveTimingTargetUtcNow(timingSync, Date.now()), targetLatencySeconds: timingSync.targetLatencySeconds, captureAligned: Boolean(timingSync.captureAligned) });
           if (cancelled || requestId !== liveTimingRequestRef.current) return;
           applyLiveTimingData(data || null);
           logPitWallDebug("live.timing", {
             rowCount: data?.timing?.length || 0,
             ok: Boolean(data?.ok),
+            // Timing shows the feed at (playhead - timingDelay - streamAlignment).
+            targetLatency: timingSync.targetLatencySeconds,
+            playheadUtc: timingSync.targetUtcMs != null,
+            captureAligned: Boolean(timingSync.captureAligned),
+            streamAlignment: data?.diagnostics?.streamAlignmentSeconds ?? null,
+            feedLatency: data?.diagnostics?.feedLatencySeconds ?? null,
           });
         } catch (error) {
           if (cancelled || requestId !== liveTimingRequestRef.current) return;
@@ -6577,7 +6954,7 @@
                 </span>
               </div>
             </div>
-            <div className="session-library__season-scroll">
+            <div className="session-library__season-scroll" ref={(node) => centerSessionLibraryWeekend(node, currentF1TvWeekendIndex, f1TvRaces.length)}>
               {f1TvRaces.length ? (
                 <div className="session-library__spine">
                   {f1TvRaces.map((race, index) => {
@@ -6657,11 +7034,14 @@
                 open={syncMenuOpen}
                 replayMode={replaySync.mode}
                 replayTimingOffset={replayTimingOffset}
+                liveTimingDelay={liveTimingDelay}
                 debugEnabled={syncSettings.debug}
                 liveMetrics={syncMetrics.WORLD}
                 liveTarget={syncTargetFor("WORLD")}
                 onReplayTimingAdjust={adjustReplayTimingOffset}
                 onReplayTimingReset={resetReplayTimingOffset}
+                onLiveTimingDelayAdjust={(delta) => setLiveTimingDelay((value) => clampLiveTimingDelay(value + delta))}
+                onLiveTimingDelayReset={() => setLiveTimingDelay(0)}
                 onSyncAll={() => syncReplayPlayers(replaySync.masterTime)}
                 onLiveSyncToTarget={() => syncLivePlayersToTarget("WORLD")}
                 onJumpToLive={() => jumpLivePlayersToLive("WORLD")}

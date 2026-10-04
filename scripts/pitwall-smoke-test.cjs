@@ -149,12 +149,7 @@ for (const driver of data.drivers) {
   const portraitSvg = decodeURIComponent(driver.image.replace(/^data:image\/svg\+xml,/, ""));
   assert.match(portraitSvg, /viewBox="0 0 96 96"/, `${driver.code} packaged portrait should be cropped for small avatars`);
   assert.doesNotMatch(portraitSvg, /<text\b/, `${driver.code} packaged portrait should not include tiny baked-in labels`);
-  if (driver.code === "LIN") {
-    assert.equal(driver.remoteImage, "../../assets/drivers/lin-headshot.jpg", "LIN should use the vendored local headshot");
-    assert.ok(fs.existsSync(path.join(root, "assets/drivers/lin-headshot.jpg")), "LIN vendored local headshot should exist");
-  } else {
-    assert.match(driver.remoteImage, /^https:\/\/media\.formula1\.com\//, `${driver.code} should retain the official remote image URL`);
-  }
+  assert.match(driver.remoteImage, /^https:\/\/media\.formula1\.com\//, `${driver.code} should retain the official remote image URL`);
   assert.match(driver.teamLogo, /^https:\/\/media\.formula1\.com\//, `${driver.code} needs an official team logo`);
   assert.match(driver.teamLogo, /c_fit%2Ch_256/, `${driver.code} team logo should request a high-resolution source`);
 }

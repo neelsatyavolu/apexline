@@ -1,14 +1,14 @@
 {
-  "currentRelease": "1.1.15",
+  "currentRelease": "1.1.16",
   "releases": [
     {
-      "version": "1.1.15",
+      "version": "1.1.16",
       "updateTo": {
-        "version": "1.1.15",
-        "pub_date": "2026-10-02T23:03:41.387Z",
-        "notes": "Onboards and live timing now stay in sync with the main F1 TV feed (MultiViewer-style), Watch Party guests match the host's picture, Session Library opens on the current weekend, and the Bahrain GP at Sepang.",
-        "name": "Apexline 1.1.15",
-        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.15-mac-arm64.zip"
+        "version": "1.1.16",
+        "pub_date": "2026-10-04T06:24:43.119Z",
+        "notes": "Arvid Lindblad now shows his official 2026 Formula 1 portrait, matching the rest of the grid.",
+        "name": "Apexline 1.1.16",
+        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.16-mac-arm64.zip"
       }
     }
   ]

@@ -1,0 +1,204 @@
+{
+  "throughSeason": 2025,
+  "generatedAt": "2026-10-04",
+  "drivers": {
+    "ALB": {
+      "gp": 129,
+      "careerWins": 0,
+      "podiums": 2,
+      "poles": 0,
+      "fl": 1,
+      "bestFinishPos": 3,
+      "bestGridPos": 4
+    },
+    "ALO": {
+      "gp": 428,
+      "careerWins": 32,
+      "podiums": 106,
+      "poles": 22,
+      "fl": 25,
+      "bestFinishPos": 1,
+      "bestGridPos": 1
+    },
+    "ANT": {
+      "gp": 24,
+      "careerWins": 0,
+      "podiums": 3,
+      "poles": 0,
+      "fl": 3,
+      "bestFinishPos": 2,
+      "bestGridPos": 2
+    },
+    "BEA": {
+      "gp": 27,
+      "careerWins": 0,
+      "podiums": 0,
+      "poles": 0,
+      "fl": 0,
+      "bestFinishPos": 4,
+      "bestGridPos": 8
+    },
+    "BOR": {
+      "gp": 24,
+      "careerWins": 0,
+      "podiums": 0,
+      "poles": 0,
+      "fl": 0,
+      "bestFinishPos": 6,
+      "bestGridPos": 7
+    },
+    "BOT": {
+      "gp": 247,
+      "careerWins": 10,
+      "podiums": 67,
+      "poles": 20,
+      "fl": 19,
+      "bestFinishPos": 1,
+      "bestGridPos": 1
+    },
+    "COL": {
+      "gp": 27,
+      "careerWins": 0,
+      "podiums": 0,
+      "poles": 0,
+      "fl": 0,
+      "bestFinishPos": 8,
+      "bestGridPos": 8
+    },
+    "GAS": {
+      "gp": 178,
+      "careerWins": 1,
+      "podiums": 5,
+      "poles": 0,
+      "fl": 3,
+      "bestFinishPos": 1,
+      "bestGridPos": 2
+    },
+    "HAD": {
+      "gp": 24,
+      "careerWins": 0,
+      "podiums": 1,
+      "poles": 0,
+      "fl": 0,
+      "bestFinishPos": 3,
+      "bestGridPos": 4
+    },
+    "HAM": {
+      "gp": 380,
+      "careerWins": 105,
+      "podiums": 202,
+      "poles": 104,
+      "fl": 68,
+      "bestFinishPos": 1,
+      "bestGridPos": 1
+    },
+    "HUL": {
+      "gp": 254,
+      "careerWins": 0,
+      "podiums": 1,
+      "poles": 1,
+      "fl": 2,
+      "bestFinishPos": 3,
+      "bestGridPos": 1
+    },
+    "LAW": {
+      "gp": 35,
+      "careerWins": 0,
+      "podiums": 0,
+      "poles": 0,
+      "fl": 0,
+      "bestFinishPos": 5,
+      "bestGridPos": 3
+    },
+    "LEC": {
+      "gp": 173,
+      "careerWins": 8,
+      "podiums": 50,
+      "poles": 27,
+      "fl": 11,
+      "bestFinishPos": 1,
+      "bestGridPos": 1
+    },
+    "NOR": {
+      "gp": 152,
+      "careerWins": 11,
+      "podiums": 44,
+      "poles": 16,
+      "fl": 18,
+      "bestFinishPos": 1,
+      "bestGridPos": 1
+    },
+    "OCO": {
+      "gp": 180,
+      "careerWins": 1,
+      "podiums": 4,
+      "poles": 0,
+      "fl": 1,
+      "bestFinishPos": 1,
+      "bestGridPos": 3
+    },
+    "PIA": {
+      "gp": 70,
+      "careerWins": 9,
+      "podiums": 26,
+      "poles": 6,
+      "fl": 9,
+      "bestFinishPos": 1,
+      "bestGridPos": 1
+    },
+    "PER": {
+      "gp": 283,
+      "careerWins": 6,
+      "podiums": 39,
+      "poles": 3,
+      "fl": 12,
+      "bestFinishPos": 1,
+      "bestGridPos": 1
+    },
+    "RUS": {
+      "gp": 152,
+      "careerWins": 5,
+      "podiums": 24,
+      "poles": 8,
+      "fl": 11,
+      "bestFinishPos": 1,
+      "bestGridPos": 1
+    },
+    "SAI": {
+      "gp": 232,
+      "careerWins": 4,
+      "podiums": 29,
+      "poles": 6,
+      "fl": 4,
+      "bestFinishPos": 1,
+      "bestGridPos": 1
+    },
+    "STR": {
+      "gp": 191,
+      "careerWins": 0,
+      "podiums": 3,
+      "poles": 1,
+      "fl": 0,
+      "bestFinishPos": 3,
+      "bestGridPos": 1
+    },
+    "TSU": {
+      "gp": 114,
+      "careerWins": 0,
+      "podiums": 0,
+      "poles": 0,
+      "fl": 1,
+      "bestFinishPos": 4,
+      "bestGridPos": 3
+    },
+    "VER": {
+      "gp": 233,
+      "careerWins": 71,
+      "podiums": 127,
+      "poles": 48,
+      "fl": 36,
+      "bestFinishPos": 1,
+      "bestGridPos": 1
+    }
+  }
+}

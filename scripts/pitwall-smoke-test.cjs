@@ -8384,6 +8384,47 @@ for (const file of fs.readdirSync(kitDir).filter((name) => name.endsWith(".jsx")
   Babel.transform(code, { presets: ["react"], filename: file });
 }
 
+{
+  const { fillStandingsWins } = vm.runInNewContext(`(() => {
+    ${["compactText", "fillStandingsWins"].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+    return { fillStandingsWins };
+  })()`);
+  const drivers = [{ code: "ANT", name: "Kimi Antonelli" }, { code: "RUS", name: "George Russell" }];
+  const openF1Rows = [{ code: "ANT", pts: 302, wins: 0 }, { code: "RUS", pts: 236, wins: 0 }];
+  const schedule = [{ winner: "Kimi Antonelli" }, { winner: "George Russell" }, { winner: "Kimi Antonelli" }, { status: "upcoming" }];
+  assert.deepEqual(fillStandingsWins(openF1Rows, schedule, drivers).map((row) => row.wins), [2, 1], "Standings without win counts should count the season's resolved race winners");
+  assert.deepEqual(fillStandingsWins([{ code: "ANT", wins: 8 }], schedule, drivers).map((row) => row.wins), [8], "Standings that already carry wins should be kept");
+
+  const careers = require(path.join(root, "electron/driver-careers.cjs"));
+  const result = (code, position, grid, fastest) => ({ Driver: { code }, position: String(position), grid: String(grid), ...(fastest ? { FastestLap: { rank: "1" } } : {}) });
+  const seasonRaces = [
+    { Results: [result("ANT", 1, 1, true), result("RUS", 2, 0)] },
+    { Results: [result("RUS", 1, 2), result("ANT", 12, 8)] },
+  ];
+  const season = careers.tallyCareerResults(seasonRaces);
+  assert.deepEqual(season.ANT, { gp: 2, careerWins: 1, podiums: 1, poles: 1, fl: 1, bestFinishPos: 1, bestGridPos: 1 }, "Season tallies should count wins, podiums, grid-1 poles, fastest laps and best positions");
+  assert.equal(season.RUS.poles, 0, "Poles should count only starts from grid 1");
+  assert.equal(season.RUS.bestGridPos, 2, "A pit-lane start (grid 0) is not a grid position");
+  const merged = careers.mergeCareerTallies({ ANT: { gp: 24, careerWins: 0, podiums: 3, poles: 0, fl: 3, bestFinishPos: 2, bestGridPos: 2 } }, season);
+  assert.deepEqual(JSON.parse(JSON.stringify(careers.careerForDisplay(merged.ANT))), { gp: 26, careerWins: 1, podiums: 4, poles: 1, fl: 4, bestFinish: "1st", bestGrid: "1st" }, "Career totals should add the live season onto the bundled baseline");
+  assert.equal(careers.ordinalPosition(12), "12th");
+  assert.equal(careers.ordinalPosition(22), "22nd");
+
+  const baseline = require(path.join(root, "electron/driver-career-baseline.json"));
+  assert.ok(baseline.throughSeason >= 2025 && Object.keys(baseline.drivers).length >= 20, "The bundled career baseline should cover the current grid");
+  assert.match(mainProcess, /buildDriverCareers\(jolpicaCareerClient, driverCareerBaseline/, "Main should build careers from the baseline plus live seasons");
+
+  const calls = [];
+  let failures = 1;
+  const client = careers.createJolpicaClient(async (url) => {
+    calls.push(url);
+    if (url === "a" && failures-- > 0) throw Object.assign(new Error("HTTP 429 for a"), { statusCode: 429 });
+    return url;
+  }, { minGapMs: 0, wait: async () => {} });
+  assert.deepEqual(await Promise.all([client("a"), client("b")]), ["a", "b"], "The Jolpica client should retry rate-limited requests");
+  assert.deepEqual(calls, ["a", "a", "b"], "The Jolpica client should send requests one at a time, in order");
+}
+
 await runUsageStatsChecks();
 
 console.log("Apexline smoke checks passed");

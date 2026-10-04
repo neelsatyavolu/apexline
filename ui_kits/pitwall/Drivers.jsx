@@ -91,7 +91,19 @@
       return rows;
     }, [sort, order, profiles]);
 
-    const d = profiles[sel] || profiles[order[0]] || {};
+    const base = profiles[sel] || profiles[order[0]] || {};
+    const [careers, setCareers] = React.useState({});
+    React.useEffect(() => {
+      const fetchCareers = window.pitwall?.data?.driverCareers;
+      if (typeof fetchCareers !== "function") return;
+      let cancelled = false;
+      fetchCareers().then((result) => {
+        if (!cancelled && result?.ok) setCareers(result.careers || {});
+      }).catch(() => {});
+      return () => { cancelled = true; };
+    }, []);
+    // Live all-time stats from Jolpica replace the bundled reference once loaded.
+    const d = careers[base.code] ? { ...base, ...careers[base.code] } : base;
 
     if (!d.code) {
       return <div className="dv-empty">Driver roster is waiting for live data.</div>;

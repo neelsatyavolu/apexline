@@ -13,6 +13,8 @@ const zlib = require("node:zlib");
 const sharedAuth = require("@neelsatyavolu/shared-ai-auth");
 const { createUsageStats } = require("./usage-stats.cjs");
 const { probeF1TvTimingSignals } = require("./f1tv-timing-probe.cjs");
+const { createJolpicaClient, buildDriverCareers } = require("./driver-careers.cjs");
+const driverCareerBaseline = require("./driver-career-baseline.json");
 
 let appPackage = {};
 try {
@@ -2955,6 +2957,54 @@ function scheduleWinners(schedule = []) {
 
 function priorScheduleWinners() {
   return scheduleWinners(liveDataCache?.data?.schedule);
+}
+
+// OpenF1 and the formula1.com standings page carry no win counts, so count the
+// season's resolved race winners instead of showing every driver on 0 wins.
+function fillStandingsWins(standings = [], schedule = [], drivers = []) {
+  if (standings.some((row) => Number(row.wins) > 0)) return standings;
+  const codeByName = new Map();
+  for (const driver of drivers || []) {
+    const name = compactText(driver?.name);
+    if (!name || !driver.code) continue;
+    codeByName.set(name, driver.code);
+    codeByName.set(name.split(" ").at(-1), driver.code);
+  }
+  const wins = new Map();
+  for (const race of schedule || []) {
+    const name = compactText(race?.winner);
+    const code = codeByName.get(name) || codeByName.get(name.split(" ").at(-1));
+    if (code) wins.set(code, (wins.get(code) || 0) + 1);
+  }
+  if (!wins.size) return standings;
+  return standings.map((row) => ({ ...row, wins: wins.get(row.code) || 0 }));
+}
+
+const DRIVER_CAREER_TTL_MS = 6 * 60 * 60 * 1000;
+const jolpicaCareerClient = createJolpicaClient((url) => requestJson(url, 8000));
+let driverCareerCache = null;
+let driverCareerInflight = null;
+
+// Career totals for every driver in one go: the bundled baseline plus the
+// current season (a few shared Jolpica requests), cached and de-duplicated so
+// browsing drivers never fans out per-driver requests.
+async function fetchDriverCareers() {
+  if (driverCareerCache && Date.now() - driverCareerCache.at < DRIVER_CAREER_TTL_MS) return { ok: true, careers: driverCareerCache.careers };
+  if (!driverCareerInflight) {
+    driverCareerInflight = buildDriverCareers(jolpicaCareerClient, driverCareerBaseline, new Date().getFullYear())
+      .then((careers) => {
+        driverCareerCache = { at: Date.now(), careers };
+        return { ok: true, careers };
+      })
+      .catch((error) => {
+        writePitWallDebugLog("drivers.career-failed", { message: error?.message || "career fetch failed" });
+        return driverCareerCache
+          ? { ok: true, careers: driverCareerCache.careers, stale: true }
+          : { ok: false, error: "Career statistics are unavailable right now" };
+      })
+      .finally(() => { driverCareerInflight = null; });
+  }
+  return driverCareerInflight;
 }
 
 function seasonRaceWinnersUrl() {
@@ -8133,6 +8183,7 @@ async function buildPitWallSnapshot(raw, errors = [], options = {}) {
       constructors: championshipRowsNeedPreviousDeltas(constructors),
     });
   standings = applyChampionshipPositionDeltas(standings, previousStandings.standings, "code");
+  standings = fillStandingsWins(standings, effectiveSchedule, [...drivers, ...(fallbackData.drivers || [])]);
   constructors = applyChampionshipPositionDeltas(constructors, previousStandings.constructors, "abbr");
   const strategyContext = buildStrategyContext({
     race,
@@ -12434,6 +12485,7 @@ ipcMain.handle("pitwall:f1tv:logout", async () => {
 ipcMain.handle("pitwall:data:snapshot", (_event, options = {}) => getPitWallSnapshot(options));
 ipcMain.handle("pitwall:data:liveTiming", (_event, options = {}) => getLiveTimingSnapshot(options));
 ipcMain.handle("pitwall:data:liveTimingResync", () => resyncF1LiveTiming());
+ipcMain.handle("pitwall:data:driverCareers", () => fetchDriverCareers());
 ipcMain.handle("pitwall:data:replayTiming", (_event, options = {}) => getReplayTimingSnapshot(options));
 ipcMain.handle("pitwall:data:replayTimingAvailability", (_event, options = {}) => getReplayTimingAvailability(options));
 ipcMain.handle("pitwall:data:trackMapReplayTiming", (_event, options = {}) => getTrackMapReplayTimingSnapshot(options));

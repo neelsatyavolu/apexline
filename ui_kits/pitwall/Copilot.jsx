@@ -652,7 +652,7 @@
                 <td><div className="tbl__drv"><DriverAvatar d={d} size="sm" px={30} /><span className="tbl__name">{d.last}</span></div></td>
                 <td>{d.team || d.abbr}</td>
                 <td><FormPips form={d.form} /></td>
-                <td className="num">{d.wins || "—"}</td>
+                <td className="num">{d.wins != null ? d.wins : "—"}</td>
                 <td className="num tbl__pts">{d.pts}</td>
               </tr>
             ))}

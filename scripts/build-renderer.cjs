@@ -222,9 +222,14 @@ ${initialScreenScripts}
         cancelled = true;
       };
     }, [screen, loadAttempt]);
+    function rememberSearchFocus(key, value) {
+      if (!value) return;
+      localStorage.setItem(key, value);
+      window.dispatchEvent(new CustomEvent(key, { detail: value }));
+    }
     function handleSearchResult(result) {
-      if (result && result.driverCode) localStorage.setItem("pw-search-focus", result.driverCode);
-      if (result && result.teamAbbr) localStorage.setItem("pw-team-focus", result.teamAbbr);
+      if (result && result.driverCode) rememberSearchFocus("pw-search-focus", result.driverCode);
+      if (result && result.teamAbbr) rememberSearchFocus("pw-team-focus", result.teamAbbr);
       if (result && result.screen) setScreen(result.screen);
     }
     const meta = TITLES[screen] || { t: "", c: "" };

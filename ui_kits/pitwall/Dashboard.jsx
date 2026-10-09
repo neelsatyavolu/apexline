@@ -102,6 +102,12 @@
     return [race?.circuit || weatherLoc || race?.loc, "OpenF1"].filter(Boolean).join(" · ");
   }
 
+  function openDashboardLink(url) {
+    if (!url) return;
+    if (window.pitwall?.external?.openExternal) window.pitwall.external.openExternal(url);
+    else if (/^https?:\/\//i.test(url)) window.open(url, "_blank", "noopener");
+  }
+
   function Dashboard({ onNavigate }) {
     const { data: D, profile, dataSource, refreshData } = window.PW.usePitWall();
     const top5 = D.standings.slice(0, 5);
@@ -149,15 +155,15 @@
             {/* KPIs */}
             <div className="kpis">
               <StatTile label="Your driver" value={favoriteStanding ? "P" + favoriteStanding.pos : "Pick"} display accent foot={<span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>{favoriteDriver ? `${favoriteDriver.name} · ${favoriteStanding?.pts || 0} pts` : "Choose in Settings"}</span>} icon={<Icon name="star" size={12} />} />
-              <StatTile label="Title gap" value={titleGap || "—"} unit={titleGap ? "pts" : ""} foot={top5.length > 1 ? <GapDelta value={top5[1].code + " chasing"} trend="gain" /> : <span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>Standings loading</span>} icon={<Icon name="trophy" size={12} />} />
-              <StatTile label="Races left" value={racesLeft || "—"} foot={<span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>{D.seasonSummary.totalRounds ? `${D.seasonSummary.totalRounds} round season` : dataSource}</span>} icon={<Icon name="calendar" size={12} />} />
+              <StatTile label="Title gap" value={top5.length > 1 ? titleGap : "—"} unit={top5.length > 1 ? "pts" : ""} foot={top5.length > 1 ? <GapDelta value={top5[1].code + " chasing"} trend="gain" /> : <span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>Standings loading</span>} icon={<Icon name="trophy" size={12} />} />
+              <StatTile label="Races left" value={D.seasonSummary.totalRounds || D.schedule.length ? racesLeft : "—"} foot={<span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>{D.seasonSummary.totalRounds ? `${D.seasonSummary.totalRounds} round season` : dataSource}</span>} icon={<Icon name="calendar" size={12} />} />
             </div>
 
             {/* NEWS */}
             <Card title="Latest" subtitle="From live F1 sources" aside={<Button variant="quiet" size="sm" onClick={() => onNavigate && onNavigate("news")} iconRight={<Icon name="chevronRight" size={14} />}>All news</Button>} padding="tight">
               <div className="news">
                 {D.news.length ? D.news.slice(0, 5).map((n, i) => (
-                  <div className="news__item" key={n.id || i} onClick={() => n.url && window.open(n.url, "_blank", "noopener")}>
+                  <div className="news__item" key={n.id || i} onClick={() => openDashboardLink(n.url)}>
                     <span className="news__spine" style={{ background: n.color }} />
                     <div className="news__body">
                       <div className="news__meta">

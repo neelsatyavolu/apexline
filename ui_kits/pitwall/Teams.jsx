@@ -14,6 +14,7 @@
     .tm-rail__list { display: flex; flex-direction: column; gap: 2px; }
     .tm-row { display: grid; grid-template-columns: 24px 30px 1fr auto; align-items: center; gap: var(--space-6); padding: var(--space-5) var(--space-6); border-radius: var(--radius-sm); cursor: pointer; border: 1px solid transparent; position: relative; transition: background var(--dur-fast) var(--ease-standard); }
     .tm-row:hover { background: var(--surface-hover); }
+    .tm-row:focus-visible, .tm-driver:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .tm-row[data-active="true"] { background: var(--surface-raised); border-color: var(--border-default); }
     .tm-row[data-active="true"]::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px; border-radius: var(--radius-pill); background: var(--_c); }
     .tm-row__pos { font-family: var(--font-display); font-weight: 800; font-size: var(--text-md); color: var(--text-tertiary); text-align: center; }
@@ -60,6 +61,15 @@
       if (focus) localStorage.removeItem("pw-team-focus");
       return focus && teams.some((t) => t.abbr === focus) ? focus : (teams[0] && teams[0].abbr);
     });
+    React.useEffect(() => {
+      function onFocus(event) {
+        const abbr = event.detail;
+        if (abbr && teams.some((team) => team.abbr === abbr)) setSel(abbr);
+        localStorage.removeItem("pw-team-focus");
+      }
+      window.addEventListener("pw-team-focus", onFocus);
+      return () => window.removeEventListener("pw-team-focus", onFocus);
+    }, [teams]);
 
     const t = teams.find((x) => x.abbr === sel) || teams[0] || {};
 
@@ -88,7 +98,7 @@
           <Card padding="tight">
             <div className="tm-rail__list">
               {teams.map((row) => (
-                <div className="tm-row" key={row.abbr} data-active={row.abbr === sel} style={{ "--_c": row.color }} onClick={() => setSel(row.abbr)}>
+                <div className="tm-row" key={row.abbr} role="button" tabIndex={0} data-active={row.abbr === sel} style={{ "--_c": row.color }} onClick={() => setSel(row.abbr)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSel(row.abbr); } }}>
                   <span className="tm-row__pos">{row.seasonPos}</span>
                   <Avatar initials={row.abbr} src={row.logo} ring={row.color} square size="sm" />
                   <span className="tm-row__name">{row.name}</span>
@@ -152,7 +162,7 @@
           <Card title="2026 driver line-up" subtitle="Tap a driver to open their profile" padding="tight">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
               {roster.map((d) => (
-                <div className="tm-driver" key={d.code} style={{ "--_c": d.color }} onClick={() => openDriver(d.code)}>
+                <div className="tm-driver" key={d.code} role="button" tabIndex={0} style={{ "--_c": d.color }} onClick={() => openDriver(d.code)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openDriver(d.code); } }}>
                   <Avatar initials={d.code} src={d.remoteImage || d.image} ring={d.color} number={d.num} size="lg" />
                   <span>
                     <div className="tm-driver__name">{d.name}</div>

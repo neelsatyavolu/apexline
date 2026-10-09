@@ -16,6 +16,7 @@
     .dv-rail__list { display: flex; flex-direction: column; gap: 2px; max-height: calc(100vh - 230px); overflow-y: auto; margin: 0 calc(var(--space-6) * -1); padding: 0 var(--space-6); }
     .dv-row { display: grid; grid-template-columns: 26px 34px 1fr auto; align-items: center; gap: var(--space-6); padding: var(--space-5) var(--space-6); border-radius: var(--radius-sm); cursor: pointer; border: 1px solid transparent; position: relative; transition: background var(--dur-fast) var(--ease-standard); }
     .dv-row:hover { background: var(--surface-hover); }
+    .dv-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .dv-row[data-active="true"] { background: var(--surface-raised); border-color: var(--border-default); }
     .dv-row[data-active="true"]::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px; border-radius: var(--radius-pill); background: var(--_c); }
     .dv-row__pos { font-family: var(--font-display); font-weight: 800; font-size: var(--text-md); color: var(--text-tertiary); text-align: center; }
@@ -83,6 +84,15 @@
       if (focus) localStorage.removeItem("pw-search-focus");
       return focus && profiles[focus] ? focus : order[0];
     });
+    React.useEffect(() => {
+      function onFocus(event) {
+        const code = event.detail;
+        if (code && profiles[code]) setSel(code);
+        localStorage.removeItem("pw-search-focus");
+      }
+      window.addEventListener("pw-search-focus", onFocus);
+      return () => window.removeEventListener("pw-search-focus", onFocus);
+    }, [profiles]);
 
     const list = React.useMemo(() => {
       const rows = order.map((code, i) => ({ ...profiles[code], champPos: i + 1 }));
@@ -146,7 +156,7 @@
           <Card padding="tight">
             <div className="dv-rail__list">
               {list.map((row) => (
-                <div className="dv-row" key={row.code} data-active={row.code === sel} style={{ "--_c": row.color }} onClick={() => setSel(row.code)}>
+                <div className="dv-row" key={row.code} role="button" tabIndex={0} data-active={row.code === sel} style={{ "--_c": row.color }} onClick={() => setSel(row.code)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSel(row.code); } }}>
                   <span className="dv-row__pos">{row.champPos}</span>
                   <Avatar initials={row.code} src={row.remoteImage || row.image} ring={row.color} size="sm" />
                   <span style={{ minWidth: 0 }}>

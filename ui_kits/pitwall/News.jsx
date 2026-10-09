@@ -138,6 +138,17 @@
     return stories.filter((story) => bookmarks.includes(story.id));
   }
 
+  const NEWS_BOOKMARKS_KEY = "pw-news-bookmarks";
+
+  function readNewsBookmarks() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(NEWS_BOOKMARKS_KEY) || "[]");
+      return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string").slice(0, 80) : [];
+    } catch {
+      return [];
+    }
+  }
+
   function deriveTrendingNewsStories(stories) {
     return stories.map((story, index) => ({ story, rank: index + 1 }));
   }
@@ -149,7 +160,18 @@
     const [query, setQuery] = React.useState("");
     const [selectedId, setSelectedId] = React.useState(stories[0]?.id);
     const [readerStory, setReaderStory] = React.useState(null);
-    const [bookmarks, setBookmarks] = React.useState([]);
+    const [bookmarks, setBookmarks] = React.useState(readNewsBookmarks);
+    React.useEffect(() => {
+      try { localStorage.setItem(NEWS_BOOKMARKS_KEY, JSON.stringify(bookmarks)); } catch {}
+    }, [bookmarks]);
+    React.useEffect(() => {
+      if (!readerStory) return undefined;
+      function onKeyDown(event) {
+        if (event.key === "Escape") setReaderStory(null);
+      }
+      window.addEventListener("keydown", onKeyDown);
+      return () => window.removeEventListener("keydown", onKeyDown);
+    }, [readerStory]);
     const [refreshing, setRefreshing] = React.useState(false);
     const filters = React.useMemo(() => deriveNewsFilters(stories), [stories]);
     const filtered = React.useMemo(() => deriveFilteredNewsStories(stories, filter, query), [stories, filter, query]);

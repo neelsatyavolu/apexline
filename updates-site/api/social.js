@@ -26,21 +26,36 @@ class BodyTooLargeError extends Error {}
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let text = "";
+    const chunks = [];
     let size = 0;
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const succeed = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
     req.on("data", (chunk) => {
-      size += chunk.length;
+      if (settled) return;
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buf.length;
       if (size > MAX_BODY_BYTES) {
-        reject(new BodyTooLargeError("Request body too large"));
+        fail(new BodyTooLargeError("Request body too large"));
         req.destroy();
         return;
       }
-      text += chunk;
+      chunks.push(buf);
     });
-    req.on("error", reject);
+    req.on("error", fail);
     req.on("end", () => {
-      try { resolve(text ? JSON.parse(text) : {}); }
-      catch { resolve({}); }
+      if (settled) return;
+      const text = Buffer.concat(chunks).toString("utf8");
+      try { succeed(text ? JSON.parse(text) : {}); }
+      catch { succeed({}); }
     });
   });
 }

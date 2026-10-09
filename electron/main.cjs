@@ -1147,12 +1147,14 @@ ipcMain.handle("pitwall:social:roomJoin", socialRoomJoin);
 ipcMain.handle("pitwall:social:ablyToken", socialAblyToken);
 ipcMain.handle("pitwall:social:chatHistory", socialChatHistory);
 ipcMain.handle("pitwall:social:chatSave", socialChatSave);
-ipcMain.handle("pitwall:external:open", (_event, targetUrl) => {
+function openExternalHttp(targetUrl) {
   const url = String(targetUrl || "");
   if (!/^https?:\/\//i.test(url)) return false;
   shell.openExternal(url);
   return true;
-});
+}
+
+ipcMain.handle("pitwall:external:open", (_event, targetUrl) => openExternalHttp(targetUrl));
 ipcMain.handle("pitwall:usageStats:get", () => ({ enabled: usageStats.getEnabled() }));
 ipcMain.handle("pitwall:usageStats:set", (_event, enabled) => ({ enabled: usageStats.setEnabled(enabled === true) }));
 ipcMain.handle("pitwall:updates:check", () => checkPitWallUpdates());
@@ -1166,6 +1168,34 @@ ipcMain.handle("pitwall:updates:install", (_event, targetUrl) => installPitWallU
 
 const MAX_TEXT_RESPONSE_BYTES = 25 * 1024 * 1024;
 const MAX_TEXT_REDIRECTS = 5;
+
+function isBlockedFetchTarget(targetUrl) {
+  let parsed;
+  try { parsed = new URL(String(targetUrl || "")); }
+  catch { return true; }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return true;
+  let host = parsed.hostname.toLowerCase().replace(/\.$/, "");
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+  const mapped = host.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+  if (mapped) host = mapped[1];
+  if (host.includes(":")) {
+    const v6 = host.split("%")[0];
+    if (v6 === "::" || v6 === "::1") return true;
+    if (/^f[cd]/i.test(v6) || /^fe[89ab]/i.test(v6)) return true;
+    return false;
+  }
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
+  const parts = host.split(".").map((part) => Number(part));
+  if (parts.some((part) => part > 255)) return true;
+  const [a, b] = parts;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  return false;
+}
 
 function armRequestDeadline(req, timeout, targetUrl) {
   const timer = setTimeout(() => req.destroy(new Error(`Timeout for ${targetUrl}`)), Math.max(1000, Number(timeout) || 8500) * 2);
@@ -1192,7 +1222,12 @@ function requestText(targetUrl, timeout = 8500, headers = {}, redirectsLeft = MA
           reject(new Error(`Too many redirects for ${targetUrl}`));
           return;
         }
-        requestText(new URL(res.headers.location, targetUrl).href, timeout, headers, redirectsLeft - 1).then(resolve, reject);
+        const nextUrl = new URL(res.headers.location, targetUrl).href;
+        if (isBlockedFetchTarget(nextUrl)) {
+          reject(new Error(`Blocked redirect for ${targetUrl}`));
+          return;
+        }
+        requestText(nextUrl, timeout, headers, redirectsLeft - 1).then(resolve, reject);
         return;
       }
       if (res.statusCode < 200 || res.statusCode >= 300) {
@@ -1324,6 +1359,10 @@ async function downloadPitWallUpdate(targetUrl, destinationPath, redirectCount =
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
         response.resume();
         const nextUrl = new URL(response.headers.location, targetUrl).toString();
+        if (isBlockedFetchTarget(nextUrl)) {
+          reject(new Error("Update download redirect was blocked."));
+          return;
+        }
         downloadPitWallUpdate(nextUrl, destinationPath, redirectCount + 1).then(resolve, reject);
         return;
       }
@@ -8535,6 +8574,10 @@ function requestBuffer(targetUrl, options = {}, redirectsLeft = 4) {
       const location = res.headers.location ? new URL(res.headers.location, targetUrl).href : "";
       if (location && redirectsLeft > 0 && [301, 302, 303, 307, 308].includes(res.statusCode || 0)) {
         res.resume();
+        if (!isF1TvMediaUrl(location) || isBlockedFetchTarget(location)) {
+          reject(new Error("Blocked F1 TV media redirect."));
+          return;
+        }
         requestBuffer(location, options, redirectsLeft - 1).then(resolve, reject);
         return;
       }
@@ -9061,14 +9104,14 @@ function openF1TvLoginWindow(event, credentials, options = {}) {
           },
         };
       }
-      shell.openExternal(targetUrl);
+      openExternalHttp(targetUrl);
       return { action: "deny" };
     });
 
     loginWindow.webContents.on("will-navigate", (navEvent, targetUrl) => {
       if (!isF1TvUrl(targetUrl)) {
         navEvent.preventDefault();
-        shell.openExternal(targetUrl);
+        openExternalHttp(targetUrl);
       }
     });
 
@@ -9770,14 +9813,14 @@ function openF1TvBrowser(event, options = {}) {
 
   browserWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
     if (isF1TvUrl(targetUrl)) return { action: "allow" };
-    shell.openExternal(targetUrl);
+    openExternalHttp(targetUrl);
     return { action: "deny" };
   });
 
   browserWindow.webContents.on("will-navigate", (navEvent, targetUrl) => {
     if (!isF1TvUrl(targetUrl)) {
       navEvent.preventDefault();
-      shell.openExternal(targetUrl);
+      openExternalHttp(targetUrl);
     }
   });
 
@@ -12428,23 +12471,27 @@ async function queryHistory(options = {}) {
 
 function scheduleReminder(options = {}) {
   const id = String(options.id || `reminder-${Date.now()}`);
-  const title = String(options.title || "Apexline reminder");
-  const body = String(options.body || "An F1 session is coming up.");
+  const title = String(options.title || "Apexline reminder").slice(0, 120);
+  const body = String(options.body || "An F1 session is coming up.").slice(0, 300);
   const at = Date.parse(options.at || "");
   const delay = Number.isFinite(at) ? Math.max(0, at - Date.now()) : 0;
-  const maxDelay = 1000 * 60 * 60 * 24 * 30;
-  const safeDelay = Math.min(delay, maxDelay);
+  // Node clamps setTimeout above 2^31-1 ms (~24.8 days) and would fire early.
+  const maxTimerDelayMs = 2 ** 31 - 1;
   if (reminderTimers.has(id)) clearTimeout(reminderTimers.get(id));
   const timer = setTimeout(() => {
     reminderTimers.delete(id);
+    if (Number.isFinite(at) && at - Date.now() > 1000) {
+      scheduleReminder({ id, title, body, at: new Date(at).toISOString() });
+      return;
+    }
     new Notification({ title, body }).show();
-  }, safeDelay);
+  }, Math.min(delay, maxTimerDelayMs));
   reminderTimers.set(id, timer);
   return {
     scheduled: true,
     id,
-    at: Number.isFinite(at) ? new Date(at).toISOString() : new Date(Date.now() + safeDelay).toISOString(),
-    capped: safeDelay !== delay,
+    at: Number.isFinite(at) ? new Date(at).toISOString() : new Date().toISOString(),
+    capped: false,
   };
 }
 
@@ -12636,7 +12683,7 @@ async function createWindow() {
   });
 
   win.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
-    shell.openExternal(targetUrl);
+    openExternalHttp(targetUrl);
     return { action: "deny" };
   });
 
@@ -12645,7 +12692,7 @@ async function createWindow() {
     const designFile = targetUrl === pathToFileURL(path.join(root, "ui_kits/pitwall/index.html")).href;
     if (!local && !designFile) {
       event.preventDefault();
-      shell.openExternal(targetUrl);
+      openExternalHttp(targetUrl);
     }
   });
 

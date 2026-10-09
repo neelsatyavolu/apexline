@@ -584,6 +584,61 @@ assert.match(fs.readFileSync(path.join(root, ".gitignore"), "utf8"), /updates-si
 
 assert.match(prepareUpdate, /0x50 && zipMagic\[1\] === 0x4b|PKZip|git-lfs/, "Update feed prep should refuse to publish LFS pointer files as zips");
 assert.match(mainProcess, /app\.quit\(\)/, "Update installer should quit the current app after scheduling replacement and relaunch");
+assert.match(mainProcess, /function openExternalHttp/, "External opens should reject non-http URLs");
+assert.match(mainProcess, /Blocked F1 TV media redirect/, "F1 TV media proxy should refuse redirects off the media allowlist");
+assert.match(mainProcess, /isBlockedFetchTarget\(nextUrl\)/, "Update downloads and text fetches should refuse redirects to local or non-http targets");
+{
+  let nowMs = Date.parse("2026-01-01T00:00:00.000Z");
+  const shown = [];
+  const pending = [];
+  const RealDate = Date;
+  function DateShim(...args) {
+    if (!new.target) return RealDate(...args);
+    if (args.length === 0) return new RealDate(nowMs);
+    return new RealDate(...args);
+  }
+  DateShim.parse = RealDate.parse;
+  DateShim.now = () => nowMs;
+  DateShim.UTC = RealDate.UTC;
+  const reminderSandbox = vm.runInNewContext(`(() => {
+    const reminderTimers = new Map();
+    ${extractNamedFunction(mainProcess, "scheduleReminder")}
+    return { scheduleReminder };
+  })()`, {
+    setTimeout(fn, delay) {
+      const handle = { fn, delay };
+      pending.push(handle);
+      return handle;
+    },
+    clearTimeout(handle) {
+      const index = pending.indexOf(handle);
+      if (index >= 0) pending.splice(index, 1);
+    },
+    Date: DateShim,
+    Notification: class Notification {
+      constructor(options) { this.options = options; }
+      show() { shown.push(this.options); }
+    },
+  });
+  const targetMs = nowMs + 40 * 24 * 60 * 60 * 1000;
+  const scheduled = reminderSandbox.scheduleReminder({
+    id: "race-far",
+    title: "Race",
+    body: "Starts soon",
+    at: new RealDate(targetMs).toISOString(),
+  });
+  assert.equal(scheduled.scheduled, true, "Far-future reminders should still be accepted");
+  assert.equal(scheduled.capped, false, "Far-future reminders should keep their real fire time");
+  assert.equal(pending.length, 1, "Far-future reminders should arm one timer");
+  assert.equal(pending[0].delay, 2 ** 31 - 1, "Far-future reminders should wait at the 32-bit timer limit instead of firing early");
+  pending.shift().fn();
+  assert.equal(shown.length, 0, "Hitting the timer cap should reschedule instead of notifying");
+  assert.equal(pending.length, 1, "A capped reminder should arm the next wait");
+  nowMs = targetMs;
+  pending.shift().fn();
+  assert.equal(shown.length, 1, "A chained reminder should notify when the session time arrives");
+  assert.equal(shown[0].title, "Race");
+}
 assert.match(mainProcess, /PITWALL_UPDATE_BASE_URL/, "Electron should read update feed hosting from the packaged app or environment");
 assert.doesNotMatch(mainProcess, /GITHUB_TOKEN|VERCEL_TOKEN/, "Update checks must not embed deployment or repository tokens");
 assert.match(preload, /updates:[\s\S]*check[\s\S]*install/, "Preload should expose update checking and installation through a narrow updates API");
@@ -1557,6 +1612,28 @@ await assert.rejects(
 );
 assert.equal(streamedOverflow.requestDestroyed(), true, "Streamed over-limit media should destroy the request");
 assert.equal(streamedOverflow.responseDestroyed(), true, "Streamed over-limit media should destroy the response");
+const blockedMediaRedirect = mediaTransportFixture({ location: "http://127.0.0.1/latest" }, []);
+blockedMediaRedirect.transportCallback = null;
+const blockedMediaRequest = new EventEmitter();
+blockedMediaRequest.write = () => {};
+blockedMediaRequest.destroy = () => {};
+blockedMediaRequest.end = () => {};
+const originalBlockedTransport = blockedMediaRedirect.transport.request.bind(blockedMediaRedirect.transport);
+blockedMediaRedirect.transport.request = (_parsed, _options, callback) => {
+  const request = originalBlockedTransport(_parsed, _options, callback);
+  const response = new EventEmitter();
+  response.headers = { location: "http://127.0.0.1/latest" };
+  response.statusCode = 302;
+  response.resume = () => {};
+  response.destroy = () => {};
+  request.end = () => callback(response);
+  return request;
+};
+await assert.rejects(
+  mediaRequestSandbox.requestBuffer("https://f1tv.formula1.com/master.m3u8", { transport: blockedMediaRedirect.transport }),
+  /Blocked F1 TV media redirect/i,
+  "F1 TV media fetches should not follow redirects off the media allowlist",
+);
 const pooledMediaBuffer = Buffer.from([9, 1, 2, 3, 8]).subarray(1, 4);
 const pooledArrayBuffer = mediaRequestSandbox.bufferToArrayBuffer(pooledMediaBuffer);
 assert.equal(pooledArrayBuffer.byteLength, 3, "Media ArrayBuffer conversion should expose only the Buffer subarray length");
@@ -6751,6 +6828,21 @@ assert.match(source["AppShell.jsx"], /onSearchResult/, "Topbar search should nav
 assert.match(source["AppShell.jsx"], /driverCode/, "Driver search results should preserve the selected driver");
 assert.match(source["AppShell.jsx"], /id: "weekend"/, "Sidebar should include the Weekend screen from the design");
 assert.match(html, /pw-search-focus/, "App root should persist focused search results for destination screens");
+assert.match(html, /new CustomEvent\(key, \{ detail: value \}\)/, "Search should notify an already-open Drivers or Teams screen");
+assert.match(buildRendererSource, /new CustomEvent\(key, \{ detail: value \}\)/, "Packaged search should notify an already-open Drivers or Teams screen");
+assert.match(source["Drivers.jsx"], /addEventListener\("pw-search-focus"/, "Drivers should apply a search focus without remounting");
+assert.match(source["Teams.jsx"], /addEventListener\("pw-team-focus"/, "Teams should apply a search focus without remounting");
+assert.match(source["Leaderboards.jsx"], /const comparisonRows = showH2H \? driverRows\.slice\(0, 2\)/, "Head-to-head gap should use the drivers on screen");
+assert.doesNotMatch(source["Leaderboards.jsx"], /\.slice\(0,\s*8\)/, "Constructor filters should include every team");
+assert.match(source["Dashboard.jsx"], /top5\.length > 1 \? titleGap : "—"/, "A tied championship should show a zero-point gap");
+assert.match(source["Dashboard.jsx"], /openDashboardLink/, "Dashboard news should open links through the checked external opener");
+assert.match(source["Copilot.jsx"], /d\.wins != null \? d\.wins : "—"/, "Drivers with zero wins should show 0, not a missing value");
+assert.match(source["AppShell.jsx"], /event\.key\.toLowerCase\(\) === "k"/, "The advertised search shortcut should focus search");
+assert.match(source["AppShell.jsx"], /<button type="button" key=\{n\.id\} className="pw-navitem"/, "Sidebar navigation should be keyboard-focusable buttons");
+assert.doesNotMatch(source["AppShell.jsx"], /pw-top__dot/, "The notification bell should not show a permanent unread dot");
+assert.match(source["News.jsx"], /pw-news-bookmarks/, "News bookmarks should persist in local storage");
+assert.match(source["News.jsx"], /event\.key === "Escape"/, "The news reader should close on Escape");
+assert.match(socialClientSource, /apexlineAblyState/, "The watch-party client should not hang when the Ably script already settled");
 assert.match(html, /initialPitWallScreen/, "App root should support direct screen routing for verification and deep links");
 assert.match(html, /Weekend\.jsx/, "Renderer should load the Weekend screen");
 assert.match(html, /weekend: window\.PW\.Weekend/, "App should route to the Weekend screen");

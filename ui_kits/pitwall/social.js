@@ -5,18 +5,30 @@
   function loadAbly() {
     if (window.Ably?.Realtime) return Promise.resolve(window.Ably);
     return new Promise((resolve, reject) => {
+      const fail = () => reject(new Error("Realtime client unavailable"));
+      const finish = () => (window.Ably?.Realtime ? resolve(window.Ably) : fail());
       const existing = document.querySelector("script[data-apexline-ably]");
       if (existing) {
-        existing.addEventListener("load", () => resolve(window.Ably));
-        existing.addEventListener("error", reject);
+        if (existing.dataset.apexlineAblyState === "ready" || existing.dataset.apexlineAblyState === "error") {
+          finish();
+          return;
+        }
+        existing.addEventListener("load", finish, { once: true });
+        existing.addEventListener("error", fail, { once: true });
         return;
       }
       const script = document.createElement("script");
       script.src = ABLY_CDN;
       script.async = true;
       script.dataset.apexlineAbly = "true";
-      script.onload = () => resolve(window.Ably);
-      script.onerror = () => reject(new Error("Realtime client unavailable"));
+      script.onload = () => {
+        script.dataset.apexlineAblyState = "ready";
+        finish();
+      };
+      script.onerror = () => {
+        script.dataset.apexlineAblyState = "error";
+        fail();
+      };
       document.head.appendChild(script);
     });
   }

@@ -79,6 +79,24 @@ async function fakeSql(strings, ...values) {
   throw new Error(`Unhandled fake SQL query: ${query}`);
 }
 
+function invokeChunks(handler, chunks) {
+  return new Promise((resolve) => {
+    const req = Readable.from(chunks);
+    req.method = "POST";
+    const res = {
+      statusCode: 0,
+      headers: {},
+      setHeader(key, value) {
+        this.headers[key] = value;
+      },
+      end(body) {
+        resolve({ statusCode: this.statusCode, body: JSON.parse(body || "null") });
+      },
+    };
+    handler(req, res);
+  });
+}
+
 function invoke(handler, payload) {
   return new Promise((resolve) => {
     const req = Readable.from([JSON.stringify(payload)]);
@@ -108,6 +126,12 @@ function invoke(handler, payload) {
     const handlerPath = require.resolve("../updates-site/api/social.js");
     delete require.cache[handlerPath];
     const handler = require(handlerPath);
+
+    const accentName = "José Fan";
+    const accentBody = Buffer.from(JSON.stringify({ action: "bootstrap", profile: { name: accentName } }));
+    const splitAt = accentBody.indexOf(Buffer.from("é")) + 1;
+    const splitName = await invokeChunks(handler, [accentBody.subarray(0, splitAt), accentBody.subarray(splitAt)]);
+    assert.equal(splitName.body.displayName, accentName, "Bootstrap should preserve names split across UTF-8 chunk boundaries");
 
     const first = await invoke(handler, { action: "bootstrap", userId: "user-a", profile: { name: "First fan" } });
     const second = await invoke(handler, { action: "bootstrap", profile: { name: "Second fan" } });

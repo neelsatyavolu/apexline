@@ -52,7 +52,7 @@
       return code;
     });
     const seasonSummary = D.seasonSummary || {};
-    const teamTags = D.constructors.map((team) => [team.abbr, team.name, team.color]).slice(0, 8);
+    const teamTags = D.constructors.map((team) => [team.abbr, team.name, team.color]);
     const rawDriverRows = teamFilter ? D.standings.filter((s) => D.byCode[s.code]?.abbr === teamFilter) : D.standings;
     const driverRows = focusCode && rawDriverRows.some((s) => s.code === focusCode)
       ? [...rawDriverRows.filter((s) => s.code === focusCode), ...rawDriverRows.filter((s) => s.code !== focusCode)]
@@ -60,6 +60,10 @@
     const constructorRows = teamFilter ? D.constructors.filter((c) => c.abbr === teamFilter) : D.constructors;
     const maxPts = D.standings[0]?.pts || 1;
     const maxCpts = Math.max(1, ...D.constructors.map((c) => c.pts || 0));
+    const comparisonRows = showH2H ? driverRows.slice(0, 2) : D.standings.slice(0, 2);
+    const comparisonGap = comparisonRows.length > 1 && Number.isFinite(Number(comparisonRows[0].pts)) && Number.isFinite(Number(comparisonRows[1].pts))
+      ? Math.abs(Number(comparisonRows[0].pts) - Number(comparisonRows[1].pts)) + " pts"
+      : "—";
 
     return (
       <div className="lb">
@@ -71,7 +75,6 @@
           <Badge tone="outline">{seasonSummary.season || new Date().getFullYear()} · Round {seasonSummary.round || "—"} · {dataSource}</Badge>
           {teamFilter && <span className="lb__mode"><Icon name="filter" size={13} /> {D.constructors.find((c) => c.abbr === teamFilter)?.name}</span>}
           <div className="lb__filters">
-            <Button variant="secondary" size="sm" iconLeft={<Icon name="filter" size={14} />}>{seasonSummary.season || "Season"}</Button>
             <Button variant={showH2H ? "quiet" : "ghost"} size="sm" onClick={() => setShowH2H(!showH2H)} iconLeft={<Icon name="chart" size={14} />}>Head-to-head</Button>
           </div>
         </div>
@@ -124,7 +127,7 @@
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-9)" }}>
             <Card title={showH2H ? "Head-to-head" : "Title fight"} subtitle={showH2H ? "Selected comparison" : "Top 2 · points gap"}>
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                {(showH2H && driverRows.length >= 2 ? driverRows.slice(0, 2) : D.standings.slice(0, 2)).map((s, i) => {
+                {comparisonRows.map((s, i) => {
                   const d = D.byCode[s.code] || {};
                   const driverImage = d.remoteImage || d.image;
                   return (
@@ -142,7 +145,7 @@
                 })}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px 0 2px", borderTop: "1px solid var(--border-subtle)" }}>
                   <span style={{ fontSize: 12, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Gap</span>
-                  <GapDelta value={D.standings.length > 1 ? (D.standings[0].pts - D.standings[1].pts) + " pts" : "—"} trend="loss" size="md" />
+                  <GapDelta value={comparisonGap} trend="loss" size="md" />
                 </div>
               </div>
             </Card>

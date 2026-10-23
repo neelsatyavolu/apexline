@@ -1,6 +1,6 @@
 {
   "name": "apexline",
-  "version": "1.1.17",
+  "version": "1.1.18",
   "private": true,
   "license": "MIT",
   "description": "Apexline macOS F1 companion app",
@@ -37,7 +37,7 @@
     "shaka-player": "^5.1.7"
   },
   "devDependencies": {
-    "electron": "github:castlabs/electron-releases#v39.1.0+wvcus"
+    "electron": "github:castlabs/electron-releases#v42.11.10+wvcus"
   },
   "apexline": {
     "updateBaseUrl": "https://apexline.io",

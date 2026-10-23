@@ -1,14 +1,14 @@
 {
-  "currentRelease": "1.1.17",
+  "currentRelease": "1.1.18",
   "releases": [
     {
-      "version": "1.1.17",
+      "version": "1.1.18",
       "updateTo": {
-        "version": "1.1.17",
-        "pub_date": "2026-10-04T06:44:11.437Z",
-        "notes": "Apexline 1.1.17",
-        "name": "Apexline 1.1.17",
-        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.17-mac-arm64.zip"
+        "version": "1.1.18",
+        "pub_date": "2026-10-23T03:28:54.881Z",
+        "notes": "Security update: refreshes the browser engine and vulnerable application dependencies.",
+        "name": "Apexline 1.1.18",
+        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.18-mac-arm64.zip"
       }
     }
   ]

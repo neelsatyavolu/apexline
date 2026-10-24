@@ -1,14 +1,14 @@
 {
-  "currentRelease": "1.1.18",
+  "currentRelease": "1.1.19",
   "releases": [
     {
-      "version": "1.1.18",
+      "version": "1.1.19",
       "updateTo": {
-        "version": "1.1.18",
-        "pub_date": "2026-10-23T03:28:54.881Z",
-        "notes": "Security update: refreshes the browser engine and vulnerable application dependencies.",
-        "name": "Apexline 1.1.18",
-        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.18-mac-arm64.zip"
+        "version": "1.1.19",
+        "pub_date": "2026-10-24T21:10:40.360Z",
+        "notes": "Fixes F1 TV sign-in getting stuck on Opening... after F1 changed its login page.",
+        "name": "Apexline 1.1.19",
+        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.19-mac-arm64.zip"
       }
     }
   ]

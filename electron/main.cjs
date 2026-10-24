@@ -8931,6 +8931,27 @@ async function clearF1TvCookies() {
   ));
 }
 
+// The F1 login page will not redirect to id.formula1.com until the consent banner
+// (a cross-origin iframe) is answered, which a hidden login window cannot do itself.
+async function dismissF1TvConsentPrompt(win) {
+  if (!win || win.isDestroyed()) return false;
+  try {
+    const consentFrame = win.webContents.mainFrame.framesInSubtree.find((frame) => /^https:\/\/consent\.formula1\.com\//i.test(frame.url));
+    if (!consentFrame) return false;
+    return await consentFrame.executeJavaScript(`
+      (() => {
+        const button = Array.from(document.querySelectorAll("button"))
+          .find((node) => /reject non-essential/i.test(node.getAttribute("aria-label") || node.textContent || ""));
+        if (!button) return false;
+        button.click();
+        return true;
+      })();
+    `, true);
+  } catch {
+    return false;
+  }
+}
+
 async function injectF1Credentials(win, credentials) {
   const email = String(credentials.email || "").trim();
   const password = String(credentials.password || "");
@@ -8967,10 +8988,17 @@ async function injectF1Credentials(win, credentials) {
         button.click();
         return true;
       };
+      // id.formula1.com has a "Sign In" tab button ahead of the unlabeled #btnLogin submit.
+      const clickF1TvSubmitButton = () => {
+        const button = document.querySelector("#btnLogin");
+        if (!visible(button)) return false;
+        button.click();
+        return true;
+      };
       const emailFilled = setValue(["input[type='email']", "input[name='email']", "input[name='username']", "input[autocomplete='username']", "input[placeholder*='email' i]", "input[aria-label*='email' i]", "#email", "#username"], ${JSON.stringify(email)});
       const passwordFilled = setValue(["input[type='password']", "input[name='password']", "input[autocomplete='current-password']", "#password"], ${JSON.stringify(password)});
       if (${JSON.stringify(autoSubmit)}) {
-        if (emailFilled && passwordFilled) return clickF1TvLoginStep(/sign\\s*in|log\\s*in|continue|submit/i);
+        if (emailFilled && passwordFilled) return clickF1TvSubmitButton() || clickF1TvLoginStep(/sign\\s*in|log\\s*in|continue|submit/i);
         if (emailFilled) return clickF1TvLoginStep(/continue|next|sign\\s*in|log\\s*in/i);
       }
       return false;
@@ -9080,6 +9108,7 @@ function openF1TvLoginWindow(event, credentials, options = {}) {
       credentialTimer = setInterval(() => {
         if (loginWindow.isDestroyed()) return;
         credentialAttempts += 1;
+        if (automatedCredentialLogin) dismissF1TvConsentPrompt(loginWindow);
         injectF1Credentials(loginWindow, {
           ...credentials,
           autoSubmit: options.mode === "credentials",

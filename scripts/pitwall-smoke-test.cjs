@@ -5369,6 +5369,10 @@ assert.match(f1TvLoginWindowSource, /overrideBrowserWindowOptions[\s\S]*show: !a
 assert.match(f1TvLoginWindowSource, /F1TV_LOGIN_TOKEN_GRACE_MS/, "Automated F1 TV login should wait briefly after browser cookies appear so playback tokens can settle");
 assert.match(f1TvLoginWindowSource, /F1TV_LOGIN_AUTOMATION_TIMEOUT_MS/, "Automated F1 TV login should have a bounded hidden-window timeout");
 assert.match(f1TvLoginWindowSource, /status\.authenticated \|\| \(!automatedCredentialLogin && status\.browserSession\)/, "Manual F1 TV login may close on browser cookies, but automated login should wait for playback readiness");
+assert.match(f1TvLoginWindowSource, /if \(automatedCredentialLogin\) dismissF1TvConsentPrompt\(loginWindow\)/, "Hidden F1 TV login should answer the consent banner, which blocks the id.formula1.com redirect");
+assert.match(mainProcess, /framesInSubtree\.find\(\(frame\) => \/\^https:\\\/\\\/consent\\\.formula1\\\.com/, "F1 TV consent dismissal should target the cross-origin consent iframe");
+assert.match(mainProcess, /reject non-essential/, "Automated F1 TV consent should reject non-essential cookies");
+assert.match(mainProcess, /querySelector\("#btnLogin"\)/, "F1 TV credential autofill should click the id.formula1.com #btnLogin submit, not the Sign In tab");
 const f1TvPlaybackMode = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "f1TvPlaybackMode")})`);
 assert.equal(f1TvPlaybackMode({ sessionKind: "Race", sessionStatus: "live" }), "live", "F1 TV resolver should treat a current Race session as live playback");
 assert.equal(f1TvPlaybackMode({ sessionKind: "Race", sessionStatus: "done" }), "replay", "F1 TV resolver should keep completed Race sessions in replay playback");
@@ -5625,7 +5629,7 @@ assert.match(mainProcess, /session\.defaultSession\.cookies/, "F1 TV login shoul
 assert.match(mainProcess, /credentialTimer/, "F1 TV credential login should keep filling dynamic login forms until a session is detected");
 assert.match(mainProcess, /clickF1TvLoginStep/, "F1 TV credential login should auto-continue/submit the one-time email/password flow");
 assert.match(mainProcess, /input\[placeholder\*='email' i\]/, "F1 TV credential login should fill placeholder-only email fields");
-assert.match(mainProcess, /if \(emailFilled && passwordFilled\) return clickF1TvLoginStep/, "F1 TV credential login should not submit the final form when only the password field was filled");
+assert.match(mainProcess, /if \(emailFilled && passwordFilled\) return clickF1TvSubmitButton\(\) \|\| clickF1TvLoginStep/, "F1 TV credential login should not submit the final form when only the password field was filled");
 assert.match(mainProcess, /storages = \[[^\]]*"indexeddb"[^\]]*"localstorage"[\s\S]*clearStorageData/, "F1 TV logout should clear storage-backed auth state as well as cookies");
 assert.doesNotMatch(mainProcess, /f1tv-password/, "F1 TV password should not be stored by PitWall");
 assert.match(mainProcess, /pitwall:data:snapshot/, "Electron main should expose a live F1 data snapshot IPC");

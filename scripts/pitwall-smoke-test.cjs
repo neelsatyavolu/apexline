@@ -5603,6 +5603,42 @@ assert.match(mainProcess, /requestType/, "F1 TV media diagnostics should include
 assert.match(mainProcess, /playEndpointAttempts/, "F1 TV diagnostics should report sanitized direct play endpoint attempts");
 assert.match(mainProcess, /errorDescription/, "F1 TV diagnostics should include non-secret direct endpoint error descriptions");
 assert.match(mainProcess, /f1TvSubscriptionIssueFromAttempts/, "F1 TV resolver should classify direct PLAY endpoint entitlement failures");
+{
+  const jwt = (payload) => `eyJhbGciOiJub25lIn0.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.sig`;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const expiredToken = jwt({ SessionId: "old", exp: nowSeconds - 3600 });
+  const freshToken = jwt({ SessionId: "new", exp: nowSeconds + 3600 });
+  const tokenContext = { Buffer };
+  tokenContext.decodeF1TvJwtPayload = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "decodeF1TvJwtPayload")})`, tokenContext);
+  tokenContext.isF1TvTokenExpired = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "isF1TvTokenExpired")})`, tokenContext);
+  tokenContext.firstUsableF1TvToken = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "firstUsableF1TvToken")})`, tokenContext);
+  assert.equal(tokenContext.isF1TvTokenExpired(expiredToken), true, "An F1 TV JWT past its exp should count as expired");
+  assert.equal(tokenContext.isF1TvTokenExpired(freshToken), false, "An F1 TV JWT before its exp should be usable");
+  assert.equal(tokenContext.isF1TvTokenExpired("opaque-token-without-claims"), false, "Tokens without an exp claim should not be rejected");
+  assert.equal(tokenContext.firstUsableF1TvToken(expiredToken, freshToken), freshToken, "An expired cookie token should not shadow a fresh stored token");
+  assert.equal(tokenContext.firstUsableF1TvToken(expiredToken, ""), "", "Only expired tokens should leave playback unauthenticated");
+
+  const mergeF1TvStatus = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "mergeF1TvStatus")})`, {
+    ...tokenContext,
+    isLikelyAuthCookie: () => true,
+    f1TvEntitlementTokenFromCookies: (cookies) => String(cookies.find((cookie) => cookie.name === "entitlement_token")?.value || ""),
+    PITWALL_USER_DATA: "",
+  });
+  const expiredStatus = mergeF1TvStatus([{ name: "entitlement_token", value: expiredToken }], {}, "");
+  assert.equal(expiredStatus.authenticated, false, "An expired F1 TV entitlement cookie should not count as signed in");
+  assert.equal(expiredStatus.playbackTokenExpired, true, "F1 TV status should flag an expired sign-in");
+  assert.notEqual(expiredStatus.subscriptionActive, true, "An expired token should not report an active subscription");
+  const freshStatus = mergeF1TvStatus([{ name: "entitlement_token", value: freshToken }], {}, "");
+  assert.equal(freshStatus.authenticated, true);
+  assert.equal(freshStatus.playbackTokenExpired, false);
+
+  const sessionExpired = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "f1TvSessionExpiredFromAttempts")})`, {
+    F1TV_SESSION_EXPIRED_MESSAGE: "expired",
+  });
+  assert.equal(sessionExpired([{ message: "AscendonToken signature validation failed or token expired" }]), "expired", "F1 TV PLAY token rejections should be reported as an expired sign-in");
+  assert.equal(sessionExpired([{ message: "Rights are locked" }]), "", "Entitlement failures should stay subscription issues");
+  assert.match(mainProcess, /sessionExpiredMessage\s*\n\s*\|\| subscriptionIssueMessage/, "Resolver should prefer the expired sign-in message over generic failures");
+}
 assert.match(mainProcess, /Rights are locked|ACN_2001/, "F1 TV resolver should recognize inactive-subscription PLAY endpoint responses");
 assert.match(mainProcess, /F1 TV subscription is not active/, "F1 TV resolver should surface inactive subscription problems directly");
 assert.match(mainProcess, /subscriptionActive/, "F1 TV status and diagnostics should expose whether playback entitlement appears active");
@@ -7279,6 +7315,7 @@ assert.match(source["Settings.jsx"], /MultiViewer uses its own app profile/, "Se
 assert.match(source["Settings.jsx"], /Browser signed in/, "Settings should show browser-only F1 TV login as connected-but-not-playback-ready");
 assert.match(source["Settings.jsx"], /credentialError/, "Settings should surface non-secret F1 TV credential-token errors instead of hiding them behind browser fallback state");
 assert.match(source["Settings.jsx"], /playback token is still missing/, "Settings should explain when a browser login is connected but cannot load streams yet");
+assert.match(source["Settings.jsx"], /playbackTokenExpired/, "Settings should tell the user their F1 TV sign-in expired");
 assert.match(source["Settings.jsx"], /subscriptionActive === false/, "Settings should tell the user when F1 TV is signed in but the active subscription entitlement is missing");
 assert.match(source["Settings.jsx"], /subscription is not active/, "Settings should name inactive subscriptions instead of treating them like generic credential failures");
 assert.doesNotMatch(source["Settings.jsx"], /f1tv-password|keyStore\(\)\.set\("f1tv/, "Settings should not store the F1 TV password");

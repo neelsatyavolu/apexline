@@ -438,6 +438,7 @@
     }
 
     function f1TvLoginMessage(status) {
+      if (status.playbackTokenExpired) return "Your F1 TV sign-in has expired. Sign in again to play streams.";
       if (status.subscriptionActive === false) return "F1 TV is signed in, but the subscription is not active for playback. Activate it, then sign in again.";
       if (status.authenticated) return "F1 TV playback token connected.";
       if (/subscription is not active|inactive|entitlement|rights/i.test(String(status.credentialError || ""))) return `F1 TV subscription is not active: ${status.credentialError}`;

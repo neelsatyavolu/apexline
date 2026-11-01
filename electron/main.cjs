@@ -8709,6 +8709,17 @@ function decodeF1TvJwtPayload(token) {
   }
 }
 
+// F1 TV tokens are JWTs with an exp claim. An expired one can linger in the
+// cookie jar or keychain, and F1's PLAY API rejects it as an invalid AscendonToken.
+function isF1TvTokenExpired(token, nowMs = Date.now()) {
+  const exp = Number(decodeF1TvJwtPayload(token).exp);
+  return Number.isFinite(exp) && exp > 0 && exp * 1000 <= nowMs;
+}
+
+function firstUsableF1TvToken(...tokens) {
+  return tokens.map((token) => String(token || "").trim()).find((token) => token && !isF1TvTokenExpired(token)) || "";
+}
+
 function isF1TvSubscriptionToken(token) {
   const payload = decodeF1TvJwtPayload(token);
   return Boolean(payload && typeof payload === "object" && (payload.SessionId || payload.sessionId));
@@ -8731,7 +8742,7 @@ async function getF1TvStoredSubscriptionToken() {
 
 async function getF1TvSubscriptionToken(cookies = null) {
   const f1TvCookies = cookies || await getF1TvCookies();
-  return f1TvSubscriptionTokenFromLoginSessionCookie(f1TvCookies) || await getF1TvStoredSubscriptionToken();
+  return firstUsableF1TvToken(f1TvSubscriptionTokenFromLoginSessionCookie(f1TvCookies), await getF1TvStoredSubscriptionToken());
 }
 
 function f1TvPlaybackTokenFromBrowserAuthState(browserAuthState = {}) {
@@ -8740,7 +8751,7 @@ function f1TvPlaybackTokenFromBrowserAuthState(browserAuthState = {}) {
 
 async function getF1TvPlaybackToken(cookies = null) {
   const f1TvCookies = cookies || await getF1TvCookies();
-  return f1TvEntitlementTokenFromCookies(f1TvCookies) || await getSecret("f1tv-token");
+  return firstUsableF1TvToken(f1TvEntitlementTokenFromCookies(f1TvCookies), await getSecret("f1tv-token"));
 }
 
 function recentF1TvRequestHeader(name) {
@@ -8861,7 +8872,9 @@ async function readF1TvAuthStateFromWebContents(webContents) {
 
 function mergeF1TvStatus(cookies, browserAuthState = {}, subscriptionToken = "") {
   const authCookies = cookies.filter(isLikelyAuthCookie);
-  const playbackToken = f1TvEntitlementTokenFromCookies(cookies) || subscriptionToken;
+  const cookieToken = f1TvEntitlementTokenFromCookies(cookies);
+  const playbackToken = firstUsableF1TvToken(cookieToken, subscriptionToken);
+  const playbackTokenExpired = !playbackToken && [cookieToken, subscriptionToken].some((token) => token && isF1TvTokenExpired(token));
   const storageAuthKeys = Array.from(new Set([
     ...(browserAuthState.localStorageAuthKeys || []),
     ...(browserAuthState.sessionStorageAuthKeys || []),
@@ -8874,6 +8887,7 @@ function mergeF1TvStatus(cookies, browserAuthState = {}, subscriptionToken = "")
   return {
     authenticated: tokenReady,
     playbackTokenReady: tokenReady,
+    playbackTokenExpired,
     subscriptionActive,
     browserSession,
     cookieCount: cookies.length,
@@ -8902,7 +8916,7 @@ async function getF1TvStatus() {
 async function getF1TvStatusWithBrowserState(browserAuthState = {}) {
   const cookies = await getF1TvCookies();
   const playbackToken = f1TvPlaybackTokenFromBrowserAuthState(browserAuthState);
-  if (playbackToken) await setSecret("f1tv-token", playbackToken).catch(() => {});
+  if (playbackToken && !isF1TvTokenExpired(playbackToken)) await setSecret("f1tv-token", playbackToken).catch(() => {});
   return mergeF1TvStatus(cookies, browserAuthState, playbackToken || await getF1TvPlaybackToken(cookies));
 }
 
@@ -9874,6 +9888,13 @@ function f1TvSubscriptionIssueFromAttempts(attempts = []) {
   return "F1 TV subscription is not active for this content. Confirm your F1 TV subscription is active, then reconnect F1 TV in Settings.";
 }
 
+const F1TV_SESSION_EXPIRED_MESSAGE = "Your F1 TV sign-in has expired. Sign in to F1 TV again in Settings, then retry.";
+
+function f1TvSessionExpiredFromAttempts(attempts = []) {
+  const text = attempts.map((attempt) => [attempt.message, attempt.errorDescription, attempt.error].filter(Boolean).join(" ")).join(" ");
+  return /AscendonToken|token expired|signature validation failed/i.test(text) ? F1TV_SESSION_EXPIRED_MESSAGE : "";
+}
+
 function f1TvContentIdFromUrl(targetUrl) {
   const match = String(targetUrl || "").match(/\/detail\/([0-9]+)/i);
   return match ? match[1] : "";
@@ -10068,8 +10089,11 @@ async function resolveF1TvContent(_event, options = {}) {
       : { ...feed, ...streamStatusFields };
   });
 
-  const subscriptionIssueMessage = feeds.length ? "" : f1TvSubscriptionIssueFromAttempts(capture.playEndpointAttempts);
-  const authStatus = subscriptionIssueMessage ? { ...status, subscriptionActive: false } : status;
+  const sessionExpiredMessage = feeds.length ? "" : f1TvSessionExpiredFromAttempts(capture.playEndpointAttempts);
+  const subscriptionIssueMessage = feeds.length || sessionExpiredMessage ? "" : f1TvSubscriptionIssueFromAttempts(capture.playEndpointAttempts);
+  const authStatus = sessionExpiredMessage
+    ? { ...status, authenticated: false, playbackTokenReady: false, playbackTokenExpired: true }
+    : subscriptionIssueMessage ? { ...status, subscriptionActive: false } : status;
   const result = {
     ok: feeds.length > 0,
     contentId: resolvedContentId || f1TvContentIdFromUrl(targetUrl) || String(options.contentId || ""),
@@ -10088,7 +10112,9 @@ async function resolveF1TvContent(_event, options = {}) {
     authStatus,
     message: feeds.length
       ? `Resolved ${feeds.length} F1 TV stream${feeds.length === 1 ? "" : "s"}.`
-      : subscriptionIssueMessage
+      : sessionExpiredMessage
+        || subscriptionIssueMessage
+        || (status.playbackTokenExpired ? F1TV_SESSION_EXPIRED_MESSAGE : "")
         || (status.authenticated
         ? "No playable stream was discovered for the selected F1 TV result. Try pasting the exact F1 TV detail URL."
         : status.browserSession

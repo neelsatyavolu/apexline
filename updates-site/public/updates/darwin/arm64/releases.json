@@ -1,14 +1,14 @@
 {
-  "currentRelease": "1.1.22",
+  "currentRelease": "1.1.23",
   "releases": [
     {
-      "version": "1.1.22",
+      "version": "1.1.23",
       "updateTo": {
-        "version": "1.1.22",
-        "pub_date": "2026-11-01T20:54:00.743Z",
-        "notes": "The onboard radio button now works the way it should: the onboard plays quietly next to the main feed and comes up to full volume the moment the driver's team radio starts, picked up from the onboard's own audio.",
-        "name": "Apexline 1.1.22",
-        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.22-mac-arm64.zip"
+        "version": "1.1.23",
+        "pub_date": "2026-11-01T20:59:24.351Z",
+        "notes": "Replay timing is back: past sessions show live timing again after Formula 1 started requiring an F1 TV sign-in for it. The onboard radio button now quiets the engine even when that onboard has the sound, and turning it on hands the main sound back to the F1 TV feed.",
+        "name": "Apexline 1.1.23",
+        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.23-mac-arm64.zip"
       }
     }
   ]

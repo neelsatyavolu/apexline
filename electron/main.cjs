@@ -6070,6 +6070,9 @@ const F1_TIMING_LIVE_FEED_LATENCY_MAX_SECONDS = 15;
 // so this cannot be measured per session; it can drift ~1s between sessions.
 const F1_TIMING_LIVE_FEED_LATENCY_SAMPLE_LIMIT = 50;
 const F1_TIMING_LIVE_SYNC_OFFSET_SECONDS = 4.5;
+// F1 TV's on-screen session clock trails the clock feed at that target by ~2s
+// while the tower matches the picture (user-verified, 2026 US GP quali).
+const F1_TIMING_LIVE_CLOCK_LAG_SECONDS = 2;
 
 function f1LiveTimingFeedLatencySeconds(samples) {
   const values = (Array.isArray(samples) ? samples : [])
@@ -6112,8 +6115,12 @@ function applyF1TimingLiveFeed(topic, payload, feedUtc = "") {
     // Entries live on the feed-UTC timeline so video program-date targets map
     // onto them directly; the max() keeps stamps monotonic when a subscribe
     // snapshot (arrival-stamped) precedes feed-stamped deltas.
+    // The snapshot's ExtrapolatedClock carries the Utc its Remaining was read
+    // at (seconds before arrival); an arrival stamp runs the countdown high.
+    const clockUtcMs = String(topic) === "ExtrapolatedClock" ? Date.parse(String(data.Utc || "")) : NaN;
+    const entryUtcMs = Number.isFinite(feedUtcMs) ? feedUtcMs : clockUtcMs;
     const seconds = Math.max(
-      f1LiveTimingEntrySeconds(feedUtcMs, nowMs, f1LiveTimingFeedLatencySeconds(f1LiveTimingState.feedLatencySamples)),
+      f1LiveTimingEntrySeconds(entryUtcMs, nowMs, f1LiveTimingFeedLatencySeconds(f1LiveTimingState.feedLatencySamples)),
       finiteNumber(rows.at(-1)?.seconds) ?? -Infinity
     );
     rows.push({ time: "", seconds, data });
@@ -6387,13 +6394,22 @@ function getF1LiveTimingSnapshot(options = {}) {
     }
   }
   if (!parsed.timing.length) return null;
+  // Only the countdown follows the broadcast clock; status, flags and the
+  // qualifying part stay on the timing target. Clock entries alone keep the
+  // other topics' forward-only state cursors from rewinding every poll.
+  const broadcastClock = hasTimingTarget
+    ? parseF1TimingSessionClock({ clockEntries: sessionData.clockEntries }, targetSeconds - F1_TIMING_LIVE_CLOCK_LAG_SECONDS)
+    : null;
+  const sessionClock = broadcastClock
+    ? { ...parsed.sessionClock, remaining: broadcastClock.remaining, extrapolating: broadcastClock.extrapolating, utc: broadcastClock.utc }
+    : parsed.sessionClock;
   return {
     ok: true,
     sourceLabel: targetUtcMs != null ? `Formula 1 live timing @ ${new Date(targetUtcMs).toISOString()}` : targetLatencySeconds ? `Formula 1 live timing -${Math.round(targetLatencySeconds)}s` : "Formula 1 live timing",
     fetchedAt: new Date().toISOString(),
     timing: parsed.timing,
     weather: parsed.weather,
-    sessionClock: parsed.sessionClock,
+    sessionClock,
     raceControlMessages: parsed.raceControlMessages,
     errors: [],
     diagnostics: {

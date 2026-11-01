@@ -3501,6 +3501,7 @@ const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
   const F1_TIMING_LIVE_FEED_LATENCY_MAX_SECONDS = 15;
   const F1_TIMING_LIVE_FEED_LATENCY_SAMPLE_LIMIT = 50;
   const F1_TIMING_LIVE_SYNC_OFFSET_SECONDS = 4.5;
+  const F1_TIMING_LIVE_CLOCK_LAG_SECONDS = 2;
   const F1_TIMING_LIVE_ENTRY_SOFT_LIMIT = 1000;
   const F1_TIMING_LIVE_ENTRY_KEEP = 700;
   const F1_TIMING_LIVE_ENTRY_KEEP_SECONDS = 150;
@@ -4801,6 +4802,27 @@ assert.match(preload, /liveTimingResync: \(\) => ipcRenderer\.invoke\("pitwall:d
 assert.match(liveRacingSource, />Resync timing<\/button>/, "The sync menu should offer a manual live timing resync button");
 assert.match(liveRacingSource, /onResyncTiming=\{resyncLiveTiming\}/, "The sync menu resync button should be wired to the live timing resync handler");
 assert.match(liveRacingSource, /async function resyncLiveTiming\(\)[\s\S]{0,200}sessionClockAnchorRef\.current = null[\s\S]{0,200}liveTimingResync/, "Manual resync should reset the local session clock anchor and re-arm the SignalR feed");
+// The subscribe snapshot has no feed stamp, but its ExtrapolatedClock reads
+// Remaining at its own Utc (2.6-3.3s before arrival in the 2026 US GP quali).
+const snapshotClockArrivalMs = Date.parse("2026-10-24T21:12:20.000Z");
+f1TimingRaceControlSandbox.setF1TimingSmokeNowMs(snapshotClockArrivalMs);
+f1TimingRaceControlSandbox.setF1LiveTimingState({ lastMessageAt: 0, lastTopic: "", lastError: "", feedLatencySamples: [], entriesByTopic: {} });
+f1TimingRaceControlSandbox.applyF1TimingSignalRMessage({
+  type: 3,
+  invocationId: "0",
+  result: {
+    DriverList: { "1": { Tla: "VER", RacingNumber: "1" } },
+    TimingData: { Lines: { "1": { RacingNumber: "1", Position: 1 } } },
+    ExtrapolatedClock: { Utc: "2026-10-24T21:12:17.000Z", Remaining: "00:10:00", Extrapolating: true, _kf: true },
+  },
+});
+f1TimingRaceControlSandbox.setF1TimingSmokeNowMs(snapshotClockArrivalMs + 20000);
+const snapshotClockSnapshot = f1TimingRaceControlSandbox.getF1LiveTimingSnapshot({ targetUtcMs: snapshotClockArrivalMs + 20000, captureAligned: true });
+// F1 TV's on-screen clock trails the clock feed by ~2s while the tower matches
+// the picture (2026 US GP quali), so only the countdown is read 2s earlier.
+assert.equal(snapshotClockSnapshot.sessionClock.remaining, "00:09:39", "The live session clock should count down from the snapshot clock's own Utc, 2s behind the timing target");
+assert.equal(snapshotClockSnapshot.diagnostics.targetSeconds, (snapshotClockArrivalMs + 20000) / 1000, "The broadcast clock lag should not move the timing tower's target");
+f1TimingRaceControlSandbox.setF1TimingSmokeNowMs(null);
 const compressedLiveUtc = "2026-06-09T20:00:05.000Z";
 const compressedLiveSeconds = Date.parse(compressedLiveUtc) / 1000;
 f1TimingRaceControlSandbox.setF1TimingSmokeNowMs(Date.parse(compressedLiveUtc));

@@ -6813,7 +6813,20 @@ assert.match(source["LiveRacing.jsx"], /const audioFocused = audioFeed === key &
   const frozen = Object.freeze({ ...closedGate });
   radioGateSandbox.radioGateStep(frozen, voice, 25, gateConfig);
   assert.equal(frozen.ll, 0, "Gate steps should return new state rather than mutating it");
+  // Radio over a running engine: how long after the first word does the gate open?
+  const engineSettled = run(closedGate, engine, 80);
+  const voiceOverEngine = { lr: 0.04 + engine.lr, ll: 0.04 + engine.ll, rr: 0.04 + engine.rr };
+  let pollsToOpen = 0;
+  for (let state = engineSettled; !state.open && pollsToOpen < 40; pollsToOpen += 1) state = radioGateSandbox.radioGateStep(state, voiceOverEngine, 25, gateConfig);
+  assert.ok(pollsToOpen < 40, "Radio over engine noise should open the gate");
+  const lookaheadMatch = source["LiveRacing.jsx"].match(/lookaheadSeconds: ([\d.]+),/);
+  assert.ok(lookaheadMatch, "The radio gate should delay its output by a lookahead");
+  const analyserWindowMs = (2048 / 48000) * 1000;
+  const detectionMs = pollsToOpen * 25 + analyserWindowMs + 25;
+  assert.ok(Number(lookaheadMatch[1]) * 1000 >= detectionMs, `The lookahead (${lookaheadMatch[1]} s) should cover the gate's detection time (${Math.round(detectionMs)} ms) so the first word is not cut off`);
 }
+assert.match(source["LiveRacing.jsx"], /source\.connect\(delay\);\s*delay\.connect\(gain\);\s*gain\.connect\(context\.destination\);\s*source\.connect\(highpass\);/, "The gate should listen to the live audio but play a delayed copy, so it opens before the first word is heard");
+assert.match(source["LiveRacing.jsx"], /state\.open \? 1 : RADIO_GATE\.closedGain, state\.open \? RADIO_GATE\.attackSeconds : RADIO_GATE\.releaseSeconds, state\.open \? 0 : RADIO_GATE\.lookaheadSeconds\)/, "The gate should open at once but close only after the delayed audio has caught up");
 assert.match(source["LiveRacing.jsx"], /const radioGate = radioMode;/, "Radio mode should gate the onboard even when it holds the audio focus");
 assert.match(source["LiveRacing.jsx"], /function toggleRadioMode\(radioKey, audioKey, active\) \{[\s\S]*?if \(!active && audioFeed === audioKey\) setAudioFeed\("WORLD"\);/, "Turning radio mode on should hand the main sound back to the F1 TV feed");
 {

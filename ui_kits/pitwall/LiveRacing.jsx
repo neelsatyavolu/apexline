@@ -3103,6 +3103,8 @@
   // wind noise differ between the channels. Above the engine's low end, a
   // sustained high left/right correlation means someone is talking: the
   // onboard opens to full volume, and otherwise is silent (closedGain).
+  // The gate listens to the live audio but plays a copy delayed by
+  // lookaheadSeconds, so it has opened before the first word is heard.
   const RADIO_GATE = {
     highpassHz: 500,
     openCorrelation: 0.75,
@@ -3114,6 +3116,7 @@
     closedGain: 0,
     attackSeconds: 0.01,
     releaseSeconds: 0.25,
+    lookaheadSeconds: 0.35,
     pollMs: 25,
   };
   const RADIO_GATE_INITIAL = { open: false, lr: 0, ll: 0, rr: 0, aboveMs: 0, belowMs: 0, silentMs: 0 };
@@ -3151,6 +3154,7 @@
     if (existing) return existing;
     const context = new AudioContext({ latencyHint: "interactive" });
     const source = context.createMediaElementSource(video);
+    const delay = context.createDelay(1);
     const gain = context.createGain();
     const highpass = context.createBiquadFilter();
     highpass.type = "highpass";
@@ -3160,13 +3164,14 @@
     const right = context.createAnalyser();
     left.fftSize = 2048;
     right.fftSize = 2048;
-    source.connect(gain);
+    source.connect(delay);
+    delay.connect(gain);
     gain.connect(context.destination);
     source.connect(highpass);
     highpass.connect(splitter);
     splitter.connect(left, 0);
     splitter.connect(right, 1);
-    const graph = { context, gain, left, right, leftData: new Float32Array(left.fftSize), rightData: new Float32Array(right.fftSize) };
+    const graph = { context, delay, gain, left, right, leftData: new Float32Array(left.fftSize), rightData: new Float32Array(right.fftSize) };
     radioGateGraphs.set(video, graph);
     return graph;
   }
@@ -3186,10 +3191,12 @@
     const count = graph.leftData.length || 1;
     return { lr: lr / count, ll: ll / count, rr: rr / count };
   }
-  function setRadioGateGain(graph, value, seconds) {
+  // afterSeconds pushes a change back to line up with the delayed audio.
+  function setRadioGateGain(graph, value, seconds, afterSeconds = 0) {
     const param = graph.gain.gain;
-    param.cancelScheduledValues(graph.context.currentTime);
-    param.setTargetAtTime(value, graph.context.currentTime, seconds);
+    const now = graph.context.currentTime;
+    param.cancelScheduledValues(now);
+    param.setTargetAtTime(value, now + afterSeconds, seconds);
   }
   function useRadioGate(videoRef, enabled, onOpenChange) {
     const onOpenChangeRef = React.useRef(onOpenChange);
@@ -3207,6 +3214,7 @@
       // Start closed so the engine never blares while the first window fills.
       graph.gain.gain.cancelScheduledValues(graph.context.currentTime);
       graph.gain.gain.setValueAtTime(RADIO_GATE.closedGain, graph.context.currentTime);
+      graph.delay.delayTime.setValueAtTime(RADIO_GATE.lookaheadSeconds, graph.context.currentTime);
       graph.context.resume().catch(() => {});
       let state = RADIO_GATE_INITIAL;
       let lastAt = performance.now();
@@ -3226,11 +3234,12 @@
         }
         if (state.open === wasOpen) return;
         logPitWallDebug("player.radio-gate", { open: state.open, correlation: Math.round(correlation * 100) / 100 });
-        setRadioGateGain(graph, state.open ? 1 : RADIO_GATE.closedGain, state.open ? RADIO_GATE.attackSeconds : RADIO_GATE.releaseSeconds);
+        setRadioGateGain(graph, state.open ? 1 : RADIO_GATE.closedGain, state.open ? RADIO_GATE.attackSeconds : RADIO_GATE.releaseSeconds, state.open ? 0 : RADIO_GATE.lookaheadSeconds);
         onOpenChangeRef.current?.(state.open);
       }, RADIO_GATE.pollMs);
       return () => {
         clearInterval(timer);
+        graph.delay.delayTime.setValueAtTime(0, graph.context.currentTime);
         setRadioGateGain(graph, 1, RADIO_GATE.attackSeconds);
         if (state.open) onOpenChangeRef.current?.(false);
       };

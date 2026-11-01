@@ -447,7 +447,7 @@
     .pane__ctl:hover { color: var(--text-primary); background: var(--surface-hover); }
     .pane__ctl[data-active="true"] { color: #fff; background: var(--accent); border-color: transparent; }
     .pane__ctl[data-onair="true"] { background: var(--success); }
-    .pane__radiobadge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: var(--radius-xs); background: var(--success); color: #04140b; font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; letter-spacing: 0.06em; }
+    .pane__radiobadge { position: absolute; left: var(--space-5); bottom: var(--space-5); z-index: 3; pointer-events: none; display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: var(--radius-xs); background: var(--success); color: #04140b; font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; letter-spacing: 0.06em; }
     .pane__volume { display: inline-grid; grid-template-columns: 26px 78px 34px; align-items: center; gap: 5px; height: 26px; padding-right: 7px; border-radius: var(--radius-xs); border: 1px solid var(--border-default); background: var(--scrim); color: var(--text-secondary); backdrop-filter: blur(6px); }
     .pane__volume[data-active="true"] { color: var(--text-primary); border-color: var(--accent-border); }
     .pane__volume .pane__ctl { border: 0; background: transparent; backdrop-filter: none; }
@@ -3102,7 +3102,7 @@
   // stereo audio, so left and right carry the same signal, while engine and
   // wind noise differ between the channels. Above the engine's low end, a
   // sustained high left/right correlation means someone is talking: the
-  // onboard opens to full volume, and otherwise plays at closedGain.
+  // onboard opens to full volume, and otherwise is silent (closedGain).
   const RADIO_GATE = {
     highpassHz: 500,
     openCorrelation: 0.75,
@@ -3111,7 +3111,7 @@
     silenceCloseMs: 1500,
     smoothingMs: 60,
     silenceEnergy: 1e-6,
-    closedGain: 0.1,
+    closedGain: 0,
     attackSeconds: 0.01,
     releaseSeconds: 0.25,
     pollMs: 25,
@@ -3926,7 +3926,7 @@
 
   // Radio mode: the onboard stays muted and only opens up while its driver's team radio is on air.
   function RadioModeToggle({ active, onAir, onToggle }) {
-    const title = active ? (onAir ? "Team radio on air" : "Radio only: on") : "Radio only: keep this onboard quiet and bring it up for team radio";
+    const title = active ? (onAir ? "Team radio on air" : "Radio only: on") : "Radio only: mute this onboard except for team radio";
     return (
       <button className="pane__ctl" type="button" data-active={String(Boolean(active))} data-onair={String(Boolean(onAir))} onClick={onToggle} aria-pressed={Boolean(active)} aria-label={title} title={title}>
         <Icon name="radio" size={14} />
@@ -4211,9 +4211,9 @@
               <span className="pane__tagcode">{code}</span>
             </span>
           )}
-          {radioOnAir && <span className="pane__radiobadge"><Icon name="radio" size={11} />RADIO</span>}
           <span className="pane__feedlabel">{feed}</span>
         </div>
+        {radioOnAir && <span className="pane__radiobadge"><Icon name="radio" size={11} />RADIO</span>}
         <div className="pane__mid" data-streaming={String(streaming)} data-ready={String(!streaming || streamReady)}>
           {streaming && <span className="pane__streamveil" />}
           {driverImage ? <img className="pane__driverimg" src={driverImage} alt="" /> : <span className="pane__streamready"><Icon name="play" size={24} /><b>{code || "DRIVER"}</b><span>Onboard stream slot ready</span></span>}

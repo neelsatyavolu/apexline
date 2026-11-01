@@ -1,14 +1,14 @@
 {
-  "currentRelease": "1.1.19",
+  "currentRelease": "1.1.20",
   "releases": [
     {
-      "version": "1.1.19",
+      "version": "1.1.20",
       "updateTo": {
-        "version": "1.1.19",
-        "pub_date": "2026-10-24T21:10:40.360Z",
-        "notes": "Fixes F1 TV sign-in getting stuck on Opening... after F1 changed its login page.",
-        "name": "Apexline 1.1.19",
-        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.19-mac-arm64.zip"
+        "version": "1.1.20",
+        "pub_date": "2026-11-01T20:21:42.242Z",
+        "notes": "Haas stand-in Ryo Hirakawa now shows with his team, colours, photo and onboard. An expired F1 TV sign-in now asks you to sign in again instead of failing to load the stream. The live session clock now matches F1 TV's on-screen clock.",
+        "name": "Apexline 1.1.20",
+        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.20-mac-arm64.zip"
       }
     }
   ]

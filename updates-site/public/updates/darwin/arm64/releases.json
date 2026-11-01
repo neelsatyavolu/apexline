@@ -1,14 +1,14 @@
 {
-  "currentRelease": "1.1.21",
+  "currentRelease": "1.1.22",
   "releases": [
     {
-      "version": "1.1.21",
+      "version": "1.1.22",
       "updateTo": {
-        "version": "1.1.21",
-        "pub_date": "2026-11-01T20:38:06.144Z",
-        "notes": "Onboard driver pickers now have an Auto option to hand the choice back to Apexline. A new radio button on each onboard keeps it quiet next to the main feed and unmutes it only while that driver's team radio is on air.",
-        "name": "Apexline 1.1.21",
-        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.21-mac-arm64.zip"
+        "version": "1.1.22",
+        "pub_date": "2026-11-01T20:54:00.743Z",
+        "notes": "The onboard radio button now works the way it should: the onboard plays quietly next to the main feed and comes up to full volume the moment the driver's team radio starts, picked up from the onboard's own audio.",
+        "name": "Apexline 1.1.22",
+        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.22-mac-arm64.zip"
       }
     }
   ]

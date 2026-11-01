@@ -6826,6 +6826,11 @@ assert.match(source["LiveRacing.jsx"], /const audioFocused = audioFeed === key &
   assert.ok(Number(lookaheadMatch[1]) * 1000 >= detectionMs, `The lookahead (${lookaheadMatch[1]} s) should cover the gate's detection time (${Math.round(detectionMs)} ms) so the first word is not cut off`);
 }
 assert.match(source["LiveRacing.jsx"], /source\.connect\(delay\);\s*delay\.connect\(gain\);\s*gain\.connect\(context\.destination\);\s*source\.connect\(highpass\);/, "The gate should listen to the live audio but play a delayed copy, so it opens before the first word is heard");
+assert.match(source["LiveRacing.jsx"], /duckAudio=\{radioOnAir && !radioGate\}/, "Other audible feeds should duck while a radio-mode onboard is on air");
+assert.match(source["LiveRacing.jsx"], /const radioOnAir = Object\.values\(radioOnAirPanes\)\.some\(Boolean\);/, "Any radio-mode onboard on air should duck the main feed");
+assert.equal((source["LiveRacing.jsx"].match(/= playerVolume\(volumeLevel, duck\);/g) || []).length, 2, "Both volume assignments in the player should apply the duck");
+assert.match(source["LiveRacing.jsx"], /function playerVolume\(volumeLevel, duck\) \{\s*return mediaVolume\(volumeLevel\) \* \(duck \? RADIO_GATE\.duckGain : 1\);/, "Ducking should scale the player volume without moving the slider");
+assert.match(source["LiveRacing.jsx"], /setTimeout\(\(\) => onOpenChangeRef\.current\?\.\(false\), RADIO_GATE\.lookaheadSeconds \* 1000\)/, "The main feed should come back only after the delayed radio has finished");
 assert.match(source["LiveRacing.jsx"], /state\.open \? 1 : RADIO_GATE\.closedGain, state\.open \? RADIO_GATE\.attackSeconds : RADIO_GATE\.releaseSeconds, state\.open \? 0 : RADIO_GATE\.lookaheadSeconds\)/, "The gate should open at once but close only after the delayed audio has caught up");
 assert.match(source["LiveRacing.jsx"], /const radioGate = radioMode;/, "Radio mode should gate the onboard even when it holds the audio focus");
 assert.match(source["LiveRacing.jsx"], /function toggleRadioMode\(radioKey, audioKey, active\) \{[\s\S]*?if \(!active && audioFeed === audioKey\) setAudioFeed\("WORLD"\);/, "Turning radio mode on should hand the main sound back to the F1 TV feed");

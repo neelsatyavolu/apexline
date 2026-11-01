@@ -3105,6 +3105,7 @@
   // onboard opens to full volume, and otherwise is silent (closedGain).
   // The gate listens to the live audio but plays a copy delayed by
   // lookaheadSeconds, so it has opened before the first word is heard.
+  // While it is open, every other audible feed drops to duckGain.
   const RADIO_GATE = {
     highpassHz: 500,
     openCorrelation: 0.75,
@@ -3117,6 +3118,7 @@
     attackSeconds: 0.01,
     releaseSeconds: 0.25,
     lookaheadSeconds: 0.35,
+    duckGain: 0.25,
     pollMs: 25,
   };
   const RADIO_GATE_INITIAL = { open: false, lr: 0, ll: 0, rr: 0, aboveMs: 0, belowMs: 0, silentMs: 0 };
@@ -3217,6 +3219,13 @@
       graph.delay.delayTime.setValueAtTime(RADIO_GATE.lookaheadSeconds, graph.context.currentTime);
       graph.context.resume().catch(() => {});
       let state = RADIO_GATE_INITIAL;
+      let closeNotice = null;
+      // Report closing once the delayed audio has played out, not when it is detected.
+      const notifyOpen = (open) => {
+        clearTimeout(closeNotice);
+        if (open) onOpenChangeRef.current?.(true);
+        else closeNotice = setTimeout(() => onOpenChangeRef.current?.(false), RADIO_GATE.lookaheadSeconds * 1000);
+      };
       let lastAt = performance.now();
       let lastLogAt = lastAt;
       let peakCorrelation = 0;
@@ -3235,13 +3244,14 @@
         if (state.open === wasOpen) return;
         logPitWallDebug("player.radio-gate", { open: state.open, correlation: Math.round(correlation * 100) / 100 });
         setRadioGateGain(graph, state.open ? 1 : RADIO_GATE.closedGain, state.open ? RADIO_GATE.attackSeconds : RADIO_GATE.releaseSeconds, state.open ? 0 : RADIO_GATE.lookaheadSeconds);
-        onOpenChangeRef.current?.(state.open);
+        notifyOpen(state.open);
       }, RADIO_GATE.pollMs);
       return () => {
         clearInterval(timer);
         graph.delay.delayTime.setValueAtTime(0, graph.context.currentTime);
         setRadioGateGain(graph, 1, RADIO_GATE.attackSeconds);
-        if (state.open) onOpenChangeRef.current?.(false);
+        clearTimeout(closeNotice);
+        onOpenChangeRef.current?.(false);
       };
     }, [enabled, videoRef]);
     // An element's graph lives as long as the element; close it on unmount.
@@ -3256,7 +3266,10 @@
     }, [videoRef]);
   }
 
-  function PitWallStreamPlayer({ source, muted, volumeLevel = 100, playbackProfile = "main", videoQuality = "medium", onAudioFocus, onReady, onPlaybackState, sync, replaySync, onReplayToggle, onSurfaceToggle, playbackLocked = false, radioGate = false, onRadioGateOpen }) {
+  function playerVolume(volumeLevel, duck) {
+    return mediaVolume(volumeLevel) * (duck ? RADIO_GATE.duckGain : 1);
+  }
+  function PitWallStreamPlayer({ source, muted, volumeLevel = 100, duck = false, playbackProfile = "main", videoQuality = "medium", onAudioFocus, onReady, onPlaybackState, sync, replaySync, onReplayToggle, onSurfaceToggle, playbackLocked = false, radioGate = false, onRadioGateOpen }) {
     const videoRef = React.useRef(null);
     // Before the mute effect below, so an onboard switching to radio mode is
     // already turned down when it unmutes.
@@ -3395,7 +3408,7 @@
           : null;
       };
       async function load() {
-        video.volume = mediaVolume(volumeLevel);
+        video.volume = playerVolume(volumeLevel, duck);
         video.muted = muted || clampVolumeLevel(volumeLevel) <= 0;
         video.addEventListener("loadeddata", markReady);
         video.addEventListener("canplay", markReady);
@@ -3549,9 +3562,9 @@
     }, [manifestUrl, descriptor?.licenseUrl, descriptor?.drm?.licenseUrl, headerSignature, playbackProfile, videoQuality, sync?.targetLatency]);
     React.useEffect(() => {
       if (!videoRef.current) return;
-      videoRef.current.volume = mediaVolume(volumeLevel);
+      videoRef.current.volume = playerVolume(volumeLevel, duck);
       videoRef.current.muted = muted || clampVolumeLevel(volumeLevel) <= 0;
-    }, [muted, volumeLevel]);
+    }, [muted, volumeLevel, duck]);
     function handleSurfaceClick(event) {
       const video = event.currentTarget;
       event.stopPropagation();
@@ -3943,7 +3956,7 @@
     );
   }
 
-  function BroadcastPane({ focus, streamUrl, audioActive, audioVolume, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand, visible = true, style, zone, videoOverlay,
+  function BroadcastPane({ focus, streamUrl, audioActive, audioVolume, duckAudio = false, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand, visible = true, style, zone, videoOverlay,
     hasCurrentLiveSession, replayControls, sessionLibrary, onLoadPastSession, onConnectF1Tv,
     replaySync, onReplayToggle, onReplaySeek, replayLapAt, onSurfaceToggle, onSyncAll, onPlayerReady, streamStatus, resolving,
     syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset, timingRows, sessionKind, videoQuality,
@@ -4017,7 +4030,7 @@
         }}>
         <div className="pane__feed" />
         <div className="pane__bcwash" />
-        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} videoQuality={videoQuality} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle} onSurfaceToggle={onSurfaceToggle} playbackLocked={playbackLocked}
+        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} duck={duckAudio} videoQuality={videoQuality} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle} onSurfaceToggle={onSurfaceToggle} playbackLocked={playbackLocked}
           onReady={(video) => onPlayerReady?.(syncKey, video)} sync={{ targetLatency: syncTarget, onMetrics: (metrics) => onSyncMetrics?.(syncKey, metrics) }} />}
         <div className="pane__controls">
           <VolumeControl active={audioActive} value={audioVolume} onFocus={onAudioFocus} onChange={onAudioVolumeChange} />
@@ -4152,7 +4165,7 @@
   }
 
   const ONBOARD_AUTO_VALUE = "__auto__";
-  function OnboardPane({ feed, code, focus, telemetry, channel, streamUrl, audioActive, audioVolume, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand,
+  function OnboardPane({ feed, code, focus, telemetry, channel, streamUrl, audioActive, audioVolume, duckAudio = false, onRadioOnAirChange, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand,
     visible = true, style, zone, driverOptions = [], onDriverChange, driverAuto = false, audioFocused, radioMode = false, radioGate = false, onRadioModeToggle,
     replaySync, onReplayToggle, onReplaySeek, replayLapAt, onSurfaceToggle, onPlayerReady, syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset,
     timingRows = [], sectorCounts = null, sessionKind = "", videoQuality, lockAspect = false, onLockAspectToggle, feedTickerOn = false, onToggleFeedTicker, playbackLocked = false }) {
@@ -4161,6 +4174,10 @@
     const [streamReady, setStreamReady] = React.useState(false);
     const [radioGateOpen, setRadioGateOpen] = React.useState(false);
     const radioOnAir = radioGate && radioGateOpen;
+    function handleRadioGateOpen(open) {
+      setRadioGateOpen(open);
+      onRadioOnAirChange?.(open);
+    }
     const descriptor = streamDescriptor(streamUrl);
     const manifestUrl = descriptor?.manifestUrl || "";
     const effectiveLockAspect = onLockAspectToggle ? Boolean(lockAspect) : localLockAspect;
@@ -4181,7 +4198,7 @@
         }}>
         <div className="pane__feed" />
         <div className="pane__scan" />
-        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} playbackProfile="onboard" videoQuality={videoQuality} radioGate={radioGate} onRadioGateOpen={setRadioGateOpen} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle} onSurfaceToggle={onSurfaceToggle} playbackLocked={playbackLocked}
+        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} duck={duckAudio} playbackProfile="onboard" videoQuality={videoQuality} radioGate={radioGate} onRadioGateOpen={handleRadioGateOpen} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle} onSurfaceToggle={onSurfaceToggle} playbackLocked={playbackLocked}
           onReady={(video) => onPlayerReady?.(syncKey, video)} onPlaybackState={setStreamReady}
           sync={{ targetLatency: syncTarget, onMetrics: (metrics) => onSyncMetrics?.(syncKey, metrics) }} />}
         <div className="pane__controls">
@@ -4343,6 +4360,8 @@
     const [onboardOverrides, setOnboardOverrides] = React.useState({});
     // Onboard panes (by slot) in radio mode: muted except while their driver is on team radio.
     const [radioModePanes, setRadioModePanes] = React.useState({});
+    const [radioOnAirPanes, setRadioOnAirPanes] = React.useState({});
+    const radioOnAir = Object.values(radioOnAirPanes).some(Boolean);
     const [retainedPanes, setRetainedPanes] = React.useState([]);
     const [aiPopupOpen, setAiPopupOpen] = React.useState(false);
     const [partyTrayOpen, setPartyTrayOpen] = React.useState(false);
@@ -6596,6 +6615,8 @@
           driverAuto={isDriverOnboard && onboardDriverIsAuto(p)}
           radioMode={radioMode}
           radioGate={radioGate}
+          duckAudio={radioOnAir && !radioGate}
+          onRadioOnAirChange={(open) => setRadioOnAirPanes((current) => (Boolean(current[radioKey]) === open ? current : { ...current, [radioKey]: open }))}
           onRadioModeToggle={isDriverOnboard ? () => toggleRadioMode(radioKey, key, radioMode) : undefined}
           telemetry={(p.telemetry || p.feed === "Onboard") && telemetryDefault}
           streamUrl={streamSources[key] || resolvedFeedForKey(key, p.code)}

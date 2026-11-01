@@ -3595,6 +3595,7 @@ const f1TimingRaceControlSandbox = vm.runInNewContext(`(() => {
   ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
   function normalizeCompound(value) { return String(value || "").toLowerCase(); }
   function formatLapDuration(seconds) { return String(seconds); }
+  function f1TimingTeamRadioCodes() { return []; }
   return { f1TimingSegments, f1TimingPositionRowsAt, getF1LiveTimingSnapshot, f1LiveTimingCatchUpRemainingSeconds, parseF1TimingArchiveRows, setF1LiveTimingState, getF1LiveTimingState, resyncF1LiveTiming, setF1TimingSmokeNowMs, applyF1TimingSignalRMessage, compactF1TimingLiveEntries, mergeF1TimingDelta, f1TimingMergeSectorSegments, f1TimingBackfillSegmentHoles };
 })()`, { Buffer, zlib });
 const f1TimingLiveRecoverySandbox = vm.runInNewContext(`(() => {
@@ -6755,7 +6756,7 @@ assert.match(source["LiveRacing.jsx"], /paneId: pane\.paneId \|\| \(pane\.broadc
 assert.match(source["LiveRacing.jsx"], /layout === "custom"\s*\? \(activeCustomLayout\?\.tiles \|\| \[\]\)\.map\(customTilePane\)\.filter\(Boolean\)/, "Custom layout should build panes from its tiles");
 assert.match(source["LiveRacing.jsx"], /driverOptions=\{p\.channel \? \[\] : D\.drivers\}/, "Channel panes should not offer a driver switcher");
 assert.match(source["LiveRacing.jsx"], /\{driverOptions\.length > 0 && \(/, "Onboard pane should hide the driver select when no options exist");
-assert.match(source["LiveRacing.jsx"], /updateCustomTileSource\(activeCustomLayout\.id, p\.tileId, \{ type: "onboard", code \}\)/, "Changing the driver on a custom onboard tile should update the saved layout");
+assert.match(source["LiveRacing.jsx"], /: \{ type: "onboard", code: value, autoMode \};\s*updateCustomTileSource\(activeCustomLayout\.id, p\.tileId, next\)/, "Changing the driver on a custom onboard tile should update the saved layout and remember its auto mode");
 assert.match(source["LiveRacing.jsx"], /function renderTimingTower/, "Timing tower content should be extracted for reuse by the custom layout timing tile");
 assert.match(source["LiveRacing.jsx"], /\{layout !== "custom" && layout !== "theater" && \(\s*<>\s*<aside className="live__timing">/, "The docked timing sidebar should hide in custom and theater layout modes");
 assert.match(source["LiveRacing.jsx"], /className="custom-canvas" ref=\{customCanvasRef\}/, "Custom mode should render the free placement canvas");
@@ -6791,7 +6792,7 @@ assert.match(source["LiveRacing.jsx"], /\.live__body \.pane:not\(\.pane--bc\)\[d
 assert.match(source["LiveRacing.jsx"], /\{!channel && <span className="pane__ctl" data-active=\{telemetryOn\}/, "Non-onboard feeds should not show the telemetry toggle");
 assert.match(source["LiveRacing.jsx"], /<span className="pane__ctl pane__ctl--ar" data-active=\{String\(effectiveLockAspect\)\}[\s\S]*setLocalLockAspect/, "Onboard and channel feeds should expose a 16:9 aspect lock toggle");
 assert.match(mainProcess, /streamItems\.push\(\{ manifest: hint\.text, licenseUrls, label, title/, "Resolver should capture a clean channel title alongside the raw metadata label");
-assert.match(source["LiveRacing.jsx"], /audioActive=\{audioFeed === key && audioVolume > 0 && p\.visible !== false\}/, "Only visible panes should emit audio so retained/parked feeds cannot double up after a layout switch");
+assert.match(source["LiveRacing.jsx"], /const audioFocused = audioFeed === key && audioVolume > 0;[\s\S]*audioActive=\{\(audioFocused \|\| radioOnAir\) && p\.visible !== false\}/, "Only visible panes should emit audio so retained/parked feeds cannot double up after a layout switch");
 assert.match(mainProcess, /line\?\.KnockedOut/, "F1 live timing rows should preserve knocked-out state for all knocked-out drivers");
 assert.doesNotMatch(source["LiveRacing.jsx"], /\.timing-tower__row\[data-inactive="true"\] \.timing-driver__code/, "Retired timing rows should keep the driver's team color badge");
 assert.match(source["LiveRacing.jsx"], /\.timing-tower \{[^}]*width: max-content;[\s\S]*\.timing-tower__head, \.timing-tower__row \{[^}]*width: max-content;/, "Live timing horizontal scroll should end at the last real column");
@@ -8503,6 +8504,7 @@ for (const file of fs.readdirSync(kitDir).filter((name) => name.endsWith(".jsx")
 }
 
 await runUsageStatsChecks();
+await runTeamRadioChecks();
 
 console.log("Apexline smoke checks passed");
 }
@@ -8805,4 +8807,52 @@ runSmokeChecks().catch((error) => {
   assert.match(mainSource, /function trackMapLiveFitSample[\s\S]*trackMapLiveReferenceSample/, "Live fits should fall back to an earlier session of the meeting before the live trace is long enough");
   assert.match(preloadSource, /trackMapLivePositions: \(options = \{\}\) => ipcRenderer\.invoke\("pitwall:data:trackMapLivePositions", options\)/, "Preload should expose the narrow live Track Map position bridge");
   assert.match(trackMapSource, /pitwall\.data\.trackMapLivePositions\(\{ sinceUtcMs, includeSample \}\)/, "Live Track Map should poll the position feed instead of the minutes-stale snapshot");
+}
+
+async function runTeamRadioChecks() {
+  const root = path.resolve(__dirname, "..");
+  const { collectTeamRadioCaptures, mp3DurationSeconds, activeTeamRadioNumbers, createTeamRadioTracker, TEAM_RADIO_FALLBACK_DURATION_MS } = require("../electron/team-radio.cjs");
+  const liveSource = fs.readFileSync(path.join(root, "ui_kits/pitwall/LiveRacing.jsx"), "utf8");
+  const mainSource = fs.readFileSync(path.join(root, "electron/main.cjs"), "utf8");
+  const start = Date.parse("2026-11-01T20:00:00.000Z");
+  const utc = (offsetMs) => new Date(start + offsetMs).toISOString();
+
+  // Snapshot arrays and keyed deltas both count; the same clip twice is one capture.
+  const captures = collectTeamRadioCaptures([
+    { seconds: 1, data: { Captures: [{ Utc: utc(0), RacingNumber: "44", Path: "TeamRadio/LEWHAM01_44_a.mp3" }] } },
+    { seconds: 2, data: { Captures: { 1: { Utc: utc(20000), RacingNumber: "1", Path: "TeamRadio/MAXVER01_1_b.mp3" } } } },
+    { seconds: 3, data: { Captures: { 0: { Utc: utc(0), RacingNumber: "44", Path: "TeamRadio/LEWHAM01_44_a.mp3" } } } },
+    { seconds: 4, data: { Captures: [{ Utc: "", RacingNumber: "16", Path: "TeamRadio/bad.mp3" }] } },
+  ]);
+  assert.equal(captures.length, 2, "Team radio captures should be deduplicated by clip path and skip captures without a Utc");
+
+  const durations = { "TeamRadio/LEWHAM01_44_a.mp3": 5000, "TeamRadio/MAXVER01_1_b.mp3": null };
+  const activeAt = (offsetMs) => Array.from(activeTeamRadioNumbers(captures, start + offsetMs, (capture) => durations[capture.path])).sort();
+  assert.deepEqual(activeAt(-2000), [], "An onboard should stay muted before its radio starts");
+  assert.deepEqual(activeAt(-300), ["44"], "Radio mode should open just before the capture time");
+  assert.deepEqual(activeAt(4000), ["44"], "Radio mode should stay open for the measured clip length");
+  assert.deepEqual(activeAt(7000), [], "Radio mode should close after the clip and its post-roll");
+  assert.deepEqual(activeAt(20000 + TEAM_RADIO_FALLBACK_DURATION_MS - 500), ["1"], "An unmeasured clip should use the fallback length");
+  assert.deepEqual(Array.from(activeTeamRadioNumbers(captures, NaN, () => 5000)), [], "No playhead time means no radio");
+
+  // One MPEG-1 Layer III frame: 128 kbps, 44.1 kHz, no padding = 417 bytes, 1152 samples.
+  const frame = Buffer.alloc(417);
+  frame[0] = 0xff; frame[1] = 0xfb; frame[2] = 0x90; frame[3] = 0x00;
+  const id3 = Buffer.from([0x49, 0x44, 0x33, 3, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0]);
+  const tenFrames = Buffer.concat([id3, ...Array.from({ length: 10 }, () => frame)]);
+  assert.ok(Math.abs(mp3DurationSeconds(tenFrames) - (10 * 1152) / 44100) < 0.001, "Clip length should be the sum of the mp3 frames after the ID3 tag");
+  assert.equal(mp3DurationSeconds(Buffer.from("not audio")), null, "Non-mp3 data should not report a clip length");
+
+  const fetched = [];
+  const tracker = createTeamRadioTracker({ fetchClip: async (url) => { fetched.push(url); return tenFrames; } });
+  tracker.activeNumbers([{ seconds: 1, data: { Captures: [{ Utc: utc(0), RacingNumber: "44", Path: "TeamRadio/x.mp3" }] } }], start + 1000, "https://livetiming.formula1.com/static/2026/s/");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(fetched, ["https://livetiming.formula1.com/static/2026/s/TeamRadio/x.mp3"], "The tracker should measure each nearby clip from the session's static folder");
+  assert.equal(tracker.activeNumbers([], start, "").size, 0, "Without a session folder there is no radio");
+
+  assert.match(mainSource, /teamRadioEntries: entriesByTopic\.TeamRadio \|\| \[\]/, "Live timing should pass the TeamRadio topic to the parser");
+  assert.match(mainSource, /TeamRadio\.jsonStream/, "Replay timing should load the TeamRadio archive");
+  assert.match(mainSource, /teamRadioCodes: parsed\.teamRadioCodes/, "Timing payloads should carry the drivers on team radio");
+  assert.match(liveSource, /<option value=\{ONBOARD_AUTO_VALUE\}>/, "The onboard driver picker should offer an Auto entry");
+  assert.match(liveSource, /audioActive=\{\(audioFocused \|\| radioOnAir\) && p\.visible !== false\}/, "Radio mode should unmute an onboard only while its driver is on air");
 }

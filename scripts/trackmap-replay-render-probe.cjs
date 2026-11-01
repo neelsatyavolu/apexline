@@ -77,6 +77,7 @@ const parser = vm.runInNewContext(`(() => {
     "f1TimingRaceStartArchiveSeconds",
     "trackMapPositionOnlyTimingRows",
   ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+  function f1TimingTeamRadioCodes() { return []; }
   return { f1TimingSeconds, decodeF1TimingZPayload, parseF1TimingJsonStream, parseF1TimingArchiveRows, f1TimingTargetUtcMs, f1TimingPositionSamples, f1TimingPositionRowsAt, f1TimingPositionBounds, f1TimingRaceStartArchiveSeconds, trackMapPositionOnlyTimingRows };
 })()`, { Buffer, zlib });
 

@@ -446,6 +446,8 @@
     .pane__ctl { appearance: none; -webkit-appearance: none; display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border-radius: var(--radius-xs); background: var(--scrim); backdrop-filter: blur(6px); color: var(--text-secondary); cursor: pointer; border: 1px solid var(--border-default); }
     .pane__ctl:hover { color: var(--text-primary); background: var(--surface-hover); }
     .pane__ctl[data-active="true"] { color: #fff; background: var(--accent); border-color: transparent; }
+    .pane__ctl[data-onair="true"] { background: var(--success); }
+    .pane__radiobadge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: var(--radius-xs); background: var(--success); color: #04140b; font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; letter-spacing: 0.06em; }
     .pane__volume { display: inline-grid; grid-template-columns: 26px 78px 34px; align-items: center; gap: 5px; height: 26px; padding-right: 7px; border-radius: var(--radius-xs); border: 1px solid var(--border-default); background: var(--scrim); color: var(--text-secondary); backdrop-filter: blur(6px); }
     .pane__volume[data-active="true"] { color: var(--text-primary); border-color: var(--accent-border); }
     .pane__volume .pane__ctl { border: 0; background: transparent; backdrop-filter: none; }
@@ -1940,9 +1942,12 @@
   }
   function normalizeCustomTileSource(raw = {}) {
     if (!raw || typeof raw !== "object") return null;
+    const CUSTOM_SMART_ONBOARD_MODES = ["leader", "favorite1", "favorite2", "battle-primary", "battle-secondary"];
     if (raw.type === "timing") return { type: "timing" };
-    if (raw.type === "onboard" && typeof raw.code === "string" && raw.code) return { type: "onboard", code: raw.code };
-    if (raw.type === "smart-onboard" && ["leader", "favorite1", "favorite2", "battle-primary", "battle-secondary"].includes(raw.mode)) return { type: "smart-onboard", mode: raw.mode };
+    if (raw.type === "onboard" && typeof raw.code === "string" && raw.code) {
+      return CUSTOM_SMART_ONBOARD_MODES.includes(raw.autoMode) ? { type: "onboard", code: raw.code, autoMode: raw.autoMode } : { type: "onboard", code: raw.code };
+    }
+    if (raw.type === "smart-onboard" && CUSTOM_SMART_ONBOARD_MODES.includes(raw.mode)) return { type: "smart-onboard", mode: raw.mode };
     if (raw.type === "channel" && typeof raw.feedId === "string" && raw.feedId) return { type: "channel", feedId: raw.feedId };
     return null;
   }
@@ -3767,6 +3772,16 @@
     );
   }
 
+  // Radio mode: the onboard stays muted and only opens up while its driver's team radio is on air.
+  function RadioModeToggle({ active, onAir, onToggle }) {
+    const title = active ? (onAir ? "Team radio on air" : "Radio only: on") : "Radio only: unmute this onboard for team radio";
+    return (
+      <button className="pane__ctl" type="button" data-active={String(Boolean(active))} data-onair={String(Boolean(onAir))} onClick={onToggle} aria-pressed={Boolean(active)} aria-label={title} title={title}>
+        <Icon name="radio" size={14} />
+      </button>
+    );
+  }
+
   function BroadcastPane({ focus, streamUrl, audioActive, audioVolume, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand, visible = true, style, zone, videoOverlay,
     hasCurrentLiveSession, replayControls, sessionLibrary, onLoadPastSession, onConnectF1Tv,
     replaySync, onReplayToggle, onReplaySeek, replayLapAt, onSurfaceToggle, onSyncAll, onPlayerReady, streamStatus, resolving,
@@ -3975,8 +3990,9 @@
     );
   }
 
+  const ONBOARD_AUTO_VALUE = "__auto__";
   function OnboardPane({ feed, code, focus, telemetry, channel, streamUrl, audioActive, audioVolume, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand,
-    visible = true, style, zone, driverOptions = [], onDriverChange,
+    visible = true, style, zone, driverOptions = [], onDriverChange, driverAuto = false, audioFocused, radioMode = false, radioOnAir = false, onRadioModeToggle,
     replaySync, onReplayToggle, onReplaySeek, replayLapAt, onSurfaceToggle, onPlayerReady, syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset,
     timingRows = [], sectorCounts = null, sessionKind = "", videoQuality, lockAspect = false, onLockAspectToggle, feedTickerOn = false, onToggleFeedTicker, playbackLocked = false }) {
     const [telemetryOn, setTelemetryOn] = React.useState(Boolean(telemetry));
@@ -4007,13 +4023,15 @@
           sync={{ targetLatency: syncTarget, onMetrics: (metrics) => onSyncMetrics?.(syncKey, metrics) }} />}
         <div className="pane__controls">
           {driverOptions.length > 0 && (
-            <select className="pane__driverselect" value={code || ""} aria-label="Switch onboard driver"
+            <select className="pane__driverselect" value={driverAuto ? ONBOARD_AUTO_VALUE : code || ""} aria-label="Switch onboard driver"
               onChange={(event) => onDriverChange?.(event.target.value)}>
+              <option value={ONBOARD_AUTO_VALUE}>{driverAuto && code ? `Auto · ${code}` : "Auto"}</option>
               {driverOptions.map((driver) => <option key={driver.code} value={driver.code}>{driver.code} · {driver.name}</option>)}
             </select>
           )}
           {!channel && <span className="pane__ctl" data-active={telemetryOn} onClick={() => setTelemetryOn(!telemetryOn)}><Icon name="gauge" size={14} /></span>}
-          <AudioToggle active={audioActive} onFocus={onAudioFocus} />
+          <AudioToggle active={audioFocused ?? audioActive} onFocus={onAudioFocus} />
+          {onRadioModeToggle && <RadioModeToggle active={radioMode} onAir={radioOnAir} onToggle={onRadioModeToggle} />}
           <span className="pane__ctl pane__ctl--ar" data-active={String(effectiveLockAspect)} title={effectiveLockAspect ? "Unlock aspect ratio" : "Lock 16:9 aspect ratio"} onClick={() => onLockAspectToggle ? onLockAspectToggle() : setLocalLockAspect((value) => !value)}>16:9</span>
           {onToggleFeedTicker && <span className="pane__ctl" data-active={String(Boolean(feedTickerOn))} title={feedTickerOn ? "Hide driver tiles" : "Show driver tiles"} onClick={onToggleFeedTicker}><Icon name="grid" size={14} /></span>}
           <span className="pane__ctl" onClick={onConfigureStream}><Icon name="settings" size={14} /></span>
@@ -4039,6 +4057,7 @@
               <span className="pane__tagcode">{code}</span>
             </span>
           )}
+          {radioOnAir && <span className="pane__radiobadge"><Icon name="radio" size={11} />RADIO</span>}
           <span className="pane__feedlabel">{feed}</span>
         </div>
         <div className="pane__mid" data-streaming={String(streaming)} data-ready={String(!streaming || streamReady)}>
@@ -4159,6 +4178,8 @@
     const [timingColumns, setTimingColumns] = React.useState(readTimingColumns);
     const [timingConfigOpen, setTimingConfigOpen] = React.useState(false);
     const [onboardOverrides, setOnboardOverrides] = React.useState({});
+    // Onboard panes (by slot) in radio mode: muted except while their driver is on team radio.
+    const [radioModePanes, setRadioModePanes] = React.useState({});
     const [retainedPanes, setRetainedPanes] = React.useState([]);
     const [aiPopupOpen, setAiPopupOpen] = React.useState(false);
     const [partyTrayOpen, setPartyTrayOpen] = React.useState(false);
@@ -5706,6 +5727,7 @@
     }, [observedTimingMiniSectorCounts, timingMiniSectorCountKey]);
     noteBestSectors(timingRows, `${replaySync.mode}|${activeRaceName}|${activeSessionKind}|${sessionClock?.qualifyingPart || ""}`);
     const activeTimingData = replaySync.mode === "replay" ? replayTimingData : liveTimingData;
+    const teamRadioCodes = Array.isArray(activeTimingData?.teamRadioCodes) ? activeTimingData.teamRadioCodes : [];
     const timingCatchingUp = Boolean(activeTimingData?.catchingUp);
     const timingCatchUpRemaining = timingCatchingUp ? liveTimingCatchUpRemainingForDisplay(activeTimingData, clockTick) : null;
     const timingCatchUpRemainingLabel = formatLiveTimingCatchUpRemaining(timingCatchUpRemaining);
@@ -6195,12 +6217,12 @@
     function customTilePane(tile) {
       if (tile.source.type === "timing") return null;
       if (tile.source.type === "onboard") {
-        return { feed: "Onboard", code: tile.source.code, slot: "custom-" + tile.id, telemetry: true, custom: true, tileId: tile.id, paneId: customPaneIdForSource(tile.source) };
+        return { feed: "Onboard", code: tile.source.code, slot: "custom-" + tile.id, telemetry: true, custom: true, tileId: tile.id, customSource: tile.source, paneId: customPaneIdForSource(tile.source) };
       }
       if (tile.source.type === "smart-onboard") {
         const code = resolveCustomOnboardCode(tile.source, customOnboardContext);
         if (!code) return null;
-        return { feed: customSmartOnboardLabel(tile.source), code, slot: "custom-" + tile.id, telemetry: true, custom: true, tileId: tile.id, paneId: customPaneIdForSource(tile.source) };
+        return { feed: customSmartOnboardLabel(tile.source), code, slot: "custom-" + tile.id, telemetry: true, custom: true, tileId: tile.id, customSource: tile.source, paneId: customPaneIdForSource(tile.source) };
       }
       const feeds = resolvedF1TvContent?.feeds || [];
       const feed = feeds.find((entry) => entry.feedId === tile.source.feedId) || null;
@@ -6363,24 +6385,54 @@
       );
     }
 
+    function changeOnboardDriver(p, value) {
+      const auto = value === ONBOARD_AUTO_VALUE;
+      if (p.custom && activeCustomLayout) {
+        const source = p.customSource || {};
+        const autoMode = source.type === "smart-onboard" ? source.mode : source.autoMode;
+        const next = auto
+          ? { type: "smart-onboard", mode: autoMode || "leader" }
+          : { type: "onboard", code: value, autoMode };
+        updateCustomTileSource(activeCustomLayout.id, p.tileId, next);
+        return;
+      }
+      if (!p.slot) return;
+      setOnboardOverrides((current) => {
+        if (!auto) return { ...current, [p.slot]: value };
+        const { [p.slot]: _removed, ...rest } = current;
+        return rest;
+      });
+    }
+    function onboardDriverIsAuto(p) {
+      if (p.custom) return p.customSource?.type === "smart-onboard";
+      return !(p.slot && D.byCode[onboardOverrides[p.slot]]);
+    }
+
     function renderLivePane(p) {
       const key = p.broadcast ? "WORLD" : p.code;
       const label = p.broadcast ? "F1 TV" : p.channel ? (p.feed || p.code) : (D.byCode[p.code]?.name || p.code || "Driver") + " onboard";
       const paneKey = p.paneId;
+      const isDriverOnboard = !p.broadcast && !p.channel;
+      const radioKey = p.slot || paneKey;
+      const radioMode = isDriverOnboard && Boolean(radioModePanes[radioKey]);
+      const radioOnAir = radioMode && teamRadioCodes.includes(p.code);
+      const audioFocused = audioFeed === key && audioVolume > 0;
       return (
         <Pane key={paneKey} {...p}
           visible={p.visible !== false}
           style={p.style}
           zone={p.zone}
           driverOptions={p.channel ? [] : D.drivers}
-          onDriverChange={(code) => {
-            if (p.custom && activeCustomLayout) updateCustomTileSource(activeCustomLayout.id, p.tileId, { type: "onboard", code });
-            else if (p.slot) setOnboardOverrides((current) => ({ ...current, [p.slot]: code }));
-          }}
+          onDriverChange={(value) => changeOnboardDriver(p, value)}
+          driverAuto={isDriverOnboard && onboardDriverIsAuto(p)}
+          radioMode={radioMode}
+          radioOnAir={radioOnAir}
+          onRadioModeToggle={isDriverOnboard ? () => setRadioModePanes((current) => ({ ...current, [radioKey]: !current[radioKey] })) : undefined}
           telemetry={(p.telemetry || p.feed === "Onboard") && telemetryDefault}
           streamUrl={streamSources[key] || resolvedFeedForKey(key, p.code)}
-          audioActive={audioFeed === key && audioVolume > 0 && p.visible !== false}
-          audioVolume={audioVolume}
+          audioFocused={audioFocused && p.visible !== false}
+          audioActive={(audioFocused || radioOnAir) && p.visible !== false}
+          audioVolume={radioOnAir && !audioFocused && audioVolume <= 0 ? 100 : audioVolume}
           onAudioFocus={() => focusAudioFeed(key)}
           onAudioVolumeChange={(value) => changeAudioVolume(key, value)}
           onConfigureStream={() => configureStream(key, label)}

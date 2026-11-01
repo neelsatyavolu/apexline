@@ -74,6 +74,7 @@ const parser = vm.runInNewContext(`(() => {
     "f1TimingLapTimeline",
     "parseF1TimingArchiveRows",
   ].map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
+  function f1TimingTeamRadioCodes() { return []; }
   return { parseF1TimingJsonStream, parseF1TimingArchiveRows };
 })()`, { Buffer, zlib });
 

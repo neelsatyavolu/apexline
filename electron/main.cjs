@@ -14,7 +14,6 @@ const sharedAuth = require("@neelsatyavolu/shared-ai-auth");
 const { createUsageStats } = require("./usage-stats.cjs");
 const { probeF1TvTimingSignals } = require("./f1tv-timing-probe.cjs");
 const { createJolpicaClient, buildDriverCareers } = require("./driver-careers.cjs");
-const { createTeamRadioTracker } = require("./team-radio.cjs");
 const driverCareerBaseline = require("./driver-career-baseline.json");
 
 let appPackage = {};
@@ -5376,26 +5375,6 @@ function parseF1TimingRaceControlMessages(entries, targetSeconds) {
   return messages.slice(-30);
 }
 
-const teamRadioTracker = createTeamRadioTracker({
-  fetchClip: async (url) => {
-    const response = await requestBuffer(url, { headers: f1TimingHeaders(), timeoutMs: 12000 });
-    if (response.status < 200 || response.status >= 300) throw new Error(`Team radio clip unavailable (${response.status || "network"}).`);
-    return response.body;
-  },
-  onError: (error) => writePitWallDebugLog("f1timing.team-radio-clip", { message: error?.message || String(error || "") }),
-});
-
-// Driver codes whose team radio is on air at the timing target. Live sessions
-// pass the video's own UTC; archives derive it from the target seconds.
-function f1TimingTeamRadioCodes(sessionData, targetSeconds, sessionInfoState, rows, nowUtcMs) {
-  const sessionPath = String(sessionInfoState?.Path || "").trim();
-  const clipBaseUrl = sessionData.baseUrl || (sessionPath ? `${F1_TIMING_BASE_URL}/static/${sessionPath}` : "");
-  const utcMs = finiteNumber(nowUtcMs) ?? f1TimingTargetUtcMs(sessionData, targetSeconds);
-  const numbers = teamRadioTracker.activeNumbers(sessionData.teamRadioEntries, utcMs, clipBaseUrl);
-  if (!numbers.size) return [];
-  return rows.filter((row) => numbers.has(String(row.number))).map((row) => row.code).sort();
-}
-
 // F1 timing TimingData lines carry an atomic Status bitfield (same decoding
 // MultiViewer uses): 4=Stopped, 8=Retired, 16=InPit, 32=PitOut, 128=KnockedOut,
 // 256=Cutoff. Unlike the InPit/PitOut booleans it is never left stale by
@@ -5544,8 +5523,7 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
     };
   }).filter((row) => row.code && row.pos).sort((a, b) => a.pos - b.pos);
   const timingRows = fillF1TimingQualifyingDeltas(rows);
-  const teamRadioCodes = f1TimingTeamRadioCodes(sessionData, targetSeconds, sessionInfoState, timingRows, options.nowUtcMs);
-  return { timing: timingRows, weather: parseF1TimingWeatherState(weatherState), sessionClock, raceControlMessages, teamRadioCodes, lapTimeline: f1TimingLapTimeline(sessionData, timingAnchor, videoStartArchiveSeconds), diagnostics: {
+  return { timing: timingRows, weather: parseF1TimingWeatherState(weatherState), sessionClock, raceControlMessages, lapTimeline: f1TimingLapTimeline(sessionData, timingAnchor, videoStartArchiveSeconds), diagnostics: {
     timingAnchor,
     videoStartArchiveSeconds,
     sessionStartSeconds: f1TimingSessionStartSeconds(sessionData),
@@ -5571,7 +5549,7 @@ function parseF1TimingArchiveRows(sessionData, elapsedSeconds, options) {
 }
 
 async function readF1TimingArchiveSessionData(resolvedMeeting, resolvedSession, baseUrl) {
-  const [driverListText, timingText, appText, clockText, sessionDataText, statusText, trackStatusText, raceControlText, lapCountText, weatherText, carText, positionText, teamRadioText] = await Promise.all([
+  const [driverListText, timingText, appText, clockText, sessionDataText, statusText, trackStatusText, raceControlText, lapCountText, weatherText, carText, positionText] = await Promise.all([
     f1TimingRequestText(`${baseUrl}DriverList.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}TimingData.jsonStream`),
     f1TimingRequestText(`${baseUrl}TimingAppData.jsonStream`).catch(() => ""),
@@ -5584,7 +5562,6 @@ async function readF1TimingArchiveSessionData(resolvedMeeting, resolvedSession, 
     f1TimingRequestText(`${baseUrl}WeatherData.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}CarData.z.jsonStream`).catch(() => ""),
     f1TimingRequestText(`${baseUrl}Position.z.jsonStream`).catch(() => ""),
-    f1TimingRequestText(`${baseUrl}TeamRadio.jsonStream`).catch(() => ""),
   ]);
   const data = {
     ok: true,
@@ -5604,7 +5581,6 @@ async function readF1TimingArchiveSessionData(resolvedMeeting, resolvedSession, 
     weatherEntries: weatherText ? parseF1TimingJsonStream(weatherText) : [],
     carDataEntries: carText ? parseF1TimingJsonStream(carText, { zipped: true }) : [],
     positionEntries: positionText ? parseF1TimingJsonStream(positionText, { zipped: true }) : [],
-    teamRadioEntries: teamRadioText ? parseF1TimingJsonStream(teamRadioText) : [],
   };
   return data;
 }
@@ -6364,7 +6340,6 @@ function getF1LiveTimingSnapshot(options = {}) {
     sessionStatusEntries: entriesByTopic.SessionStatus || [],
     trackStatusEntries: entriesByTopic.TrackStatus || [],
     raceControlEntries: entriesByTopic.RaceControlMessages || [],
-    teamRadioEntries: entriesByTopic.TeamRadio || [],
     lapCountEntries: entriesByTopic.LapCount || [],
     weatherEntries: entriesByTopic.WeatherData || [],
     carDataEntries: []
@@ -6383,7 +6358,7 @@ function getF1LiveTimingSnapshot(options = {}) {
     ? f1TimingArchiveSecondsForUtc(sessionData, targetUtcMs) - streamAlignmentSeconds
     : Date.now() / 1000 - targetLatencySeconds;
   const hasTimingTarget = (targetUtcMs != null && Number.isFinite(targetSeconds)) || Boolean(targetLatencySeconds);
-  let parsed = parseF1TimingArchiveRows(sessionData, hasTimingTarget ? targetSeconds : Number.MAX_SAFE_INTEGER, { preserveSectorProgress: true, nowUtcMs: targetUtcMs });
+  let parsed = parseF1TimingArchiveRows(sessionData, hasTimingTarget ? targetSeconds : Number.MAX_SAFE_INTEGER, { preserveSectorProgress: true });
   if (hasTimingTarget && parsed.timing.length && parsed.timing.some((row) => (
     finiteNumber(row?.telemetry?.speed) == null || finiteNumber(row?.telemetry?.gear) == null
   ))) {
@@ -6436,7 +6411,6 @@ function getF1LiveTimingSnapshot(options = {}) {
     weather: parsed.weather,
     sessionClock,
     raceControlMessages: parsed.raceControlMessages,
-    teamRadioCodes: parsed.teamRadioCodes,
     errors: [],
     diagnostics: {
       ...(parsed.diagnostics || {}),
@@ -6773,7 +6747,6 @@ async function getReplayTimingSnapshot(options = {}) {
         weather: parsed.weather,
         sessionClock: parsed.sessionClock,
         raceControlMessages: parsed.raceControlMessages,
-        teamRadioCodes: parsed.teamRadioCodes,
         diagnostics: parsed.diagnostics,
         message: parsed.timing.some((row) => row.last || row.best) ? "" : "Formula 1 timing is loaded; lap times will appear once the session has data.",
       };

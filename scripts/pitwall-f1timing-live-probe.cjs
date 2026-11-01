@@ -260,7 +260,6 @@ async function main() {
     async function getF1TvSubscriptionToken() { return injectedSubscriptionToken; }
     function normalizeCompound(value) { return String(value || "").toLowerCase(); }
     ${FUNCTION_NAMES.map((name) => extractNamedFunction(mainProcess, name)).join("\n")}
-    function f1TimingTeamRadioCodes() { return []; }
     async function connectLive() {
       f1LiveTimingClient = { connecting: true, connected: false, nextAttemptAt: Date.now() + F1_TIMING_LIVE_CONNECT_RETRY_MS };
       f1LiveTimingState = { entriesByTopic: {}, lastMessageAt: 0, lastTopic: "", lastError: "", feedLatencySamples: [] };

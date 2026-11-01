@@ -3098,8 +3098,160 @@
     return !target?.closest?.("button, input, select, textarea, a, [role='button'], .pane__controls, .pane__replaybar, .sync-overlay, .pane__top, .pane__playerstatus");
   }
 
-  function PitWallStreamPlayer({ source, muted, volumeLevel = 100, playbackProfile = "main", videoQuality = "medium", onAudioFocus, onReady, onPlaybackState, sync, replaySync, onReplayToggle, onSurfaceToggle, playbackLocked = false }) {
+  // Radio-only onboards. Team radio is mixed to the centre of an onboard's
+  // stereo audio, so left and right carry the same signal, while engine and
+  // wind noise differ between the channels. Above the engine's low end, a
+  // sustained high left/right correlation means someone is talking: the
+  // onboard opens to full volume, and otherwise plays at closedGain.
+  const RADIO_GATE = {
+    highpassHz: 500,
+    openCorrelation: 0.75,
+    openAfterMs: 50,
+    closeAfterMs: 400,
+    silenceCloseMs: 1500,
+    smoothingMs: 60,
+    silenceEnergy: 1e-6,
+    closedGain: 0.1,
+    attackSeconds: 0.01,
+    releaseSeconds: 0.25,
+    pollMs: 25,
+  };
+  const RADIO_GATE_INITIAL = { open: false, lr: 0, ll: 0, rr: 0, aboveMs: 0, belowMs: 0, silentMs: 0 };
+
+  // One gate decision. sums are the mean L*R, L*L and R*R of the latest
+  // high-passed window; they are smoothed before the correlation is taken.
+  function radioGateStep(state, sums, elapsedMs, config = RADIO_GATE) {
+    const keep = Math.exp(-Math.max(0, elapsedMs) / config.smoothingMs);
+    const lr = keep * state.lr + (1 - keep) * sums.lr;
+    const ll = keep * state.ll + (1 - keep) * sums.ll;
+    const rr = keep * state.rr + (1 - keep) * sums.rr;
+    const next = { ...state, lr, ll, rr };
+    // Silence is judged on the latest window: the smoothed sums decay
+    // together and would read as perfectly correlated for a while.
+    if (sums.ll + sums.rr < config.silenceEnergy) {
+      const silentMs = state.silentMs + elapsedMs;
+      const closeForSilence = state.open && silentMs >= config.silenceCloseMs;
+      return { ...next, silentMs: closeForSilence ? 0 : silentMs, aboveMs: 0, belowMs: closeForSilence ? 0 : state.belowMs, open: state.open && !closeForSilence };
+    }
+    const correlation = ll * rr > 0 ? lr / Math.sqrt(ll * rr) : 0;
+    if (correlation >= config.openCorrelation) {
+      const aboveMs = state.open ? 0 : state.aboveMs + elapsedMs;
+      const opens = !state.open && aboveMs >= config.openAfterMs;
+      return { ...next, silentMs: 0, belowMs: 0, aboveMs: opens ? 0 : aboveMs, open: state.open || opens };
+    }
+    const belowMs = state.open ? state.belowMs + elapsedMs : 0;
+    const closes = state.open && belowMs >= config.closeAfterMs;
+    return { ...next, silentMs: 0, aboveMs: 0, belowMs: closes ? 0 : belowMs, open: state.open && !closes };
+  }
+
+  // createMediaElementSource can only run once per element, so each video keeps its graph.
+  const radioGateGraphs = new WeakMap();
+  function radioGateGraph(video) {
+    const existing = radioGateGraphs.get(video);
+    if (existing) return existing;
+    const context = new AudioContext({ latencyHint: "interactive" });
+    const source = context.createMediaElementSource(video);
+    const gain = context.createGain();
+    const highpass = context.createBiquadFilter();
+    highpass.type = "highpass";
+    highpass.frequency.value = RADIO_GATE.highpassHz;
+    const splitter = context.createChannelSplitter(2);
+    const left = context.createAnalyser();
+    const right = context.createAnalyser();
+    left.fftSize = 2048;
+    right.fftSize = 2048;
+    source.connect(gain);
+    gain.connect(context.destination);
+    source.connect(highpass);
+    highpass.connect(splitter);
+    splitter.connect(left, 0);
+    splitter.connect(right, 1);
+    const graph = { context, gain, left, right, leftData: new Float32Array(left.fftSize), rightData: new Float32Array(right.fftSize) };
+    radioGateGraphs.set(video, graph);
+    return graph;
+  }
+  function radioGateSums(graph) {
+    graph.left.getFloatTimeDomainData(graph.leftData);
+    graph.right.getFloatTimeDomainData(graph.rightData);
+    let lr = 0;
+    let ll = 0;
+    let rr = 0;
+    for (let index = 0; index < graph.leftData.length; index += 1) {
+      const l = graph.leftData[index];
+      const r = graph.rightData[index];
+      lr += l * r;
+      ll += l * l;
+      rr += r * r;
+    }
+    const count = graph.leftData.length || 1;
+    return { lr: lr / count, ll: ll / count, rr: rr / count };
+  }
+  function setRadioGateGain(graph, value, seconds) {
+    const param = graph.gain.gain;
+    param.cancelScheduledValues(graph.context.currentTime);
+    param.setTargetAtTime(value, graph.context.currentTime, seconds);
+  }
+  function useRadioGate(videoRef, enabled, onOpenChange) {
+    const onOpenChangeRef = React.useRef(onOpenChange);
+    onOpenChangeRef.current = onOpenChange;
+    React.useEffect(() => {
+      const video = videoRef.current;
+      if (!enabled || !video) return undefined;
+      let graph = null;
+      try {
+        graph = radioGateGraph(video);
+      } catch (error) {
+        logPitWallDebug("player.radio-gate-error", { message: error?.message || String(error || "") });
+        return undefined;
+      }
+      // Start closed so the engine never blares while the first window fills.
+      graph.gain.gain.cancelScheduledValues(graph.context.currentTime);
+      graph.gain.gain.setValueAtTime(RADIO_GATE.closedGain, graph.context.currentTime);
+      graph.context.resume().catch(() => {});
+      let state = RADIO_GATE_INITIAL;
+      let lastAt = performance.now();
+      let lastLogAt = lastAt;
+      let peakCorrelation = 0;
+      const timer = setInterval(() => {
+        const now = performance.now();
+        const wasOpen = state.open;
+        state = radioGateStep(state, radioGateSums(graph), now - lastAt);
+        lastAt = now;
+        const correlation = state.ll * state.rr > 0 ? state.lr / Math.sqrt(state.ll * state.rr) : 0;
+        peakCorrelation = Math.max(peakCorrelation, correlation);
+        if (now - lastLogAt >= 10000) {
+          logPitWallDebug("player.radio-gate", { peakCorrelation: Math.round(peakCorrelation * 100) / 100, energy: state.ll + state.rr, open: state.open, contextState: graph.context.state });
+          lastLogAt = now;
+          peakCorrelation = 0;
+        }
+        if (state.open === wasOpen) return;
+        logPitWallDebug("player.radio-gate", { open: state.open, correlation: Math.round(correlation * 100) / 100 });
+        setRadioGateGain(graph, state.open ? 1 : RADIO_GATE.closedGain, state.open ? RADIO_GATE.attackSeconds : RADIO_GATE.releaseSeconds);
+        onOpenChangeRef.current?.(state.open);
+      }, RADIO_GATE.pollMs);
+      return () => {
+        clearInterval(timer);
+        setRadioGateGain(graph, 1, RADIO_GATE.attackSeconds);
+        if (state.open) onOpenChangeRef.current?.(false);
+      };
+    }, [enabled, videoRef]);
+    // An element's graph lives as long as the element; close it on unmount.
+    React.useEffect(() => {
+      const video = videoRef.current;
+      return () => {
+        const graph = video && radioGateGraphs.get(video);
+        if (!graph) return;
+        radioGateGraphs.delete(video);
+        graph.context.close().catch(() => {});
+      };
+    }, [videoRef]);
+  }
+
+  function PitWallStreamPlayer({ source, muted, volumeLevel = 100, playbackProfile = "main", videoQuality = "medium", onAudioFocus, onReady, onPlaybackState, sync, replaySync, onReplayToggle, onSurfaceToggle, playbackLocked = false, radioGate = false, onRadioGateOpen }) {
     const videoRef = React.useRef(null);
+    // Before the mute effect below, so an onboard switching to radio mode is
+    // already turned down when it unmutes.
+    useRadioGate(videoRef, radioGate, onRadioGateOpen);
     const replayPlaying = replaySync?.playing !== false;
     const replayPlayingRef = React.useRef(replayPlaying);
     replayPlayingRef.current = replayPlaying;
@@ -3774,7 +3926,7 @@
 
   // Radio mode: the onboard stays muted and only opens up while its driver's team radio is on air.
   function RadioModeToggle({ active, onAir, onToggle }) {
-    const title = active ? (onAir ? "Team radio on air" : "Radio only: on") : "Radio only: unmute this onboard for team radio";
+    const title = active ? (onAir ? "Team radio on air" : "Radio only: on") : "Radio only: keep this onboard quiet and bring it up for team radio";
     return (
       <button className="pane__ctl" type="button" data-active={String(Boolean(active))} data-onair={String(Boolean(onAir))} onClick={onToggle} aria-pressed={Boolean(active)} aria-label={title} title={title}>
         <Icon name="radio" size={14} />
@@ -3992,12 +4144,14 @@
 
   const ONBOARD_AUTO_VALUE = "__auto__";
   function OnboardPane({ feed, code, focus, telemetry, channel, streamUrl, audioActive, audioVolume, onAudioFocus, onAudioVolumeChange, onConfigureStream, expanded, onExpand,
-    visible = true, style, zone, driverOptions = [], onDriverChange, driverAuto = false, audioFocused, radioMode = false, radioOnAir = false, onRadioModeToggle,
+    visible = true, style, zone, driverOptions = [], onDriverChange, driverAuto = false, audioFocused, radioMode = false, radioGate = false, onRadioModeToggle,
     replaySync, onReplayToggle, onReplaySeek, replayLapAt, onSurfaceToggle, onPlayerReady, syncKey, syncDebug, syncTarget, syncMetrics, onSyncMetrics, onSyncAdjust, onSyncReset,
     timingRows = [], sectorCounts = null, sessionKind = "", videoQuality, lockAspect = false, onLockAspectToggle, feedTickerOn = false, onToggleFeedTicker, playbackLocked = false }) {
     const [telemetryOn, setTelemetryOn] = React.useState(Boolean(telemetry));
     const [localLockAspect, setLocalLockAspect] = React.useState(false);
     const [streamReady, setStreamReady] = React.useState(false);
+    const [radioGateOpen, setRadioGateOpen] = React.useState(false);
+    const radioOnAir = radioGate && radioGateOpen;
     const descriptor = streamDescriptor(streamUrl);
     const manifestUrl = descriptor?.manifestUrl || "";
     const effectiveLockAspect = onLockAspectToggle ? Boolean(lockAspect) : localLockAspect;
@@ -4018,7 +4172,7 @@
         }}>
         <div className="pane__feed" />
         <div className="pane__scan" />
-        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} playbackProfile="onboard" videoQuality={videoQuality} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle} onSurfaceToggle={onSurfaceToggle} playbackLocked={playbackLocked}
+        {descriptor && <PitWallStreamPlayer source={descriptor} muted={!audioActive} volumeLevel={audioVolume} playbackProfile="onboard" videoQuality={videoQuality} radioGate={radioGate} onRadioGateOpen={setRadioGateOpen} onAudioFocus={onAudioFocus} replaySync={replaySync} onReplayToggle={onReplayToggle} onSurfaceToggle={onSurfaceToggle} playbackLocked={playbackLocked}
           onReady={(video) => onPlayerReady?.(syncKey, video)} onPlaybackState={setStreamReady}
           sync={{ targetLatency: syncTarget, onMetrics: (metrics) => onSyncMetrics?.(syncKey, metrics) }} />}
         <div className="pane__controls">
@@ -5727,7 +5881,6 @@
     }, [observedTimingMiniSectorCounts, timingMiniSectorCountKey]);
     noteBestSectors(timingRows, `${replaySync.mode}|${activeRaceName}|${activeSessionKind}|${sessionClock?.qualifyingPart || ""}`);
     const activeTimingData = replaySync.mode === "replay" ? replayTimingData : liveTimingData;
-    const teamRadioCodes = Array.isArray(activeTimingData?.teamRadioCodes) ? activeTimingData.teamRadioCodes : [];
     const timingCatchingUp = Boolean(activeTimingData?.catchingUp);
     const timingCatchUpRemaining = timingCatchingUp ? liveTimingCatchUpRemainingForDisplay(activeTimingData, clockTick) : null;
     const timingCatchUpRemainingLabel = formatLiveTimingCatchUpRemaining(timingCatchUpRemaining);
@@ -6415,8 +6568,9 @@
       const isDriverOnboard = !p.broadcast && !p.channel;
       const radioKey = p.slot || paneKey;
       const radioMode = isDriverOnboard && Boolean(radioModePanes[radioKey]);
-      const radioOnAir = radioMode && teamRadioCodes.includes(p.code);
       const audioFocused = audioFeed === key && audioVolume > 0;
+      // Radio mode plays the onboard alongside the focused feed, held down by the radio gate.
+      const radioGate = radioMode && !audioFocused;
       return (
         <Pane key={paneKey} {...p}
           visible={p.visible !== false}
@@ -6426,13 +6580,13 @@
           onDriverChange={(value) => changeOnboardDriver(p, value)}
           driverAuto={isDriverOnboard && onboardDriverIsAuto(p)}
           radioMode={radioMode}
-          radioOnAir={radioOnAir}
+          radioGate={radioGate}
           onRadioModeToggle={isDriverOnboard ? () => setRadioModePanes((current) => ({ ...current, [radioKey]: !current[radioKey] })) : undefined}
           telemetry={(p.telemetry || p.feed === "Onboard") && telemetryDefault}
           streamUrl={streamSources[key] || resolvedFeedForKey(key, p.code)}
           audioFocused={audioFocused && p.visible !== false}
-          audioActive={(audioFocused || radioOnAir) && p.visible !== false}
-          audioVolume={radioOnAir && !audioFocused && audioVolume <= 0 ? 100 : audioVolume}
+          audioActive={(audioFocused || radioGate) && p.visible !== false}
+          audioVolume={radioGate && audioVolume <= 0 ? 100 : audioVolume}
           onAudioFocus={() => focusAudioFeed(key)}
           onAudioVolumeChange={(value) => changeAudioVolume(key, value)}
           onConfigureStream={() => configureStream(key, label)}

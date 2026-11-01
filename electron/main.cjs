@@ -9528,7 +9528,7 @@ function scopedRequestHeaders(headers = {}) {
 
 function guessF1TvDriverCode(targetUrl) {
   const text = String(targetUrl || "").toUpperCase();
-  const match = text.match(/(?:^|[^A-Z])(VER|PER|TSU|HAD|RUS|ANT|LEC|HAM|NOR|PIA|STR|ALO|GAS|COL|ALB|SAI|LAW|LIN|HUL|BOR|OCO|BEA|BOT)(?:[^A-Z]|$)/);
+  const match = text.match(/(?:^|[^A-Z])(VER|PER|TSU|HAD|RUS|ANT|LEC|HAM|NOR|PIA|STR|ALO|GAS|COL|ALB|SAI|LAW|LIN|HUL|BOR|OCO|BEA|HIR|BOT)(?:[^A-Z]|$)/);
   return match ? match[1] : "";
 }
 
@@ -9553,6 +9553,7 @@ const F1TV_DRIVER_ALIASES = [
   ["BOR", "gabriel bortoleto", "bortoleto"],
   ["OCO", "esteban ocon", "ocon"],
   ["BEA", "oliver bearman", "bearman"],
+  ["HIR", "ryo hirakawa", "hirakawa"],
   ["PER", "sergio perez", "sergio pérez", "perez", "pérez"],
   ["BOT", "valtteri bottas", "bottas"],
 ];

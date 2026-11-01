@@ -95,7 +95,7 @@ function loadPitWallData() {
 const data = loadPitWallData();
 const expectedCodes = [
   "VER", "HAD", "RUS", "ANT", "LEC", "HAM", "NOR", "PIA", "STR", "ALO", "GAS",
-  "COL", "ALB", "SAI", "LAW", "LIN", "HUL", "BOR", "OCO", "BEA", "PER", "BOT",
+  "COL", "ALB", "SAI", "LAW", "LIN", "HUL", "BOR", "OCO", "BEA", "HIR", "PER", "BOT",
 ];
 const expectedRoster = {
   VER: ["Max Verstappen", "Red Bull Racing", 3],
@@ -118,6 +118,7 @@ const expectedRoster = {
   BOR: ["Gabriel Bortoleto", "Audi", 5],
   OCO: ["Esteban Ocon", "Haas F1 Team", 31],
   BEA: ["Oliver Bearman", "Haas F1 Team", 87],
+  HIR: ["Ryo Hirakawa", "Haas F1 Team", 50],
   PER: ["Sergio Perez", "Cadillac", 11],
   BOT: ["Valtteri Bottas", "Cadillac", 77],
 };
@@ -126,7 +127,7 @@ const expectedConstructors = [
   "Racing Bulls", "Alpine", "Haas F1 Team", "Audi", "Cadillac",
 ];
 
-assert.equal(data.drivers.length, expectedCodes.length, "2026 roster should have 22 drivers");
+assert.equal(data.drivers.length, expectedCodes.length, "2026 roster should list every driver who has raced, including stand-ins");
 assert.deepEqual(Array.from(data.drivers, (driver) => driver.code).sort(), expectedCodes.slice().sort());
 assert.equal(data.byCode.TSU, undefined, "Tsunoda should not be in the 2026 roster");
 assert.equal(data.byCode.HAD.team, "Red Bull Racing");
@@ -7998,6 +7999,19 @@ assert.match(preload, /replayTiming:/, "Preload should expose replay timing snap
 assert.match(preload, /liveTiming: \(options = \{\}\)/, "Preload should expose fast live timing snapshots with latency options to the renderer");
 assert.match(mainProcess, /streamItems/, "F1 TV resolver should preserve per-stream metadata from playback responses");
 assert.match(mainProcess, /driverCodeFromF1TvText/, "F1 TV resolver should infer onboard driver codes from playback response labels");
+{
+  const decodedF1TvUrlText = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "decodedF1TvUrlText")})`, { Buffer });
+  const guessF1TvDriverCode = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "guessF1TvDriverCode")})`);
+  const aliasesSource = mainProcess.match(/const F1TV_DRIVER_ALIASES = (\[[\s\S]*?\n\]);/)[1];
+  const driverCodeFromF1TvText = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "driverCodeFromF1TvText")})`, {
+    decodedF1TvUrlText,
+    guessF1TvDriverCode,
+    F1TV_DRIVER_ALIASES: vm.runInNewContext(aliasesSource),
+  });
+  assert.equal(driverCodeFromF1TvText("title:HIR channel:1042"), "HIR", "Stand-in Hirakawa's onboard should map by TLA");
+  assert.equal(driverCodeFromF1TvText("title:Ryo Hirakawa"), "HIR", "Stand-in Hirakawa's onboard should map by name");
+  assert.equal(driverCodeFromF1TvText("title:Oliver Bearman"), "BEA", "Bearman's onboard should still map");
+}
 assert.match(source["Weekend.jsx"], /leader\.image/, "Weekend race-control leader avatar should use the real driver image when available");
 for (const [name, rendererSource] of Object.entries(source)) {
   assert.doesNotMatch(rendererSource, /Loaded leader/, `${name} should not render a loaded-leader driver block`);

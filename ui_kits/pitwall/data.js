@@ -56,6 +56,7 @@
     BOR: "https://media.formula1.com/image/upload/c_fill%2Cw_720/q_auto/v1740000001/common/f1/2026/audi/gabbor01/2026audigabbor01right.webp",
     OCO: "https://media.formula1.com/image/upload/c_fill%2Cw_720/q_auto/v1740000001/common/f1/2026/haas/estoco01/2026haasestoco01right.webp",
     BEA: "https://media.formula1.com/image/upload/c_fill%2Cw_720/q_auto/v1740000001/common/f1/2026/haas/olibea01/2026haasolibea01right.webp",
+    HIR: "https://media.formula1.com/image/upload/c_fill%2Cw_720/q_auto/v1740000001/common/f1/2026/haas/ryohir01/2026haasryohir01right.webp",
     PER: "https://media.formula1.com/image/upload/c_fill%2Cw_720/q_auto/v1740000001/common/f1/2026/cadillac/serper01/2026cadillacserper01right.webp",
     BOT: "https://media.formula1.com/image/upload/c_fill%2Cw_720/q_auto/v1740000001/common/f1/2026/cadillac/valbot01/2026cadillacvalbot01right.webp",
   };
@@ -109,6 +110,7 @@
     makeDriver("BOR", "Gabriel Bortoleto", 5, "Audi", T.audi, "AUD", LOGO.audi),
     makeDriver("OCO", "Esteban Ocon", 31, "Haas F1 Team", T.haas, "HAS", LOGO.haas),
     makeDriver("BEA", "Oliver Bearman", 87, "Haas F1 Team", T.haas, "HAS", LOGO.haas),
+    makeDriver("HIR", "Ryo Hirakawa", 50, "Haas F1 Team", T.haas, "HAS", LOGO.haas),
     makeDriver("PER", "Sergio Perez", 11, "Cadillac", T.cadillac, "CAD", LOGO.cadillac),
     makeDriver("BOT", "Valtteri Bottas", 77, "Cadillac", T.cadillac, "CAD", LOGO.cadillac),
   ];

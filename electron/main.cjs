@@ -1192,7 +1192,12 @@ function requestText(targetUrl, timeout = 8500, headers = {}, redirectsLeft = MA
           reject(new Error(`Too many redirects for ${targetUrl}`));
           return;
         }
-        requestText(new URL(res.headers.location, targetUrl).href, timeout, headers, redirectsLeft - 1).then(resolve, reject);
+        const redirectUrl = new URL(res.headers.location, targetUrl);
+        // Credentials stay with the host they were meant for.
+        const redirectHeaders = redirectUrl.host === new URL(targetUrl).host
+          ? headers
+          : Object.fromEntries(Object.entries(headers).filter(([name]) => name.toLowerCase() !== "authorization"));
+        requestText(redirectUrl.href, timeout, redirectHeaders, redirectsLeft - 1).then(resolve, reject);
         return;
       }
       if (res.statusCode < 200 || res.statusCode >= 300) {
@@ -3993,8 +3998,26 @@ function createF1TimingWebSocket(targetUrl, headers = {}, timeout = 15000) {
   return client;
 }
 
-function f1TimingRequestText(targetUrl, timeout = 18000, headers = {}) {
-  return requestText(targetUrl, timeout, f1TimingHeaders(headers));
+// The livetiming static archive answers 401 without the F1 TV subscription
+// token (seen from 2026-11-01). The token goes only to that archive.
+function isF1TimingArchiveUrl(targetUrl) {
+  try {
+    const url = new URL(targetUrl);
+    return url.protocol === "https:" && url.hostname === "livetiming.formula1.com" && url.pathname.startsWith("/static/");
+  } catch {
+    return false;
+  }
+}
+
+async function f1TimingArchiveAuthHeaders(targetUrl) {
+  if (!isF1TimingArchiveUrl(targetUrl)) return {};
+  const token = String(await getF1TvSubscriptionToken().catch(() => "") || "").trim();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function f1TimingRequestText(targetUrl, timeout = 18000, headers = {}) {
+  const authHeaders = await f1TimingArchiveAuthHeaders(targetUrl);
+  return requestText(targetUrl, timeout, f1TimingHeaders({ ...authHeaders, ...headers }));
 }
 
 function f1TimingDatePart(value) {
@@ -4150,9 +4173,10 @@ function parseF1TimingJsonStreamPreview(text, maxEntries = 2) {
     });
 }
 
-function f1TimingRequestJsonStreamEntries(targetUrl, options = {}) {
+async function f1TimingRequestJsonStreamEntries(targetUrl, options = {}) {
   const targetSeconds = finiteNumber(options.targetSeconds);
   const stopSeconds = targetSeconds == null ? Infinity : targetSeconds + Number(options.bufferSeconds ?? 2);
+  const authHeaders = await f1TimingArchiveAuthHeaders(targetUrl);
   return new Promise((resolve, reject) => {
     const endpoint = new URL(targetUrl);
     const entries = [];
@@ -4182,7 +4206,7 @@ function f1TimingRequestJsonStreamEntries(targetUrl, options = {}) {
       return false;
     };
     const req = https.get(targetUrl, {
-      headers: f1TimingHeaders(),
+      headers: f1TimingHeaders(authHeaders),
       timeout: Number(options.timeout || 18000),
     }, (res) => {
       res.setEncoding("utf8");

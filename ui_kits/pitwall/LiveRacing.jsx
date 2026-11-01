@@ -6556,6 +6556,12 @@
         return rest;
       });
     }
+    // Turning radio mode on hands the main sound back to the F1 TV feed, so the
+    // gated onboard plays next to it instead of replacing it.
+    function toggleRadioMode(radioKey, audioKey, active) {
+      setRadioModePanes((current) => ({ ...current, [radioKey]: !active }));
+      if (!active && audioFeed === audioKey) setAudioFeed("WORLD");
+    }
     function onboardDriverIsAuto(p) {
       if (p.custom) return p.customSource?.type === "smart-onboard";
       return !(p.slot && D.byCode[onboardOverrides[p.slot]]);
@@ -6569,8 +6575,8 @@
       const radioKey = p.slot || paneKey;
       const radioMode = isDriverOnboard && Boolean(radioModePanes[radioKey]);
       const audioFocused = audioFeed === key && audioVolume > 0;
-      // Radio mode plays the onboard alongside the focused feed, held down by the radio gate.
-      const radioGate = radioMode && !audioFocused;
+      // Radio mode always plays the onboard through the radio gate, alongside the focused feed.
+      const radioGate = radioMode;
       return (
         <Pane key={paneKey} {...p}
           visible={p.visible !== false}
@@ -6581,7 +6587,7 @@
           driverAuto={isDriverOnboard && onboardDriverIsAuto(p)}
           radioMode={radioMode}
           radioGate={radioGate}
-          onRadioModeToggle={isDriverOnboard ? () => setRadioModePanes((current) => ({ ...current, [radioKey]: !current[radioKey] })) : undefined}
+          onRadioModeToggle={isDriverOnboard ? () => toggleRadioMode(radioKey, key, radioMode) : undefined}
           telemetry={(p.telemetry || p.feed === "Onboard") && telemetryDefault}
           streamUrl={streamSources[key] || resolvedFeedForKey(key, p.code)}
           audioFocused={audioFocused && p.visible !== false}

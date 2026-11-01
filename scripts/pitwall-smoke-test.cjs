@@ -6814,6 +6814,19 @@ assert.match(source["LiveRacing.jsx"], /const audioFocused = audioFeed === key &
   radioGateSandbox.radioGateStep(frozen, voice, 25, gateConfig);
   assert.equal(frozen.ll, 0, "Gate steps should return new state rather than mutating it");
 }
+assert.match(source["LiveRacing.jsx"], /const radioGate = radioMode;/, "Radio mode should gate the onboard even when it holds the audio focus");
+assert.match(source["LiveRacing.jsx"], /function toggleRadioMode\(radioKey, audioKey, active\) \{[\s\S]*?if \(!active && audioFeed === audioKey\) setAudioFeed\("WORLD"\);/, "Turning radio mode on should hand the main sound back to the F1 TV feed");
+{
+  const mainForArchive = fs.readFileSync(path.join(root, "electron/main.cjs"), "utf8");
+  const archiveSandbox = vm.runInNewContext(`(() => { ${extractNamedFunction(mainForArchive, "isF1TimingArchiveUrl")}; return { isF1TimingArchiveUrl }; })()`, { URL });
+  assert.equal(archiveSandbox.isF1TimingArchiveUrl("https://livetiming.formula1.com/static/2026/x/Index.json"), true, "The timing archive should get the F1 TV token");
+  assert.equal(archiveSandbox.isF1TimingArchiveUrl("https://livetiming.formula1.com/signalrcore/negotiate"), false, "Only the static archive should get the token");
+  assert.equal(archiveSandbox.isF1TimingArchiveUrl("https://livetiming.formula1.com.evil.example/static/x"), false, "Look-alike hosts must never get the token");
+  assert.equal(archiveSandbox.isF1TimingArchiveUrl("http://livetiming.formula1.com/static/x"), false, "The token should only travel over HTTPS");
+  assert.match(mainForArchive, /async function f1TimingRequestText[\s\S]*?f1TimingArchiveAuthHeaders\(targetUrl\)/, "Archive text requests should attach the archive auth headers");
+  assert.match(mainForArchive, /async function f1TimingRequestJsonStreamEntries[\s\S]*?headers: f1TimingHeaders\(authHeaders\)/, "Archive stream requests should attach the archive auth headers");
+  assert.match(mainForArchive, /redirectUrl\.host === new URL\(targetUrl\)\.host[\s\S]*?name\.toLowerCase\(\) !== "authorization"/, "Redirects to another host should drop the Authorization header");
+}
 assert.match(source["LiveRacing.jsx"], /useRadioGate\(videoRef, radioGate, onRadioGateOpen\);[\s\S]*?React\.useEffect\(\(\) => \{\s*if \(!videoRef\.current\) return;\s*videoRef\.current\.volume/, "The radio gate should be set up before the player unmutes");
 assert.match(source["LiveRacing.jsx"], /highpass\.frequency\.value = RADIO_GATE\.highpassHz;[\s\S]*splitter\.connect\(left, 0\);\s*splitter\.connect\(right, 1\);/, "The radio gate should compare high-passed left and right channels");
 assert.match(mainProcess, /line\?\.KnockedOut/, "F1 live timing rows should preserve knocked-out state for all knocked-out drivers");

@@ -1,14 +1,14 @@
 {
-  "currentRelease": "1.1.26",
+  "currentRelease": "1.1.27",
   "releases": [
     {
-      "version": "1.1.26",
+      "version": "1.1.27",
       "updateTo": {
-        "version": "1.1.26",
-        "pub_date": "2026-11-01T22:10:22.526Z",
-        "notes": "Apexline 1.1.26",
-        "name": "Apexline 1.1.26",
-        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.26-mac-arm64.zip"
+        "version": "1.1.27",
+        "pub_date": "2026-11-02T02:59:34.616Z",
+        "notes": "Apexline 1.1.27 for Apple silicon Macs. Quieter interface across every screen, and fixes for gap deltas, the season round count, the session countdown label and the Track Map circuit facts card. Download the zip, unzip it and drag Apexline to Applications.",
+        "name": "Apexline 1.1.27",
+        "url": "https://apexline.io/updates/darwin/arm64/Apexline-1.1.27-mac-arm64.zip"
       }
     }
   ]

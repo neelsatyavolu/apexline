@@ -14,7 +14,7 @@
     .wk { display: flex; flex-direction: column; gap: var(--space-9); min-width: 0; }
     .wk, .wk > *, .wk__cols > *, .wk__rail { min-width: 0; }
     .wk__head { display: flex; align-items: center; gap: var(--space-7); flex-wrap: wrap; }
-    .wk__title { font-family: var(--font-display); font-weight: 800; font-size: var(--text-2xl); letter-spacing: -0.01em; color: var(--text-strong); margin: 0; }
+    .wk__title { font-family: var(--font-display); font-weight: 600; font-size: var(--text-2xl); letter-spacing: -0.01em; color: var(--text-strong); margin: 0; }
     .wk__sub { display: flex; align-items: center; gap: var(--space-5); color: var(--text-tertiary); font-size: var(--text-sm); }
     .wk__toggle { margin-left: auto; }
     .wk__kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-7); }
@@ -23,7 +23,7 @@
     .wk-lap { display: flex; align-items: center; gap: var(--space-6); width: 100%; }
     .wk-lap__n { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-sm); color: var(--text-primary); white-space: nowrap; font-variant-numeric: tabular-nums; }
     .wk-lap__track { position: relative; flex: 1; height: 6px; border-radius: var(--radius-pill); background: var(--bg-sunken); overflow: hidden; }
-    .wk-lap__fill { position: absolute; inset: 0 auto 0 0; border-radius: var(--radius-pill); background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #fff)); box-shadow: 0 0 10px var(--blue-glow); }
+    .wk-lap__fill { position: absolute; inset: 0 auto 0 0; border-radius: var(--radius-pill); background: var(--accent); }
     .wk-lap__rem { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--text-tertiary); white-space: nowrap; }
     .wk-rc { display: flex; flex-direction: column; gap: var(--space-5); }
     .wk-rc__row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); padding: var(--space-5) 0; border-bottom: 1px solid var(--border-subtle); }
@@ -31,23 +31,23 @@
     .wk-rc__k { display: flex; align-items: center; gap: var(--space-5); font-size: var(--text-sm); color: var(--text-secondary); }
     .wk-rc__v { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-md); color: var(--text-primary); font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: var(--space-5); }
     .wk-battle { display: flex; align-items: center; gap: var(--space-6); }
-    .wk-battle__vs { font-family: var(--font-display); font-weight: 800; font-size: var(--text-sm); color: var(--text-tertiary); }
+    .wk-battle__vs { font-family: var(--font-display); font-weight: 600; font-size: var(--text-sm); color: var(--text-tertiary); }
     .wk-battle__gap { margin-left: auto; text-align: right; }
     .wk-wx { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-6); }
     .wk-wx__c { display: flex; align-items: center; gap: var(--space-6); padding: var(--space-6); border-radius: var(--radius-sm); background: var(--surface-raised); border: 1px solid var(--border-subtle); }
     .wk-wx__ic { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--accent); flex: none; }
     .wk-wx__v { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-lg); color: var(--text-primary); }
-    .wk-wx__l { font-size: var(--text-2xs); color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; }
-    .wk-hero { position: relative; overflow: hidden; border-radius: var(--radius-lg); border: 1px solid var(--border-default); background: linear-gradient(120% 120% at 90% -10%, var(--accent-soft), transparent 55%), var(--surface-card); padding: var(--space-10); }
-    .wk-hero__eyebrow { display: flex; align-items: center; gap: var(--space-6); font-size: var(--text-2xs); font-weight: 600; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); }
+    .wk-wx__l { font-size: var(--text-2xs); color: var(--text-tertiary); letter-spacing: 0.01em; }
+    .wk-hero { position: relative; overflow: hidden; border-radius: var(--radius-lg); border: 1px solid var(--border-default); background: var(--surface-card); padding: var(--space-10); }
+    .wk-hero__eyebrow { display: flex; align-items: center; gap: var(--space-6); font-size: var(--text-2xs); font-weight: 600; letter-spacing: var(--tracking-caps); color: var(--text-tertiary); }
     .wk-hero__round { color: var(--accent); }
-    .wk-hero__name { font-family: var(--font-display); font-weight: 800; font-size: var(--text-5xl); letter-spacing: -0.02em; line-height: 1; margin: var(--space-6) 0 var(--space-5); color: var(--text-strong); }
+    .wk-hero__name { font-family: var(--font-display); font-weight: 600; font-size: var(--text-5xl); letter-spacing: -0.02em; line-height: 1; margin: var(--space-6) 0 var(--space-5); color: var(--text-strong); }
     .wk-hero__circuit { display: flex; align-items: center; gap: var(--space-5); color: var(--text-secondary); font-size: var(--text-md); }
     .wk-hero__cd { margin-top: var(--space-10); display: flex; align-items: flex-end; gap: var(--space-10); flex-wrap: wrap; }
-    .wk-hero__cdl { font-size: var(--text-2xs); color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px; }
+    .wk-hero__cdl { font-size: var(--text-2xs); color: var(--text-tertiary); letter-spacing: 0.01em; margin-bottom: 8px; }
     .wk-steps { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: var(--space-5); overflow-x: auto; padding-bottom: 2px; }
     .wk-step { appearance: none; -webkit-appearance: none; min-width: 140px; display: flex; flex-direction: column; gap: var(--space-5); padding: var(--space-7); border-radius: var(--radius-md); background: var(--surface-card); border: 1px solid var(--border-subtle); color: inherit; text-align: left; font: inherit; cursor: pointer; }
-    .wk-step[data-next="true"] { border-color: var(--accent-border); background: linear-gradient(160% 120% at 0 0, var(--accent-soft), var(--surface-card) 60%); }
+    .wk-step[data-next="true"] { border-color: var(--accent-border); }
     .wk-step[data-selected="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent), 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent); }
     .wk-step[data-done="true"] { opacity: 0.92; }
     .wk-step__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); }
@@ -63,32 +63,32 @@
     .wk-grow[data-pole="true"] { background: var(--accent-quiet); }
     .wk-grow__time { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-md); color: var(--text-primary); font-variant-numeric: tabular-nums; }
     .wk-grow__gap { width: 72px; text-align: right; font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
-    .wk-grow__gap[data-pole="true"] { color: var(--accent); font-weight: 700; letter-spacing: 0.04em; }
+    .wk-grow__gap[data-pole="true"] { color: var(--accent); font-weight: 600; letter-spacing: 0.04em; }
     .wk-recap-scroll { min-width: 0; max-width: 100%; overflow-x: auto; }
     .wk-recap-table { display: flex; flex-direction: column; min-width: 760px; }
     .wk-recap-head, .wk-recap-row { display: grid; grid-template-columns: 44px minmax(190px, 1fr) 96px 92px 92px 64px 104px; gap: var(--space-6); align-items: center; }
-    .wk-recap-head { padding: var(--space-5) var(--space-7); border-bottom: 1px solid var(--border-default); color: var(--text-tertiary); font-size: var(--text-2xs); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+    .wk-recap-head { padding: var(--space-5) var(--space-7); border-bottom: 1px solid var(--border-default); color: var(--text-tertiary); font-size: var(--text-2xs); font-weight: 600; letter-spacing: var(--tracking-caps); }
     .wk-recap-row { padding: var(--space-5) var(--space-7); border-bottom: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
     .wk-recap-row:hover { background: var(--surface-hover); }
     .wk-recap-row[data-leader="true"] { background: var(--accent-quiet); }
     .wk-recap-pos, .wk-recap-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-    .wk-recap-pos { color: var(--text-tertiary); font-size: var(--text-sm); font-weight: 700; }
-    .wk-recap-mono { color: var(--text-primary); font-size: var(--text-sm); font-weight: 650; white-space: nowrap; }
+    .wk-recap-pos { color: var(--text-tertiary); font-size: var(--text-sm); font-weight: 600; }
+    .wk-recap-mono { color: var(--text-primary); font-size: var(--text-sm); font-weight: 600; white-space: nowrap; }
     .wk-recap-meta { color: var(--text-tertiary); font-size: var(--text-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .wk-recap-loading { min-height: 360px; display: grid; place-items: center; padding: var(--space-9); background: radial-gradient(110% 90% at 50% 0%, var(--accent-soft), transparent 54%), var(--bg-sunken); border-bottom: 1px solid var(--border-default); }
+    .wk-recap-loading { min-height: 360px; display: grid; place-items: center; padding: var(--space-9); background: var(--bg-sunken); border-bottom: 1px solid var(--border-default); }
     .wk-recap-loading__box { width: min(440px, 100%); display: flex; flex-direction: column; gap: var(--space-5); }
-    .wk-recap-loading__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); }
+    .wk-recap-loading__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; letter-spacing: var(--tracking-caps); color: var(--text-tertiary); }
     .wk-recap-loading__track { position: relative; height: 8px; border-radius: var(--radius-pill); overflow: hidden; background: rgba(255,255,255,0.08); box-shadow: var(--inset-top-light); }
-    .wk-recap-loading__fill { position: absolute; inset: 0 auto 0 0; width: 42%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--success) 70%, #fff)); box-shadow: 0 0 14px var(--blue-glow); animation: wk-recap-load 1.15s var(--ease-in-out) infinite; }
+    .wk-recap-loading__fill { position: absolute; inset: 0 auto 0 0; width: 42%; border-radius: inherit; background: var(--accent); animation: wk-recap-load 1.15s var(--ease-in-out) infinite; }
     @keyframes wk-recap-load { 0% { transform: translateX(-105%); } 50% { transform: translateX(72%); } 100% { transform: translateX(240%); } }
     .wk-recap-detail { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-6); padding: var(--space-6) var(--space-7); border-top: 1px solid var(--border-default); background: var(--bg-sunken); }
     .wk-recap-stat { min-width: 0; }
-    .wk-recap-stat__k { font-size: var(--text-2xs); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 4px; }
-    .wk-recap-stat__v { font-family: var(--font-mono); color: var(--text-primary); font-weight: 700; font-size: var(--text-md); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .wk-recap-stat__k { font-size: var(--text-2xs); font-weight: 600; letter-spacing: var(--tracking-caps); color: var(--text-tertiary); margin-bottom: 4px; }
+    .wk-recap-stat__v { font-family: var(--font-mono); color: var(--text-primary); font-weight: 600; font-size: var(--text-md); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .wk-recap-stat__n { color: var(--text-tertiary); font-size: var(--text-xs); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .wk-story { display: flex; gap: var(--space-6); padding: var(--space-6); border-radius: var(--radius-sm); background: var(--surface-raised); border: 1px solid var(--border-subtle); }
     .wk-story__ic { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: var(--radius-sm); background: var(--accent-quiet); color: var(--accent); flex: none; }
-    .wk-story__tag { font-size: var(--text-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--text-tertiary); margin-bottom: 3px; }
+    .wk-story__tag { font-size: var(--text-2xs); font-weight: 600; letter-spacing: var(--tracking-caps); color: var(--text-tertiary); margin-bottom: 3px; }
     .wk-story__txt { font-size: var(--text-sm); color: var(--text-secondary); line-height: 1.42; text-wrap: pretty; }
     .wk-sr { display: flex; flex-direction: column; }
     .wk-sr__row { display: flex; align-items: center; gap: var(--space-6); padding: var(--space-6) var(--space-7); border-radius: var(--radius-sm); }
@@ -99,6 +99,11 @@
     @media (max-width: 1120px) { .wk__kpis { grid-template-columns: repeat(2, 1fr); } .wk__cols { grid-template-columns: minmax(0, 1fr); } .wk-recap-detail { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     `;
     document.head.appendChild(el);
+  }
+
+  function sentenceCase(value) {
+    const text = String(value || "");
+    return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
   }
 
   function pickRace(D, requestedRound) {
@@ -500,7 +505,7 @@
         </div>
 
         <div className="wk__cols">
-          <Card padding="tight" title="Live Timing" subtitle="Full field · gap to leader & interval" aside={<Badge tone={selectedRaceSession?.status === "live" ? "live" : "outline"}>{selectedRaceSession?.kind || "Latest"}</Badge>}>
+          <Card padding="tight" title="Live timing" subtitle="Full field · gap to leader & interval" aside={<Badge tone={selectedRaceSession?.status === "live" ? "live" : "outline"}>{selectedRaceSession?.kind || "Latest"}</Badge>}>
             <div className="wk-lap" style={{ padding: "0 var(--space-6) var(--space-6)" }}>
               <span className="wk-lap__n">{laps && lap ? `LAP ${lap} / ${laps}` : selectedRaceSession?.kind || "SESSION"}</span>
               <span className="wk-lap__track"><span className="wk-lap__fill" style={{ width: pct + "%" }} /></span>
@@ -680,7 +685,7 @@
         <section className="wk-hero">
           <div className="wk-hero__eyebrow">
             <span>Race weekend</span>
-            <span className="wk-hero__round">Round {selectedRace.rnd || D.race?.round || D.seasonSummary?.round || "n/a"} / {D.seasonSummary?.totalRounds || D.schedule?.length || "n/a"}</span>
+            <span className="wk-hero__round">Round {selectedRace.rnd || D.race?.round || D.seasonSummary?.round || "n/a"}{D.seasonSummary?.totalRounds ? ` of ${D.seasonSummary.totalRounds}` : ""}</span>
             <Badge tone={heroCountdownState === "live" ? "live" : "outline"}>{heroCountdownState === "live" ? "Session live" : heroCountdownState === "done" ? "Weekend complete" : "Between sessions"}</Badge>
           </div>
           <h1 className="wk-hero__name">{recapRace.name || D.race?.name || "Formula 1 weekend"}</h1>
@@ -706,7 +711,7 @@
               <button type="button" className="wk-step" key={s.kind} data-done={s.status === "done"} data-next={next} data-selected={s.kind === selectedSessionKind} onClick={() => setSelectedSessionKind(s.kind)}>
                 <div className="wk-step__top">
                   <span className="wk-step__k">{s.kind}</span>
-                  {s.kind === selectedSessionKind ? <Badge tone="accent">SELECTED</Badge> : s.status === "done" ? <span className="wk-step__check"><Icon name="check" size={13} /></span> : <Badge tone={s.status === "live" ? "live" : "outline"}>{s.status === "live" ? "LIVE" : "NEXT"}</Badge>}
+                  {s.kind === selectedSessionKind ? <Badge tone="accent">Selected</Badge> : s.status === "done" ? <span className="wk-step__check"><Icon name="check" size={13} /></span> : <Badge tone={s.status === "live" ? "live" : "outline"}>{s.status === "live" ? "Live" : next ? "Next" : "Later"}</Badge>}
                 </div>
                 <div className="wk-step__day">{[s.day, s.time].filter(Boolean).join(" · ") || "Time pending"}</div>
                 <div className="wk-step__mid">
@@ -721,7 +726,7 @@
 
         <div className="wk__cols">
           <Card padding="tight" title="Session leaderboard" subtitle={[selectedSessionKind || selectedRecapSession?.kind || "Session", selectedAnalytics?.source || (D.timing?.length ? "Live timing fallback" : "Standings fallback")].filter(Boolean).join(" · ")}
-            aside={<Badge tone={analyticsState.loading ? "outline" : selectedAnalytics?.drivers?.length ? "accent" : "outline"}>{analyticsState.loading ? "LOADING" : selectedRecapSession?.status || "recap"}</Badge>}>
+            aside={<Badge tone={analyticsState.loading ? "outline" : selectedAnalytics?.drivers?.length ? "accent" : "outline"}>{analyticsState.loading ? "Loading" : sentenceCase(selectedRecapSession?.status || "recap")}</Badge>}>
             {leaderboardLoading ? (
               <div className="wk-recap-loading" role="progressbar" aria-label={loadingLabel}>
                 <div className="wk-recap-loading__box">

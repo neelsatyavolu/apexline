@@ -19,14 +19,13 @@
     .pw-side__brand { display: flex; align-items: center; gap: var(--space-5); min-height: 96px; padding: 52px var(--space-7) 16px; overflow: hidden; }
     .pw-app--fullscreen .pw-side__brand { min-height: var(--topbar-h); padding: 0 var(--space-7); }
     .pw-side__mark { width: 28px; height: 28px; border-radius: 7px; flex: none; }
-    .pw-side__wm { font-family: var(--font-sans); font-weight: 800; font-size: 20px; letter-spacing: 0; color: var(--text-strong); line-height: 1; white-space: nowrap; }
-    .pw-side__wm i { font-style: normal; color: var(--accent); }
-    .pw-side__nav { display: flex; flex-direction: column; gap: 1px; padding: var(--space-6) var(--space-6); overflow-y: auto; flex: 1; min-height: 0; }
-    .pw-side__sec { font-size: var(--text-2xs); font-weight: 600; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); padding: var(--space-7) var(--space-5) var(--space-4); }
+    .pw-side__wm { font-family: var(--font-sans); font-weight: 600; font-size: 20px; letter-spacing: 0; color: var(--text-strong); line-height: 1; white-space: nowrap; }
+        .pw-side__nav { display: flex; flex-direction: column; gap: 1px; padding: var(--space-6) var(--space-6); overflow-y: auto; flex: 1; min-height: 0; }
+    .pw-side__sec { font-size: var(--text-2xs); font-weight: 600; letter-spacing: var(--tracking-caps); color: var(--text-tertiary); padding: var(--space-7) var(--space-5) var(--space-4); }
     .pw-navitem { display: flex; align-items: center; gap: var(--space-6); padding: var(--space-5) var(--space-6); border-radius: var(--radius-sm); color: var(--text-secondary); cursor: pointer; font-size: var(--text-md); font-weight: 500; border: 1px solid transparent; transition: background var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard); position: relative; }
     .pw-navitem:hover { background: var(--surface-hover); color: var(--text-primary); }
     .pw-navitem[data-active="true"] { background: var(--accent-quiet); color: var(--text-strong); }
-    .pw-navitem[data-active="true"]::before { content: ""; position: absolute; left: -6px; top: 8px; bottom: 8px; width: 3px; border-radius: var(--radius-pill); background: var(--accent); box-shadow: 0 0 10px var(--blue-glow); }
+    .pw-navitem[data-active="true"]::before { content: ""; position: absolute; left: -6px; top: 8px; bottom: 8px; width: 3px; border-radius: var(--radius-pill); background: var(--accent); }
     .pw-navitem__count { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--text-tertiary); }
     .pw-navitem__live { margin-left: auto; }
     .pw-side__foot { border-top: 1px solid var(--border-subtle); padding: var(--space-6); display: flex; align-items: center; gap: var(--space-6); }
@@ -38,7 +37,7 @@
     .pw-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-base); background-image: var(--grad-hero); }
     .pw-top { position: relative; z-index: 100; display: flex; align-items: center; gap: var(--space-7); height: var(--topbar-h); padding: 0 var(--space-9); border-bottom: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--bg-base) 78%, transparent); backdrop-filter: blur(var(--blur-md, 14px)); flex: none; color-scheme: dark; -webkit-app-region: drag; }
     .pw-top :is(button, input, select, textarea, a, [role="button"], .pw-top__search, .pw-searchpop, .pw-top-pop) { -webkit-app-region: no-drag; }
-    .pw-top__title { font-family: var(--font-sans); font-weight: 700; font-size: var(--text-xl); color: var(--text-strong); letter-spacing: 0; }
+    .pw-top__title { font-family: var(--font-sans); font-weight: 600; font-size: var(--text-xl); color: var(--text-strong); letter-spacing: 0; }
     .pw-top__crumb { font-size: var(--text-sm); color: var(--text-tertiary); }
     .pw-top__search { position: relative; display: flex; align-items: center; gap: var(--space-5); height: var(--size-control-sm); padding: 0 var(--space-7); background: var(--bg-sunken); border: 1px solid var(--border-default); border-radius: var(--radius-pill); color: var(--text-tertiary); font-size: var(--text-sm); min-width: 260px; cursor: text; }
     .pw-top__searchbox { appearance: none; -webkit-appearance: none; flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent !important; box-shadow: none; color: var(--text-primary); font-family: var(--font-sans); font-size: var(--text-sm); font-weight: 500; line-height: 1; }
@@ -57,13 +56,13 @@
     .pw-top__icon[data-active="true"] { background: var(--accent-quiet); color: var(--text-accent); }
     .pw-top__dot { position: absolute; top: 7px; right: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); border: 1.5px solid var(--bg-base); }
     .pw-top-pop { position: absolute; top: 42px; right: 0; width: 280px; z-index: 90; border-radius: var(--radius-md); background: var(--surface-overlay); border: 1px solid var(--border-default); box-shadow: var(--shadow-lg); padding: var(--space-6); }
-    .pw-top-pop__t { font-weight: 700; color: var(--text-primary); font-size: var(--text-sm); margin-bottom: var(--space-5); }
+    .pw-top-pop__t { font-weight: 600; color: var(--text-primary); font-size: var(--text-sm); margin-bottom: var(--space-5); }
     .pw-top-pop__item { display: flex; gap: var(--space-5); padding: var(--space-5) 0; border-top: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.35; }
     .pw-top-pop__item:first-of-type { border-top: 0; }
     .pw-body { flex: 1; overflow-y: auto; min-height: 0; }
     .pw-body__inner { padding: var(--space-10) var(--space-12); margin: 0; }
     .pw-update-pop { position: fixed; right: 24px; bottom: 24px; z-index: 120; width: min(340px, calc(100vw - 48px)); border-radius: var(--radius-md); border: 1px solid var(--border-default); background: var(--surface-overlay); box-shadow: var(--shadow-lg); padding: var(--space-7); }
-    .pw-update-pop__head { display: flex; align-items: center; gap: var(--space-5); color: var(--text-primary); font-size: var(--text-sm); font-weight: 700; }
+    .pw-update-pop__head { display: flex; align-items: center; gap: var(--space-5); color: var(--text-primary); font-size: var(--text-sm); font-weight: 600; }
     .pw-update-pop__body { margin-top: var(--space-4); color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.4; }
     .pw-update-pop__actions { display: flex; justify-content: flex-end; gap: var(--space-4); margin-top: var(--space-6); }
     `;
@@ -77,13 +76,13 @@
     { id: "trackmap", label: "Track Map", icon: "pin" },
     { id: "leaderboards", label: "Leaderboards", icon: "trophy" },
     { id: "schedule", label: "Schedule", icon: "calendar", countKey: "schedule" },
-    { sec: "The Grid" },
+    { sec: "The grid" },
     { id: "drivers", label: "Drivers", icon: "user" },
     { id: "teams", label: "Teams", icon: "grid" },
     { sec: "Explore" },
     { id: "news", label: "News", icon: "news", countKey: "news" },
     { id: "analytics", label: "Analytics", icon: "chart" },
-    { id: "copilot", label: "AI Copilot", icon: "sparkles", badge: "AI" },
+    { id: "copilot", label: "AI Copilot", icon: "radio" },
     { sec: "App" },
     { id: "settings", label: "Settings", icon: "settings" },
   ];
@@ -109,7 +108,7 @@
       <aside className="pw-side">
         <div className="pw-side__brand">
           <img className="pw-side__mark" src="../../assets/logo-mark.svg" alt="" />
-          <div className="pw-side__wm">APEX<i>LINE</i></div>
+          <div className="pw-side__wm">Apexline</div>
         </div>
         <nav className="pw-side__nav">
           {NAV.map((n, i) =>
@@ -120,8 +119,7 @@
                 <Icon name={n.icon} size={17} />
                 <span>{n.label}</span>
                 {n.id === "live" && hasCurrentLiveSession && <span className="pw-navitem__live"><Badge tone="live">LIVE</Badge></span>}
-                {n.badge && <span className="pw-navitem__live"><Badge tone="accent">{n.badge}</Badge></span>}
-                {navCount(n) && <span className="pw-navitem__count">{navCount(n)}</span>}
+                                {navCount(n) && <span className="pw-navitem__count">{navCount(n)}</span>}
               </div>
             )
           )}
@@ -150,7 +148,7 @@
       ...(D.constructors || []).map((c) => ({ icon: "trophy", title: c.name, meta: "Constructor · " + c.abbr, screen: "teams", teamAbbr: c.abbr })),
       ...(D.schedule || []).map((r) => ({ icon: "calendar", title: r.name, meta: r.circuit + " · " + r.date, screen: "schedule" })),
       ...(D.news || []).map((n) => ({ icon: "news", title: n.title, meta: n.source + " · " + n.tag, screen: "news" })),
-      { icon: "sparkles", title: "Ask AI Copilot", meta: "Strategy, gaps, projections", screen: "copilot" },
+      { icon: "radio", title: "Ask AI Copilot", meta: "Strategy, gaps, projections", screen: "copilot" },
       { icon: "play", title: "Live Racing", meta: "Open timing and video grid", screen: "live" },
     ].filter((item) => (item.title + " " + item.meta).toLowerCase().includes(q)).slice(0, 6) : [];
 
@@ -168,7 +166,7 @@
         </div>
         <div className="pw-top__search">
           <Icon name="search" size={14} />
-          <input className="pw-top__searchbox" value={query} placeholder="Search drivers, races…" onFocus={() => setOpenPanel("search")}
+          <input className="pw-top__searchbox" value={query} placeholder="Search" onFocus={() => setOpenPanel("search")}
             onChange={(e) => { setQuery(e.target.value); setOpenPanel("search"); }}
             onKeyDown={(e) => { if (e.key === "Enter" && results[0]) choose(results[0]); if (e.key === "Escape") setOpenPanel(null); }} />
           <kbd>⌘K</kbd>

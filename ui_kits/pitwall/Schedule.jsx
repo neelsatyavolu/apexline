@@ -16,12 +16,12 @@
     .race { display: grid; grid-template-columns: 64px 1fr auto; gap: var(--space-8); align-items: center; padding: var(--space-8); border-radius: var(--radius-md); background: var(--surface-card); border: 1px solid var(--border-subtle); transition: var(--tr-surface); cursor: pointer; }
     .race:hover { background: var(--surface-hover); border-color: var(--border-default); }
     .race[data-selected="true"] { border-color: var(--accent-border); box-shadow: var(--glow-accent); }
-    .race[data-live="true"] { border-color: var(--accent-border); background: linear-gradient(100% 100% at 0 0, var(--accent-soft), var(--surface-card) 50%); }
+    .race[data-live="true"] { border-color: var(--accent-border); }
     .race[data-done="true"] { opacity: 0.66; }
     .race__rnd { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: var(--radius-sm); background: var(--bg-sunken); border: 1px solid var(--border-subtle); }
-    .race__rndn { font-family: var(--font-display); font-weight: 800; font-size: var(--text-2xl); color: var(--text-strong); line-height: 1; }
-    .race__rndl { font-size: 9px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.08em; }
-    .race__name { font-family: var(--font-display); font-weight: 700; font-size: var(--text-xl); color: var(--text-primary); letter-spacing: -0.01em; }
+    .race__rndn { font-family: var(--font-display); font-weight: 600; font-size: var(--text-2xl); color: var(--text-strong); line-height: 1; }
+    .race__rndl { font-size: 9px; color: var(--text-tertiary); letter-spacing: 0.01em; }
+    .race__name { font-family: var(--font-display); font-weight: 600; font-size: var(--text-xl); color: var(--text-primary); letter-spacing: -0.01em; }
     .race__meta { display: flex; align-items: center; gap: var(--space-5); margin-top: 3px; color: var(--text-tertiary); font-size: var(--text-sm); }
     .race__right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
     .race__date { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-lg); color: var(--text-primary); }
@@ -110,8 +110,8 @@
       <div className="sched">
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-            <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 22, margin: 0, color: "var(--text-strong)" }}>{D.seasonSummary.season} Calendar</h2>
-            <Badge tone="accent">{D.seasonSummary.round || "—"} / {D.seasonSummary.totalRounds || D.schedule.length || "—"} rounds</Badge>
+            <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 22, margin: 0, color: "var(--text-strong)" }}>{D.seasonSummary.season} Calendar</h2>
+            <span style={{ color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", fontSize: 12 }}>Round {D.seasonSummary.round || "—"} of {D.seasonSummary.totalRounds || D.schedule.length || "—"}</span>
             <div style={{ marginLeft: "auto" }}>
               <Button variant={reminders.includes(selectedRound) ? "quiet" : "secondary"} size="sm" onClick={() => toggleReminder(selectedRound)} iconLeft={<Icon name="bell" size={14} />}>
                 {reminders.includes(selectedRound) ? "Reminder on" : "Remind me"}

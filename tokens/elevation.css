@@ -31,10 +31,10 @@
   --inset-hairline:  inset 0 0 0 1px rgba(255, 255, 255, 0.06);
 
   /* ---- Glow (live / accent / signal) ---- */
-  --glow-accent:  0 0 0 1px rgba(47, 125, 255, 0.5), 0 0 18px var(--blue-glow);
-  --glow-live:    0 0 0 1px rgba(255, 59, 59, 0.55), 0 0 16px rgba(255, 59, 59, 0.4);
-  --glow-fastest: 0 0 0 1px rgba(177, 75, 255, 0.6), 0 0 16px rgba(177, 75, 255, 0.45);
-  --glow-soft:    0 0 24px rgba(47, 125, 255, 0.25);
+  --glow-accent:  0 0 0 1px var(--accent-border);
+  --glow-live:    0 0 0 1px rgba(255, 59, 59, 0.45);
+  --glow-fastest: 0 0 0 1px rgba(177, 75, 255, 0.5);
+  --glow-soft:    0 0 0 0 transparent;
 
   /* ---- Focus ring ---- */
   --ring-width: 2px;  /* @kind spacing */

@@ -23,7 +23,7 @@
     .an button, .an select { font-family: inherit; }
     .an__query { display: grid; grid-template-columns: 1.1fr 0.9fr 1.25fr auto; gap: var(--space-6); align-items: end; padding: var(--space-7); border-radius: var(--radius-md); background: var(--surface-card); border: 1px solid var(--border-default); }
     .an__field { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
-    .an__fieldlabel { display: inline-flex; align-items: center; gap: var(--space-4); font-size: var(--text-2xs); font-weight: 700; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: var(--tracking-caps); }
+    .an__fieldlabel { display: inline-flex; align-items: center; gap: var(--space-4); font-size: var(--text-2xs); font-weight: 600; color: var(--text-tertiary); letter-spacing: var(--tracking-caps); }
     .an__status { display: flex; align-items: center; gap: var(--space-5); min-height: 28px; color: var(--text-tertiary); font-size: var(--text-sm); }
     .an__entity-panel { display: grid; grid-template-columns: 160px 1fr; gap: var(--space-7); align-items: start; padding: var(--space-7); border-radius: var(--radius-md); background: var(--surface-card); border: 1px solid var(--border-subtle); }
     .an__scope-copy { color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.45; }
@@ -31,7 +31,7 @@
     .an__entity { min-height: 54px; appearance: none; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text-primary); display: grid; grid-template-columns: 32px 1fr; gap: var(--space-5); align-items: center; padding: var(--space-5); text-align: left; cursor: pointer; transition: var(--tr-control); }
     .an__entity:hover { border-color: var(--border-strong); background: var(--surface-hover); }
     .an__entity[data-selected="true"] { border-color: var(--_team, var(--accent)); background: color-mix(in srgb, var(--_team, var(--accent)) 18%, var(--surface-card)); box-shadow: inset 3px 0 0 var(--_team, var(--accent)); }
-    .an__entity b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-display); font-size: var(--text-md); font-weight: 800; }
+    .an__entity b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-display); font-size: var(--text-md); font-weight: 600; }
     .an__entity small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font-size: var(--text-xs); }
     .an__kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-7); }
     .an__grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr); gap: var(--space-9); align-items: start; }
@@ -54,43 +54,43 @@
     .sector-detail__driver { min-width: 0; padding: var(--space-4); border: 1px solid var(--border-subtle); border-left: 3px solid var(--_team, var(--accent)); border-radius: var(--radius-sm); background: var(--surface-card); }
     .sector-detail__driver[data-fastest="true"] { border-color: var(--_team, var(--accent)); background: color-mix(in srgb, var(--_team, var(--accent)) 16%, var(--surface-card)); }
     .sector-detail__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); min-width: 0; }
-    .sector-detail__code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-weight: 800; font-family: var(--font-display); }
-    .sector-detail__delta { flex-shrink: 0; color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; }
+    .sector-detail__code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-weight: 600; font-family: var(--font-display); }
+    .sector-detail__delta { flex-shrink: 0; color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; }
     .sector-detail__driver[data-fastest="true"] .sector-detail__delta { color: var(--accent); }
-    .sector-detail__time { display: block; margin-top: 3px; color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-md); font-weight: 800; font-variant-numeric: tabular-nums; }
+    .sector-detail__time { display: block; margin-top: 3px; color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-md); font-weight: 600; font-variant-numeric: tabular-nums; }
 
     .compare { display: flex; flex-direction: column; gap: var(--space-7); }
     .compare__drivers { display: flex; justify-content: space-between; align-items: center; }
     .compare__driver { display: flex; align-items: center; gap: var(--space-5); min-width: 0; }
     .compare__driver b { color: var(--text-primary); }
     .compare__row { display: grid; grid-template-columns: 1fr 74px 1fr; gap: var(--space-6); align-items: center; }
-    .compare__metric { text-align: center; font-size: var(--text-2xs); color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; }
-    .compare__val { display: block; font-family: var(--font-mono); font-weight: 700; font-size: var(--text-lg); color: var(--text-primary); font-variant-numeric: tabular-nums; }
+    .compare__metric { text-align: center; font-size: var(--text-2xs); color: var(--text-tertiary); letter-spacing: 0.01em; }
+    .compare__val { display: block; font-family: var(--font-mono); font-weight: 600; font-size: var(--text-lg); color: var(--text-primary); font-variant-numeric: tabular-nums; }
     .compare__track { height: 7px; border-radius: var(--radius-pill); background: var(--bg-sunken); overflow: hidden; position: relative; margin-top: 5px; }
     .compare__fill { position: absolute; top: 0; bottom: 0; }
 
     .stint { display: grid; grid-template-columns: 74px 1fr; gap: var(--space-6); align-items: center; padding: var(--space-5) 0; }
-    .stint__driver { display: flex; align-items: center; gap: var(--space-5); color: var(--text-primary); font-weight: 800; font-family: var(--font-display); }
+    .stint__driver { display: flex; align-items: center; gap: var(--space-5); color: var(--text-primary); font-weight: 600; font-family: var(--font-display); }
     .stint__bars { display: flex; gap: 4px; min-width: 0; height: 26px; }
-    .stint__seg { min-width: 26px; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: rgba(0,0,0,0.66); font-family: var(--font-mono); font-size: 10px; font-weight: 800; }
+    .stint__seg { min-width: 26px; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: rgba(0,0,0,0.66); font-family: var(--font-mono); font-size: 10px; font-weight: 600; }
 
     .results { display: flex; flex-direction: column; gap: 2px; }
     .results__row { display: grid; grid-template-columns: 38px 1fr 72px 74px; gap: var(--space-5); align-items: center; padding: var(--space-5) var(--space-6); border-radius: var(--radius-sm); }
     .results__row:hover { background: var(--surface-hover); }
-    .results__pos { font-family: var(--font-display); font-weight: 800; color: var(--text-tertiary); }
-    .results__num { font-family: var(--font-mono); font-weight: 700; color: var(--text-primary); text-align: right; font-variant-numeric: tabular-nums; }
+    .results__pos { font-family: var(--font-display); font-weight: 600; color: var(--text-tertiary); }
+    .results__num { font-family: var(--font-mono); font-weight: 600; color: var(--text-primary); text-align: right; font-variant-numeric: tabular-nums; }
     .trace-list, .compact-list { display: flex; flex-direction: column; gap: var(--space-5); }
     .trace-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) 68px; gap: var(--space-5); align-items: center; padding: var(--space-5); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-sunken); }
-    .trace-row__code { display: inline-flex; align-items: center; gap: var(--space-4); min-width: 0; color: var(--text-primary); font-family: var(--font-display); font-weight: 800; }
+    .trace-row__code { display: inline-flex; align-items: center; gap: var(--space-4); min-width: 0; color: var(--text-primary); font-family: var(--font-display); font-weight: 600; }
     .trace-row__swatch { width: 4px; height: 22px; border-radius: 4px; background: var(--_team, var(--accent)); }
     .trace-row__svg { width: 100%; height: 54px; overflow: visible; }
     .trace-row__line { fill: none; stroke: var(--_team, var(--accent)); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
     .trace-row__meta { text-align: right; color: var(--text-tertiary); font-family: var(--font-mono); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
     .compact-row { display: grid; grid-template-columns: 54px repeat(3, minmax(0, 1fr)); gap: var(--space-5); align-items: center; padding: var(--space-5); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-sunken); }
-    .compact-row__code { color: var(--text-primary); font-family: var(--font-display); font-weight: 800; }
+    .compact-row__code { color: var(--text-primary); font-family: var(--font-display); font-weight: 600; }
     .compact-stat { min-width: 0; }
     .compact-stat b { display: block; color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
-    .compact-stat small { display: block; margin-top: 2px; color: var(--text-tertiary); font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: 0.04em; }
+    .compact-stat small { display: block; margin-top: 2px; color: var(--text-tertiary); font-size: var(--text-2xs); letter-spacing: 0.01em; }
     .delta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); }
     .delta-cell { padding: var(--space-5); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-sunken); }
     .delta-cell b { display: block; color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-md); font-variant-numeric: tabular-nums; }
@@ -103,7 +103,7 @@
     .weather-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-5); }
     .weather-cell { padding: var(--space-5); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-sunken); }
     .weather-cell b { display: block; color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-md); }
-    .weather-cell small { color: var(--text-tertiary); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em; }
+    .weather-cell small { color: var(--text-tertiary); font-size: var(--text-xs); letter-spacing: 0.01em; }
     .an__presets { display: flex; flex-direction: column; gap: var(--space-4); }
     .an__preset { width: 100%; appearance: none; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); display: grid; grid-template-columns: 18px 1fr 16px; gap: var(--space-5); align-items: center; padding: var(--space-5) var(--space-6); text-align: left; cursor: pointer; }
     .an__preset:hover { background: var(--surface-hover); color: var(--text-primary); }
@@ -534,9 +534,9 @@
     const selectedTeamInfo = D.constructors.find((team) => team.abbr === selectedTeam) || {};
     const metricRows = [
       { label: "Best", key: "fastestLap", format: formatLap, lower: true },
-      { label: "Avg Lap", key: "avgLap", format: formatLap, lower: true },
-      { label: "Top Speed", key: "topSpeed", format: formatSpeed, lower: false },
-      { label: "Pit Loss", key: "pitLoss", format: formatDelta, lower: true },
+      { label: "Avg lap", key: "avgLap", format: formatLap, lower: true },
+      { label: "Top speed", key: "topSpeed", format: formatSpeed, lower: false },
+      { label: "Pit loss", key: "pitLoss", format: formatDelta, lower: true },
       { label: "Overtakes", key: "overtakes", format: (value) => num(value) == null ? "--" : String(value), lower: false },
     ];
     const sectorValues = chartRows.flatMap((row) => [row.sectors?.s1, row.sectors?.s2, row.sectors?.s3].map(num)).filter((value) => value != null);
@@ -656,10 +656,10 @@
         </div>
 
         <div className="an__kpis">
-          <StatTile label="Fastest lap" value={formatLap(fastest?.fastestLap)} foot={<span style={{ fontSize: 12, color: "var(--t-fastest)" }}>{fastest?.code || "--"}</span>} icon={<Icon name="stopwatch" size={12} />} />
-          <StatTile label="Avg pace" value={formatLap(avgPace)} foot={<span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{selectedRows.length ? "best five clean laps" : "session"}</span>} icon={<Icon name="gauge" size={12} />} />
-          <StatTile label="Top speed" value={formatSpeed(topSpeed?.topSpeed)} foot={<span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>km/h · {topSpeed?.code || "--"}</span>} icon={<Icon name="zap" size={12} />} />
-          <StatTile label="Tyre deg" value={formatDeg(tyreDeg)} accent foot={<span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>s/lap</span>} icon={<Icon name="droplet" size={12} />} />
+          <StatTile label="Fastest lap" value={formatLap(fastest?.fastestLap)} foot={<span style={{ fontSize: 12, color: "var(--t-fastest)" }}>{fastest?.code || "--"}</span>} />
+          <StatTile label="Avg pace" value={formatLap(avgPace)} foot={<span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{selectedRows.length ? "best five clean laps" : "session"}</span>} />
+          <StatTile label="Top speed" value={formatSpeed(topSpeed?.topSpeed)} foot={<span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>km/h · {topSpeed?.code || "--"}</span>} />
+          <StatTile label="Tyre deg" value={formatDeg(tyreDeg)} accent foot={<span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>s/lap</span>} />
         </div>
 
         <div className="an__grid">
@@ -880,7 +880,7 @@
                     <span className="results__pos">{row.position || "--"}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                       <Avatar initials={row.code} number={row.number} ring={row.color} src={row.image} size="sm" />
-                      <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{row.code}</span>
+                      <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{row.code}</span>
                     </div>
                     <span className="results__num">{formatLap(row.fastestLap)}</span>
                     <span className="results__num">{row.laps || "--"} laps</span>
@@ -894,7 +894,7 @@
                 <button className="an__preset" onClick={() => { handleScope("pair"); setSelectedDriverCodes((D.standings || []).slice(0, 2).map((row) => row.code)); }}><Icon name="chart" size={14} /><span>Championship top two</span><Icon name="chevronRight" size={13} /></button>
                 <button className="an__preset" onClick={() => { handleScope("multi"); setSelectedDriverCodes((D.standings || []).slice(0, 3).map((row) => row.code)); }}><Icon name="gauge" size={14} /><span>Top three pace</span><Icon name="chevronRight" size={13} /></button>
                 <button className="an__preset" onClick={() => { handleScope("team"); setSelectedTeam(D.constructors?.[0]?.abbr || selectedTeam); }}><Icon name="filter" size={14} /><span>Leading constructor</span><Icon name="chevronRight" size={13} /></button>
-                <button className="an__preset" onClick={runContextQuery}><Icon name="sparkles" size={14} /><span>Historical context</span><Icon name="chevronRight" size={13} /></button>
+                <button className="an__preset" onClick={runContextQuery}><Icon name="search" size={14} /><span>Historical context</span><Icon name="chevronRight" size={13} /></button>
               </div>
               {insight && <div style={{ margin: "12px", paddingTop: 12, borderTop: "1px solid var(--border-subtle)", color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.45 }}><b style={{ color: "var(--text-primary)" }}>{insight.title}</b><br />{insight.body}</div>}
             </Card>

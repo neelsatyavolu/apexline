@@ -10,13 +10,13 @@
     el.textContent = `
     .tm { display: grid; grid-template-columns: 300px 1fr; gap: var(--space-9); align-items: start; }
 
-    .tm-rail { display: flex; flex-direction: column; gap: var(--space-6); }
-    .tm-rail__list { display: flex; flex-direction: column; gap: 2px; }
+    .tm .tm-rail { display: flex; flex-direction: column; gap: var(--space-6); }
+    .tm .tm-rail__list { display: flex; flex-direction: column; gap: 2px; }
     .tm-row { display: grid; grid-template-columns: 24px 30px 1fr auto; align-items: center; gap: var(--space-6); padding: var(--space-5) var(--space-6); border-radius: var(--radius-sm); cursor: pointer; border: 1px solid transparent; position: relative; transition: background var(--dur-fast) var(--ease-standard); }
     .tm-row:hover { background: var(--surface-hover); }
     .tm-row[data-active="true"] { background: var(--surface-raised); border-color: var(--border-default); }
     .tm-row[data-active="true"]::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px; border-radius: var(--radius-pill); background: var(--_c); }
-    .tm-row__pos { font-family: var(--font-display); font-weight: 800; font-size: var(--text-md); color: var(--text-tertiary); text-align: center; }
+    .tm-row__pos { font-family: var(--font-display); font-weight: 600; font-size: var(--text-md); color: var(--text-tertiary); text-align: center; }
     .tm-row__name { font-weight: 600; color: var(--text-primary); font-size: var(--text-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .tm-row__pts { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-sm); color: var(--text-secondary); }
 
@@ -26,7 +26,7 @@
     .tm-hero__bar { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: var(--_c); }
     .tm-hero__body { position: relative; z-index: 2; padding: var(--space-9) var(--space-10); display: flex; flex-direction: column; gap: var(--space-6); flex: 1; }
     .tm-hero__crumb { display: flex; align-items: center; gap: var(--space-5); }
-    .tm-hero__name { font-family: var(--font-display); font-weight: 800; font-size: clamp(30px, 3.4vw, 46px); line-height: 1; color: var(--text-strong); letter-spacing: -0.01em; }
+    .tm-hero__name { font-family: var(--font-display); font-weight: 600; font-size: clamp(30px, 3.4vw, 46px); line-height: 1; color: var(--text-strong); letter-spacing: -0.01em; }
     .tm-hero__full { font-size: var(--text-md); color: var(--text-tertiary); }
     .tm-hero__logo { position: absolute; right: var(--space-10); top: 50%; transform: translateY(-50%); height: 84px; width: auto; z-index: 1; opacity: 0.96; filter: drop-shadow(0 6px 24px rgba(0,0,0,0.5)); }
 
@@ -44,8 +44,8 @@
     .tm-driver__name { font-weight: 600; color: var(--text-primary); font-size: var(--text-md); }
     .tm-driver__meta { font-size: var(--text-2xs); color: var(--text-tertiary); }
     .tm-driver__pts { text-align: right; }
-    .tm-driver__ptsval { font-family: var(--font-mono); font-weight: 700; font-size: var(--text-lg); color: var(--text-primary); }
-    .tm-driver__ptslab { font-size: var(--text-2xs); color: var(--text-tertiary); text-transform: uppercase; letter-spacing: var(--tracking-caps); }
+    .tm-driver__ptsval { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-lg); color: var(--text-primary); }
+    .tm-driver__ptslab { font-size: var(--text-2xs); color: var(--text-tertiary); letter-spacing: var(--tracking-caps); }
     .tm-empty { padding: var(--space-10); color: var(--text-tertiary); font-size: var(--text-sm); text-align: center; }
     `;
     document.head.appendChild(el);
@@ -69,10 +69,10 @@
 
     const roster = (t.drivers || []).map((c) => profiles[c]).filter(Boolean);
     const career = [
-      { label: "World Titles", value: t.titles, icon: "star" },
-      { label: "Race Wins", value: t.careerWins, icon: "trophy" },
-      { label: "Pole Positions", value: t.poles, icon: "zap" },
-      { label: "Fastest Laps", value: t.fl, icon: "timer" },
+      { label: "World titles", value: t.titles },
+      { label: "Race wins", value: t.careerWins },
+      { label: "Pole positions", value: t.poles },
+      { label: "Fastest laps", value: t.fl },
     ];
 
     function openDriver(code) {
@@ -106,7 +106,7 @@
             <div className="tm-hero__bar" />
             <div className="tm-hero__body">
               <div className="tm-hero__crumb">
-                {t.seasonPos && <Badge tone="accent">P{t.seasonPos} Constructors</Badge>}
+                {t.seasonPos && <Badge tone="accent">P{t.seasonPos} in constructors</Badge>}
                 <Badge tone="outline">{t.power}</Badge>
               </div>
               <div className="tm-hero__name">{t.name}</div>
@@ -119,10 +119,10 @@
 
           {/* Season strip */}
           <div className="tm-grid">
-            <StatTile label="Championship" value={t.seasonPos ? "P" + t.seasonPos : "—"} display icon={<Icon name="trophy" size={14} />} accent />
-            <StatTile label="Points 2026" value={t.seasonPts} icon={<Icon name="zap" size={14} />} />
-            <StatTile label="First Entry" value={t.firstEntry} display icon={<Icon name="calendar" size={14} />} />
-            <StatTile label="Best Finish" value={t.bestFinish} display icon={<Icon name="arrowUp" size={14} />} />
+            <StatTile label="Championship" value={t.seasonPos ? "P" + t.seasonPos : "—"} display accent />
+            <StatTile label="Points 2026" value={t.seasonPts} />
+            <StatTile label="First entry" value={t.firstEntry} display />
+            <StatTile label="Best finish" value={t.bestFinish} display />
           </div>
 
           <div className="tm-cols">
@@ -131,9 +131,9 @@
               <div className="tm-info">
                 <div className="tm-info__row"><span className="tm-info__k">Full name</span><span className="tm-info__v">{t.full}</span></div>
                 <div className="tm-info__row"><span className="tm-info__k">Base</span><span className="tm-info__v">{t.base}</span></div>
-                <div className="tm-info__row"><span className="tm-info__k">Team Principal</span><span className="tm-info__v">{t.chief}</span></div>
-                <div className="tm-info__row"><span className="tm-info__k">Technical Chief</span><span className="tm-info__v">{t.techChief}</span></div>
-                <div className="tm-info__row"><span className="tm-info__k">Power Unit</span><span className="tm-info__v">{t.power}</span></div>
+                <div className="tm-info__row"><span className="tm-info__k">Team principal</span><span className="tm-info__v">{t.chief}</span></div>
+                <div className="tm-info__row"><span className="tm-info__k">Technical chief</span><span className="tm-info__v">{t.techChief}</span></div>
+                <div className="tm-info__row"><span className="tm-info__k">Power unit</span><span className="tm-info__v">{t.power}</span></div>
                 <div className="tm-info__row"><span className="tm-info__k">Chassis</span><span className="tm-info__v">{t.chassis}</span></div>
               </div>
             </Card>
@@ -142,7 +142,7 @@
             <Card title="Constructor honours" subtitle="All-time record">
               <div className="tm-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
                 {career.map((c) => (
-                  <StatTile key={c.label} label={c.label} value={c.value} icon={<Icon name={c.icon} size={14} />} />
+                  <StatTile key={c.label} label={c.label} value={c.value} />
                 ))}
               </div>
             </Card>

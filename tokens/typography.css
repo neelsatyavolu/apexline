@@ -29,8 +29,8 @@
   --fw-regular:  400;  /* @kind other */
   --fw-medium:   500;  /* @kind other */
   --fw-semibold: 600;  /* @kind other */
-  --fw-bold:     700;  /* @kind other */
-  --fw-black:    800;  /* @kind other */
+  --fw-bold:     600;  /* @kind other */
+  --fw-black:    600;  /* @kind other */
 
   /* ---- Line heights ---- */
   --lh-none:    1;     /* @kind other */
@@ -44,5 +44,5 @@
   --tracking-tight:   -0.01em; /* @kind other */
   --tracking-normal:  0em;     /* @kind other */
   --tracking-wide:    0.02em;  /* @kind other */
-  --tracking-caps:    0.14em;  /* @kind other */
+  --tracking-caps:    0.02em;  /* @kind other */
 }

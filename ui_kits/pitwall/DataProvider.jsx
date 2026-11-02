@@ -63,7 +63,7 @@
     .startup-load { min-height: 100vh; display: grid; place-items: center; padding: 32px; background: #07090d; color: var(--text-primary); }
     .startup-load__panel { width: min(400px, 100%); text-align: center; }
     .startup-load__mark { width: 56px; height: 56px; margin: 0 auto 18px; border-radius: 16px; display: block; box-shadow: 0 12px 32px rgba(0,0,0,.35); }
-    .startup-load__kicker { color: var(--accent); font-size: var(--text-2xs); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+    .startup-load__kicker { color: var(--accent); font-size: var(--text-2xs); font-weight: 600; letter-spacing: var(--tracking-caps); }
     .startup-load__title { margin: 10px 0 8px; font-family: var(--font-display); font-size: var(--text-3xl); line-height: 1.05; color: var(--text-strong); }
     .startup-load__copy { margin: 0 auto; max-width: 34ch; color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.45; }
     .startup-load__bar { position: relative; height: 3px; margin: 22px auto 20px; overflow: hidden; border-radius: var(--radius-pill); background: rgba(255,255,255,.08); }
@@ -376,7 +376,7 @@
       schedule,
       sessions: currentRace?.sessions || data.sessions || [],
       race: { ...(data.race || {}), round: currentRace?.rnd || data.race?.round || 0 },
-      seasonSummary: { ...(data.seasonSummary || {}), round: currentRace?.rnd || data.seasonSummary?.round || 0, totalRounds: schedule.length || data.seasonSummary?.totalRounds || 0 },
+      seasonSummary: { ...(data.seasonSummary || {}), round: currentRace?.rnd || data.seasonSummary?.round || 0, totalRounds: Math.max(schedule.length, ...schedule.map((race) => Number(race?.rnd) || 0), Number(data.seasonSummary?.totalRounds) || 0) },
     };
   }
 

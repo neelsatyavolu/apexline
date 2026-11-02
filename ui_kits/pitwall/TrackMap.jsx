@@ -72,29 +72,28 @@
 
     /* Header */
     .tm-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-9); flex: none; }
-    .tm-head__round { font-family: var(--font-mono); font-size: var(--text-2xs); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--accent); }
-    .tm-head__gp { font-family: var(--font-display); font-weight: 800; font-size: var(--text-4xl); color: var(--text-strong); margin: 4px 0 5px; letter-spacing: -0.01em; line-height: 1; }
+    .tm-head__round { font-family: var(--font-mono); font-size: var(--text-2xs); letter-spacing: var(--tracking-caps); color: var(--accent); }
+    .tm-head__gp { font-family: var(--font-display); font-weight: 600; font-size: var(--text-4xl); color: var(--text-strong); margin: 4px 0 5px; letter-spacing: -0.01em; line-height: 1; }
     .tm-head__circuit { display: flex; align-items: center; gap: var(--space-4); font-size: var(--text-sm); color: var(--text-secondary); }
     .tm-head__status { display: flex; align-items: center; gap: var(--space-9); }
     .tm-raceselect { position: relative; display: inline-flex; align-items: center; gap: var(--space-4); min-width: 240px; max-width: 340px; height: 34px; padding: 0 var(--space-5); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text-secondary); box-shadow: var(--inset-top-light); }
     .tm-raceselect svg { flex: none; color: var(--text-tertiary); }
-    .tm-raceselect__select { appearance: none; -webkit-appearance: none; flex: 1; min-width: 0; height: 100%; padding: 0 22px 0 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font-family: var(--font-sans); font-size: var(--text-sm); font-weight: 700; cursor: pointer; }
+    .tm-raceselect__select { appearance: none; -webkit-appearance: none; flex: 1; min-width: 0; height: 100%; padding: 0 22px 0 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font-family: var(--font-sans); font-size: var(--text-sm); font-weight: 600; cursor: pointer; }
     .tm-raceselect__select option { color: var(--text-primary); background: var(--bg-base); }
     .tm-raceselect__chev { position: absolute; right: var(--space-5); pointer-events: none; color: var(--text-tertiary); }
     .tm-head__actions { display: inline-flex; align-items: center; gap: var(--space-5); }
     .tm-replayprogress { display: inline-flex; align-items: center; gap: 8px; width: 212px; height: 34px; padding: 0 10px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text-secondary); box-shadow: var(--inset-top-light); }
-    .tm-replayprogress__label { flex: none; min-width: 68px; font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; color: var(--text-primary); }
+    .tm-replayprogress__label { flex: none; min-width: 68px; font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; color: var(--text-primary); }
     .tm-replayprogress__range { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
-    .tm-replaybtn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid var(--accent-border); border-radius: var(--radius-sm); background: var(--accent-quiet); color: var(--text-primary); font-family: var(--font-sans); font-size: var(--text-sm); font-weight: 800; cursor: pointer; }
+    .tm-replaybtn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid var(--accent-border); border-radius: var(--radius-sm); background: var(--accent-quiet); color: var(--text-primary); font-family: var(--font-sans); font-size: var(--text-sm); font-weight: 600; cursor: pointer; }
     .tm-replaybtn:hover { border-color: var(--accent); background: var(--surface-hover); }
     .tm-replaybtn:disabled { cursor: default; opacity: 0.55; }
     .tm-statline { display: flex; flex-direction: column; gap: var(--space-4); align-items: flex-end; }
     .tm-livebadge { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 8px; }
-    .tm-livedot { width: 7px; height: 7px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 0 var(--live-glow); animation: tm-pulse 1.4s infinite; }
-    @keyframes tm-pulse { 0% { box-shadow: 0 0 0 0 var(--live-glow); } 70% { box-shadow: 0 0 0 7px rgba(255,59,59,0); } 100% { box-shadow: 0 0 0 0 rgba(255,59,59,0); } }
-    .tm-flag { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 700; letter-spacing: var(--tracking-wide); color: var(--flag-green); }
+    .tm-livedot { width: 7px; height: 7px; border-radius: 50%; background: var(--live); }
+    .tm-flag { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; letter-spacing: var(--tracking-wide); color: var(--flag-green); }
     .tm-lap { display: flex; align-items: baseline; gap: 5px; }
-    .tm-lap__big { font-family: var(--font-mono); font-weight: 700; font-size: var(--text-5xl); color: var(--text-strong); line-height: 0.9; }
+    .tm-lap__big { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-5xl); color: var(--text-strong); line-height: 0.9; }
     .tm-lap__sml { font-family: var(--font-mono); font-size: var(--text-xl); color: var(--text-tertiary); }
     .tm-lap__lbl { font-size: var(--text-2xs); letter-spacing: var(--tracking-caps); color: var(--text-tertiary); margin-left: 4px; align-self: center; }
     .tm-wx { display: flex; flex-direction: column; gap: 3px; font-size: var(--text-xs); color: var(--text-secondary); text-align: right; }
@@ -102,14 +101,14 @@
     .tm-wx__dry { color: var(--success); font-weight: 600; }
     .tm-cd { display: flex; gap: var(--space-6); }
     .tm-cd__seg { display: flex; flex-direction: column; align-items: center; }
-    .tm-cd__n { font-family: var(--font-mono); font-weight: 700; font-size: var(--text-4xl); color: var(--text-strong); line-height: 1; }
+    .tm-cd__n { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-4xl); color: var(--text-strong); line-height: 1; }
     .tm-cd__l { font-size: var(--text-2xs); letter-spacing: var(--tracking-caps); color: var(--text-tertiary); margin-top: 3px; }
 
     /* Stage: map + rail */
     .tm-stage { flex: 1; display: grid; grid-template-columns: 1fr var(--timing-sidebar-w); gap: var(--space-8); min-height: 0; }
     .tm-mapwrap { min-width: 0; min-height: 0; display: flex; }
     .tm-mapcard { position: relative; flex: 1; min-height: 0; border: 1px solid var(--border-default); border-radius: var(--radius-lg);
-      background-image: var(--grad-carbon), radial-gradient(120% 120% at 50% 0%, rgba(45,123,255,0.06), transparent 55%); background-color: var(--bg-1); overflow: hidden; }
+      background-image: var(--grad-carbon); background-color: var(--bg-1); overflow: hidden; }
     .tm-svg { width: 100%; height: 100%; display: block; }
     .tm-mapnote { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: var(--space-9); }
     .tm-mapnote__in { max-width: 320px; display: flex; flex-direction: column; align-items: center; gap: var(--space-5); color: var(--text-tertiary); font-size: var(--text-sm); line-height: 1.5; }
@@ -119,20 +118,20 @@
     .tm-turn__lead { stroke: rgba(174,182,198,0.32); stroke-width: 1; }
     .tm-turn__dot { fill: var(--text-2); }
     .tm-turn__badge { fill: var(--bg-3); stroke: var(--border-strong); stroke-width: 1; }
-    .tm-turn__num { font-family: var(--font-mono); font-weight: 700; font-size: 11px; fill: var(--text-1); }
+    .tm-turn__num { font-family: var(--font-mono); font-weight: 600; font-size: 11px; fill: var(--text-1); }
     .tm-turn__name { font-family: var(--font-sans); font-weight: 600; font-size: 10px; fill: var(--text-2); letter-spacing: 0.01em; }
     .tm-turn[data-active="true"] .tm-turn__badge { fill: var(--accent); stroke: var(--accent-hover); }
     .tm-turn[data-active="true"] .tm-turn__num { fill: #fff; }
     .tm-turn[data-active="true"] .tm-turn__dot { fill: var(--accent); }
     .tm-turn:hover .tm-turn__badge { stroke: var(--accent); }
-    .tm-sectext { font-family: var(--font-mono); font-weight: 700; font-size: 10px; fill: var(--accent); }
-    .tm-sftext { font-family: var(--font-mono); font-weight: 700; font-size: 10px; fill: var(--text-1); letter-spacing: 0.12em; }
+    .tm-sectext { font-family: var(--font-mono); font-weight: 600; font-size: 10px; fill: var(--accent); }
+    .tm-sftext { font-family: var(--font-mono); font-weight: 600; font-size: 10px; fill: var(--text-1); letter-spacing: 0.12em; }
 
     .tm-car { cursor: pointer; transition: opacity 0.2s; }
     .tm-car[data-dim="true"] { opacity: 0.34; }
     .tm-car__halo { opacity: 0.28; }
-    .tm-car__num { font-family: var(--font-mono); font-weight: 700; font-size: 9.5px; fill: #fff; paint-order: stroke; stroke: rgba(0,0,0,0.5); stroke-width: 0.5px; }
-    .tm-car__code { font-family: var(--font-display); font-weight: 700; font-size: 10px; }
+    .tm-car__num { font-family: var(--font-mono); font-weight: 600; font-size: 9.5px; fill: #fff; paint-order: stroke; stroke: rgba(0,0,0,0.5); stroke-width: 0.5px; }
+    .tm-car__code { font-family: var(--font-display); font-weight: 600; font-size: 10px; }
     .tm-car__gap { font-family: var(--font-mono); font-weight: 500; font-size: 9px; fill: var(--text-2); }
     .tm-car[data-focused="true"] .tm-car__body { stroke: #fff; stroke-width: 2; }
     .tm-car[data-focused="true"] .tm-car__halo { opacity: 0.55; r: 12; }
@@ -147,8 +146,8 @@
     .tm-legend__sw { width: 12px; height: 4px; border-radius: 2px; }
     .tm-turncard { position: absolute; top: var(--space-7); right: var(--space-7); width: 184px; padding: var(--space-7); border-radius: var(--radius-md); background: var(--surface-overlay); border: 1px solid var(--accent-border); box-shadow: var(--shadow-lg); }
     .tm-turncard__x { position: absolute; top: 8px; right: 8px; background: none; border: 0; color: var(--text-tertiary); cursor: pointer; }
-    .tm-turncard__n { font-family: var(--font-mono); font-weight: 700; font-size: var(--text-2xs); color: var(--accent); letter-spacing: 0.1em; }
-    .tm-turncard__nm { font-family: var(--font-display); font-weight: 700; font-size: var(--text-xl); color: var(--text-strong); margin: 2px 0 3px; }
+    .tm-turncard__n { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-2xs); color: var(--accent); letter-spacing: 0.1em; }
+    .tm-turncard__nm { font-family: var(--font-display); font-weight: 600; font-size: var(--text-xl); color: var(--text-strong); margin: 2px 0 3px; }
     .tm-turncard__meta { font-size: var(--text-2xs); color: var(--text-tertiary); }
 
     /* Rail */
@@ -156,7 +155,7 @@
     .tm-rail { display: block; flex: 1; min-height: 0; overflow-y: auto; border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--surface-card); padding: var(--space-7); }
     .tm-rail__hd { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: var(--space-6); }
     .tm-rail__hd--mt { margin-top: var(--space-9); }
-    .tm-rail__ttl { font-family: var(--font-display); font-weight: 700; font-size: var(--text-md); color: var(--text-primary); letter-spacing: 0.02em; }
+    .tm-rail__ttl { font-family: var(--font-display); font-weight: 600; font-size: var(--text-md); color: var(--text-primary); letter-spacing: 0.02em; }
     .tm-rail__sub { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--text-tertiary); }
 
     /* Timing tower */
@@ -165,45 +164,46 @@
     .tm-trow:hover { background: var(--surface-hover); }
     .tm-trow[data-foc="true"] { background: var(--accent-quiet); border-color: var(--accent-border); }
     .tm-trow[data-dim="true"] { opacity: 0.45; }
-    .tm-trow__pos { font-family: var(--font-mono); font-weight: 700; font-size: var(--text-xs); color: var(--text-tertiary); text-align: right; }
+    .tm-trow__pos { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-xs); color: var(--text-tertiary); text-align: right; }
     .tm-trow__bar { width: 4px; height: 18px; border-radius: 2px; }
-    .tm-trow__code { font-family: var(--font-display); font-weight: 700; font-size: var(--text-md); color: var(--text-primary); display: flex; align-items: baseline; gap: 4px; }
+    .tm-trow__code { font-family: var(--font-display); font-weight: 600; font-size: var(--text-md); color: var(--text-primary); display: flex; align-items: baseline; gap: 4px; }
     .tm-trow__code i { font-family: var(--font-mono); font-style: normal; font-weight: 500; font-size: 9px; color: var(--text-tertiary); }
-    .tm-trow__tyre { width: 17px; height: 17px; border-radius: 50%; display: grid; place-items: center; font-family: var(--font-mono); font-weight: 700; font-size: 9px; color: var(--tc); border: 1.5px solid var(--tc); }
+    .tm-trow__tyre { width: 17px; height: 17px; border-radius: 50%; display: grid; place-items: center; font-family: var(--font-mono); font-weight: 600; font-size: 9px; color: var(--tc); border: 1.5px solid var(--tc); }
     .tm-trow__gap { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-secondary); text-align: right; min-width: 52px; }
     .tm-trow__gap.is-lead { font-size: 9px; letter-spacing: 0.08em; color: var(--text-tertiary); }
 
     .tm-battles { display: flex; flex-direction: column; gap: var(--space-5); }
     .tm-battle { padding: var(--space-6); border-radius: var(--radius-md); background: var(--bg-sunken); border: 1px solid var(--border-subtle); }
-    .tm-battle__pair { display: flex; align-items: center; gap: var(--space-5); font-family: var(--font-display); font-weight: 700; font-size: var(--text-md); }
+    .tm-battle__pair { display: flex; align-items: center; gap: var(--space-5); font-family: var(--font-display); font-weight: 600; font-size: var(--text-md); }
     .tm-battle__gap { font-family: var(--font-mono); font-weight: 500; font-size: var(--text-2xs); color: var(--warning); padding: 1px 6px; border-radius: var(--radius-pill); background: var(--warning-quiet); }
     .tm-battle__note { font-size: var(--text-xs); color: var(--text-secondary); margin-top: 5px; line-height: 1.4; }
 
     /* Circuit facts */
     .tm-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); overflow: hidden; }
-    .tm-fact { background: var(--surface-card); padding: var(--space-6) var(--space-6); display: flex; flex-direction: column; gap: 3px; }
+    .tm-fact { background: var(--surface-card); padding: var(--space-6) var(--space-6); display: flex; flex-direction: column; gap: 4px; }
+    .tm-fact:last-child:nth-child(odd) { grid-column: 1 / -1; }
     .tm-fact__k { display: flex; align-items: center; gap: 5px; font-size: var(--text-2xs); color: var(--text-tertiary); }
     .tm-fact__v { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-md); color: var(--text-primary); }
     .tm-record { margin-top: var(--space-7); padding: var(--space-7); border-radius: var(--radius-md); background: var(--accent-soft); border: 1px solid var(--accent-border); display: flex; flex-direction: column; gap: 2px; }
-    .tm-record__lbl { display: flex; align-items: center; gap: 6px; font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); text-transform: uppercase; color: var(--text-secondary); }
-    .tm-record__time { font-family: var(--font-mono); font-weight: 700; font-size: var(--text-2xl); color: var(--text-strong); }
+    .tm-record__lbl { display: flex; align-items: center; gap: 6px; font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); color: var(--text-secondary); }
+    .tm-record__time { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-2xl); color: var(--text-strong); }
     .tm-record__who { font-size: var(--text-2xs); color: var(--text-tertiary); }
     .tm-turns { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
     .tm-turnrow { display: flex; align-items: center; gap: var(--space-5); padding: 5px var(--space-5); border-radius: var(--radius-sm); cursor: pointer; border: 1px solid transparent; }
     .tm-turnrow:hover { background: var(--surface-hover); }
     .tm-turnrow[data-active="true"] { background: var(--accent-quiet); border-color: var(--accent-border); }
-    .tm-turnrow__n { font-family: var(--font-mono); font-weight: 700; font-size: var(--text-xs); color: var(--accent); width: 18px; text-align: center; flex: none; }
+    .tm-turnrow__n { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-xs); color: var(--accent); width: 18px; text-align: center; flex: none; }
     .tm-turnrow__nm { font-size: var(--text-xs); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .tm-empty { margin-top: var(--space-7); display: flex; align-items: center; gap: var(--space-5); padding: var(--space-6); border-radius: var(--radius-md); background: var(--bg-sunken); border: 1px dashed var(--border-default); font-size: var(--text-xs); color: var(--text-tertiary); line-height: 1.4; }
     .tm-modal { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: var(--space-9); background: rgba(3,5,9,0.62); backdrop-filter: blur(8px); }
     .tm-modal__panel { width: min(420px, 100%); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-overlay); box-shadow: var(--shadow-lg); padding: var(--space-8); }
     .tm-modal__head { display: flex; justify-content: space-between; align-items: start; gap: var(--space-6); }
-    .tm-modal__title { font-family: var(--font-display); font-weight: 800; font-size: var(--text-2xl); color: var(--text-strong); }
+    .tm-modal__title { font-family: var(--font-display); font-weight: 600; font-size: var(--text-2xl); color: var(--text-strong); }
     .tm-modal__sub { margin-top: 4px; color: var(--text-tertiary); font-size: var(--text-sm); }
     .tm-modal__choices { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); margin-top: var(--space-8); }
     .tm-modal__choice { min-height: 74px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text-primary); cursor: pointer; text-align: left; padding: var(--space-6); }
     .tm-modal__choice:hover { border-color: var(--accent-border); background: var(--accent-quiet); }
-    .tm-modal__kind { display: block; font-family: var(--font-display); font-size: var(--text-xl); font-weight: 800; }
+    .tm-modal__kind { display: block; font-family: var(--font-display); font-size: var(--text-xl); font-weight: 600; }
     .tm-modal__meta { display: block; margin-top: 4px; color: var(--text-tertiary); font-size: var(--text-xs); }
     `;
   }
@@ -1288,7 +1288,7 @@
           </>
         ) : (
           <>
-            <div className="tm-statline"><span className="pw-badge pw-badge--accent">NEXT ROUND</span></div>
+            <div className="tm-statline"><span className="pw-badge pw-badge--accent">Next round</span></div>
             {cd.valid && <div className="tm-cd"><Seg n={cd.d} l="DAYS" /><Seg n={cd.h} l="HRS" /><Seg n={cd.m} l="MIN" /></div>}
             {raceStartLabel && <div className="tm-wx"><span>{raceStartLabel}</span></div>}
           </>
@@ -1379,24 +1379,24 @@
   function CircuitFacts({ circuit, turns, selTurn, onSelTurn }) {
     const f = circuit.facts;
     const facts = [
-      { k: "Lap length", v: f.length, icon: "pin" }, { k: "Race laps", v: f.laps, icon: "flag" },
-      { k: "Corners", v: f.corners, icon: "gauge" },
-      { k: "Direction", v: f.direction, icon: "timer" }, { k: "First GP", v: f.firstGp, icon: "calendar" },
+      { k: "Lap length", v: f.length }, { k: "Race laps", v: f.laps },
+      { k: "Corners", v: f.corners },
+      { k: "Direction", v: f.direction }, { k: "First GP", v: f.firstGp },
     ];
     return (
       <div className="tm-rail">
-        <div className="tm-rail__hd"><span className="tm-rail__ttl">Circuit Facts</span></div>
+        <div className="tm-rail__hd"><span className="tm-rail__ttl">Circuit facts</span></div>
         <div className="tm-facts">
           {facts.map((x) => (
             <div key={x.k} className="tm-fact">
-              <span className="tm-fact__k"><Icon name={x.icon} size={12} /> {x.k}</span>
+              <span className="tm-fact__k">{x.k}</span>
               <span className="tm-fact__v">{x.v}</span>
             </div>
           ))}
         </div>
         {f.lapRecord && f.lapRecord !== "—" && (
           <div className="tm-record">
-            <span className="tm-record__lbl"><Icon name="stopwatch" size={13} /> Lap record</span>
+            <span className="tm-record__lbl">Lap record</span>
             <span className="tm-record__time">{f.lapRecord}</span>
             <span className="tm-record__who">{f.recordHolder} · {f.recordYear}</span>
           </div>
@@ -2181,7 +2181,7 @@
               <MemoizedCircuitFacts circuit={circuit} turns={geom.turns} selTurn={selTurn} onSelTurn={setSelTurn} />
             ) : (
               <div className="tm-rail">
-                <div className="tm-rail__hd"><span className="tm-rail__ttl">Circuit Facts</span></div>
+                <div className="tm-rail__hd"><span className="tm-rail__ttl">Circuit facts</span></div>
                 <div className="tm-empty"><Icon name="play" size={13} /> {dataSource}</div>
               </div>
             )}

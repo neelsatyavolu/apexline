@@ -600,7 +600,7 @@ assert.match(pitwallIndex, /social\.js[\s\S]*LiveRacing\.jsx/, "Apexline app sho
 assert.match(appShellSource, /id: "drivers"/, "PitWall sidebar should expose a Drivers route");
 assert.match(appShellSource, /id: "teams"/, "PitWall sidebar should expose a Teams route");
 assert.match(appShellSource, /id: "trackmap"/, "PitWall sidebar should expose a Track Map route");
-assert.match(appShellSource, /sec: "The Grid"[\s\S]*id: "drivers"[\s\S]*id: "teams"/, "PitWall sidebar should group Drivers and Teams under The Grid");
+assert.match(appShellSource, /sec: "The grid"[\s\S]*id: "drivers"[\s\S]*id: "teams"/, "PitWall sidebar should group Drivers and Teams under The grid");
 assert.match(trackMapSource, /function raceKey/, "Track Map should derive stable race selector keys");
 assert.match(trackMapSource, /latestCompletedRace[\s\S]*status === "done"/, "Track Map should fall back to the latest completed race when no live or upcoming race is available");
 assert.match(trackMapSource, /<select[\s\S]*className="tm-raceselect__select"[\s\S]*selectedRaceKey/, "Track Map should expose a race selector bound to selected race state");

@@ -64,7 +64,7 @@
   --border-subtle:  var(--line-1);
   --border-default: var(--line-2);
   --border-strong:  var(--line-3);
-  --line-glow:      rgba(45, 123, 255, 0.45);
+  --line-glow:      var(--accent-border);
 
   /* ====== SEMANTIC: text ====== */
   --text-primary:   var(--text-1);
@@ -87,13 +87,13 @@
   --accent-quiet-hover: rgba(45, 123, 255, 0.22);
   --accent-soft:        rgba(45, 123, 255, 0.09);
   --accent-border:      rgba(45, 123, 255, 0.40);
-  --blue-glow:          rgba(45, 123, 255, 0.55);
+  --blue-glow:          transparent; /* glows retired: depth comes from surface steps */
   --focus-ring:         var(--accent);
 
   /* ====== Live / broadcast red ====== */
   --live:      #ff3b3b;
   --live-weak: rgba(255, 59, 59, 0.16);
-  --live-glow: rgba(255, 59, 59, 0.55);
+  --live-glow: transparent;
 
   /* ====== Semantic status ====== */
   --success:       #2bd07a;
@@ -137,6 +137,6 @@
   --brake:      #ff3b3b;
 
   /* ====== Decorative gradients (sparingly) ====== */
-  --grad-hero:   radial-gradient(120% 90% at 12% -20%, rgba(45,123,255,0.16), transparent 60%); /* @kind other */
+  --grad-hero:   none; /* @kind other */
   --grad-carbon: repeating-linear-gradient(45deg, rgba(255,255,255,0.016) 0 2px, transparent 2px 7px); /* @kind other */
 }

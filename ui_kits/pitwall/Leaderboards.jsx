@@ -16,17 +16,17 @@
     .lb__grid { display: grid; grid-template-columns: 1.7fr 1fr; gap: var(--space-9); align-items: start; }
 
     .table { width: 100%; }
-    .table__head { display: grid; grid-template-columns: 56px 1fr 90px 70px 80px; gap: var(--space-6); padding: var(--space-5) var(--space-7); font-size: var(--text-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--text-tertiary); border-bottom: 1px solid var(--border-default); }
+    .table__head { display: grid; grid-template-columns: 56px 1fr 90px 70px 80px; gap: var(--space-6); padding: var(--space-5) var(--space-7); font-size: var(--text-2xs); font-weight: 600; letter-spacing: var(--tracking-caps); color: var(--text-tertiary); border-bottom: 1px solid var(--border-default); }
     .table__head span:nth-child(3), .table__head span:nth-child(4), .table__head span:nth-child(5) { text-align: right; }
     .trow { display: grid; grid-template-columns: 56px 1fr 90px 70px 80px; gap: var(--space-6); align-items: center; padding: var(--space-6) var(--space-7); border-bottom: 1px solid var(--border-subtle); transition: background var(--dur-fast) var(--ease-standard); }
     .trow:hover { background: var(--surface-hover); }
     .trow[data-focus="true"] { background: var(--accent-quiet); box-shadow: inset 3px 0 0 var(--accent); }
     .trow__pos { display: flex; align-items: center; gap: var(--space-4); }
-    .trow__posnum { font-family: var(--font-display); font-weight: 800; font-size: var(--text-xl); color: var(--text-strong); width: 26px; }
+    .trow__posnum { font-family: var(--font-display); font-weight: 600; font-size: var(--text-xl); color: var(--text-strong); width: 26px; }
     .trow__pts { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-lg); color: var(--text-primary); text-align: right; font-variant-numeric: tabular-nums; }
     .trow__wins { font-family: var(--font-mono); font-size: var(--text-md); color: var(--text-secondary); text-align: right; }
     .trow__delta { text-align: right; display: flex; justify-content: flex-end; }
-    .trow--leader { background: linear-gradient(90deg, var(--accent-soft), transparent 40%); }
+    .trow--leader { background: var(--accent-soft); }
     .trow__bar { height: 5px; border-radius: var(--radius-pill); background: var(--_c); margin-top: 5px; }
 
     .cwrap { display: flex; flex-direction: column; gap: 2px; }
@@ -36,7 +36,7 @@
     .crow__name { font-weight: 600; color: var(--text-primary); font-size: var(--text-md); }
     .crow__bar { height: 6px; border-radius: var(--radius-pill); margin-top: 5px; }
     .crow__pts { font-family: var(--font-mono); font-weight: 600; color: var(--text-primary); text-align: right; }
-    .crow__pos { font-family: var(--font-display); font-weight: 800; font-size: var(--text-lg); color: var(--text-tertiary); text-align: center; }
+    .crow__pos { font-family: var(--font-display); font-weight: 600; font-size: var(--text-lg); color: var(--text-tertiary); text-align: center; }
     `;
     document.head.appendChild(el);
   }
@@ -93,7 +93,7 @@
                       <span className="trow__pts">{s.pts}</span>
                       <span className="trow__wins">{s.wins}</span>
                       <span className="trow__delta">
-                        {s.delta !== 0 ? <GapDelta value={Math.abs(s.delta)} trend={s.delta > 0 ? "gain" : "loss"} size="sm" /> : <span style={{ color: "var(--text-tertiary)", fontFamily: "var(--font-mono)" }}>–</span>}
+                        {Number.isFinite(s.delta) && s.delta !== 0 ? <GapDelta value={Math.abs(s.delta)} trend={s.delta > 0 ? "gain" : "loss"} size="sm" /> : <span style={{ color: "var(--text-tertiary)", fontFamily: "var(--font-mono)" }}>–</span>}
                       </span>
                     </div>
                   );
@@ -135,14 +135,14 @@
                         <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{d.team}</div>
                       </div>
                       <div style={{ textAlign: "right" }}>
-                        <div style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 22, color: i === 0 ? "var(--accent)" : "var(--text-primary)" }}>{s.pts}</div>
+                        <div style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 22, color: i === 0 ? "var(--accent)" : "var(--text-primary)" }}>{s.pts}</div>
                       </div>
                     </div>
                   );
                 })}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px 0 2px", borderTop: "1px solid var(--border-subtle)" }}>
-                  <span style={{ fontSize: 12, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Gap</span>
-                  <GapDelta value={D.standings.length > 1 ? (D.standings[0].pts - D.standings[1].pts) + " pts" : "—"} trend="loss" size="md" />
+                  <span style={{ fontSize: 12, color: "var(--text-tertiary)", letterSpacing: "0.01em" }}>Gap</span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 16, fontWeight: 600, color: "var(--text-primary)", fontVariantNumeric: "tabular-nums" }}>{D.standings.length > 1 ? (D.standings[0].pts - D.standings[1].pts) + " pts" : "—"}</span>
                 </div>
               </div>
             </Card>

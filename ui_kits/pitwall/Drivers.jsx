@@ -18,7 +18,7 @@
     .dv-row:hover { background: var(--surface-hover); }
     .dv-row[data-active="true"] { background: var(--surface-raised); border-color: var(--border-default); }
     .dv-row[data-active="true"]::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px; border-radius: var(--radius-pill); background: var(--_c); }
-    .dv-row__pos { font-family: var(--font-display); font-weight: 800; font-size: var(--text-md); color: var(--text-tertiary); text-align: center; }
+    .dv-row__pos { font-family: var(--font-display); font-weight: 600; font-size: var(--text-md); color: var(--text-tertiary); text-align: center; }
     .dv-row__name { font-weight: 600; color: var(--text-primary); font-size: var(--text-sm); line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .dv-row__team { font-size: var(--text-2xs); color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .dv-row__pts { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-sm); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
@@ -27,11 +27,11 @@
     .dv-detail { display: flex; flex-direction: column; gap: var(--space-9); min-width: 0; }
     .dv-hero { position: relative; overflow: hidden; border-radius: var(--radius-lg); border: 1px solid var(--border-default); background: var(--bg-sunken); min-height: 256px; display: flex; }
     .dv-hero__wash { position: absolute; inset: 0; background: linear-gradient(105deg, color-mix(in srgb, var(--_c) 42%, transparent), transparent 62%); }
-    .dv-hero__num { position: absolute; right: 230px; top: 50%; transform: translateY(-50%); font-family: var(--font-display); font-weight: 800; font-size: 230px; line-height: 0.8; color: color-mix(in srgb, var(--_c) 26%, transparent); letter-spacing: -0.04em; pointer-events: none; user-select: none; }
+    .dv-hero__num { position: absolute; right: 230px; top: 50%; transform: translateY(-50%); font-family: var(--font-display); font-weight: 600; font-size: 230px; line-height: 0.8; color: color-mix(in srgb, var(--_c) 26%, transparent); letter-spacing: -0.04em; pointer-events: none; user-select: none; }
     .dv-hero__body { position: relative; z-index: 2; padding: var(--space-9) var(--space-10); display: flex; flex-direction: column; justify-content: center; gap: var(--space-6); flex: 1; max-width: 60%; }
     .dv-hero__crumb { display: flex; align-items: center; gap: var(--space-5); }
-    .dv-hero__code { font-family: var(--font-mono); font-weight: 700; font-size: var(--text-sm); letter-spacing: 0.12em; color: var(--_c); }
-    .dv-hero__name { font-family: var(--font-display); font-weight: 800; font-size: clamp(34px, 4vw, 52px); line-height: 0.98; color: var(--text-strong); letter-spacing: -0.01em; }
+    .dv-hero__code { font-family: var(--font-mono); font-weight: 600; font-size: var(--text-sm); letter-spacing: 0.12em; color: var(--_c); }
+    .dv-hero__name { font-family: var(--font-display); font-weight: 600; font-size: clamp(34px, 4vw, 52px); line-height: 0.98; color: var(--text-strong); letter-spacing: -0.01em; }
     .dv-hero__name small { display: block; font-size: 0.42em; font-weight: 600; letter-spacing: 0.02em; color: var(--text-tertiary); margin-top: 6px; }
     .dv-hero__team { display: inline-flex; align-items: center; gap: var(--space-5); }
     .dv-hero__teamlogo { height: 22px; width: auto; }
@@ -47,7 +47,7 @@
     .dv-form__row:hover { background: var(--surface-hover); }
     .dv-form__rnd { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--text-tertiary); }
     .dv-form__gp { font-size: var(--text-sm); color: var(--text-secondary); }
-    .dv-form__pos { justify-self: end; min-width: 32px; height: 32px; padding: 0 8px; border-radius: var(--radius-sm); display: inline-grid; place-items: center; font-family: var(--font-mono); font-weight: 700; font-size: var(--text-sm); }
+    .dv-form__pos { justify-self: end; min-width: 32px; height: 32px; padding: 0 8px; border-radius: var(--radius-sm); display: inline-grid; place-items: center; font-family: var(--font-mono); font-weight: 600; font-size: var(--text-sm); }
     .dv-form__empty { padding: var(--space-8); color: var(--text-tertiary); font-size: var(--text-sm); text-align: center; }
 
     .dv-info { display: flex; flex-direction: column; }
@@ -116,14 +116,14 @@
     const hasRecentForm = rounds.length > 0 && form.some((value) => value != null && value !== "");
     const nameParts = (d.name || "").split(" ");
     const career = [
-      { label: "Grands Prix", value: d.gp, icon: "flag" },
-      { label: "Career Wins", value: d.careerWins, icon: "trophy" },
-      { label: "Podiums", value: d.podiums, icon: "trophy" },
-      { label: "Pole Positions", value: d.poles, icon: "zap" },
-      { label: "Fastest Laps", value: d.fl, icon: "timer" },
-      { label: "World Titles", value: d.titles, icon: "star" },
-      { label: "Highest Finish", value: d.bestFinish, display: true, icon: "arrowUp" },
-      { label: "Highest Grid", value: d.bestGrid, display: true, icon: "grid" },
+      { label: "Grands prix", value: d.gp },
+      { label: "Career wins", value: d.careerWins },
+      { label: "Podiums", value: d.podiums },
+      { label: "Pole positions", value: d.poles },
+      { label: "Fastest laps", value: d.fl },
+      { label: "World titles", value: d.titles },
+      { label: "Highest finish", value: d.bestFinish, display: true },
+      { label: "Highest grid", value: d.bestGrid, display: true },
     ];
 
     function toggleFav() {
@@ -187,17 +187,17 @@
 
           {/* Season strip */}
           <div className="dv-grid">
-            <StatTile label="Championship" value={d.seasonPos ? "P" + d.seasonPos : "—"} display icon={<Icon name="trophy" size={14} />} accent />
-            <StatTile label="Points 2026" value={d.seasonPts} icon={<Icon name="zap" size={14} />} />
-            <StatTile label="Wins 2026" value={d.seasonWins} icon={<Icon name="flag" size={14} />} />
-            <StatTile label="In F1 Since" value={d.since} display icon={<Icon name="calendar" size={14} />} />
+            <StatTile label="Championship" value={d.seasonPos ? "P" + d.seasonPos : "—"} display accent />
+            <StatTile label="Points 2026" value={d.seasonPts} />
+            <StatTile label="Wins 2026" value={d.seasonWins} />
+            <StatTile label="In F1 since" value={d.since} display />
           </div>
 
           {/* Career */}
           <Card title="Career statistics" subtitle="All-time across every championship season">
             <div className="dv-grid">
               {career.map((c) => (
-                <StatTile key={c.label} label={c.label} value={c.value} display={c.display} icon={<Icon name={c.icon} size={14} />} />
+                <StatTile key={c.label} label={c.label} value={c.value} display={c.display} />
               ))}
             </div>
           </Card>

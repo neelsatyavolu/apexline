@@ -25,7 +25,7 @@
     .lead__body { padding: var(--space-8); background: var(--surface-card); }
     .lead__meta { display: flex; align-items: center; gap: var(--space-5); margin-bottom: var(--space-6); }
     .lead__src { font-size: var(--text-xs); color: var(--text-tertiary); }
-    .lead__title { font-family: var(--font-display); font-weight: 700; font-size: var(--text-3xl); line-height: 1.08; letter-spacing: -0.01em; color: var(--text-strong); text-wrap: pretty; }
+    .lead__title { font-family: var(--font-display); font-weight: 600; font-size: var(--text-3xl); line-height: 1.08; letter-spacing: -0.01em; color: var(--text-strong); text-wrap: pretty; }
     .lead__lead { margin-top: var(--space-6); color: var(--text-secondary); font-size: var(--text-md); line-height: 1.5; max-width: 60ch; }
     .lead__foot { display: flex; align-items: center; gap: var(--space-5); margin-top: var(--space-8); }
 
@@ -49,22 +49,22 @@
     @media (prefers-reduced-motion: reduce) { .item:hover .item__thumb img { transform: none; } }
     .trend { display: flex; align-items: center; gap: var(--space-6); padding: var(--space-5) 0; border-bottom: 1px solid var(--border-subtle); }
     .trend:last-child { border-bottom: 0; }
-    .trend__rank { font-family: var(--font-mono); font-weight: 700; color: var(--text-tertiary); width: 18px; }
+    .trend__rank { font-family: var(--font-mono); font-weight: 600; color: var(--text-tertiary); width: 18px; }
     .trend__txt { font-size: var(--text-sm); color: var(--text-secondary); line-height: 1.35; }
     .saved { display: flex; align-items: center; gap: var(--space-5); padding: var(--space-5) 0; border-bottom: 1px solid var(--border-subtle); }
     .saved:last-child { border-bottom: 0; }
     .saved__txt { font-size: var(--text-sm); color: var(--text-secondary); line-height: 1.35; }
     .empty { padding: var(--space-8); border: 1px dashed var(--border-default); border-radius: var(--radius-md); color: var(--text-tertiary); text-align: center; font-size: var(--text-sm); }
-    .news-refresh-loading { min-height: 420px; display: grid; place-items: center; padding: var(--space-9); border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: radial-gradient(110% 90% at 50% 0%, var(--accent-soft), transparent 54%), var(--bg-sunken); }
+    .news-refresh-loading { min-height: 420px; display: grid; place-items: center; padding: var(--space-9); border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--bg-sunken); }
     .news-refresh-loading__box { width: min(440px, 100%); display: flex; flex-direction: column; gap: var(--space-5); }
-    .news-refresh-loading__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 800; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-tertiary); }
+    .news-refresh-loading__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; letter-spacing: var(--tracking-caps); color: var(--text-tertiary); }
     .news-refresh-loading__track { position: relative; height: 8px; border-radius: var(--radius-pill); overflow: hidden; background: rgba(255,255,255,0.08); box-shadow: var(--inset-top-light); }
-    .news-refresh-loading__fill { position: absolute; inset: 0 auto 0 0; width: 42%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--success) 70%, #fff)); box-shadow: 0 0 14px var(--blue-glow); animation: news-refresh-load 1.15s var(--ease-in-out) infinite; }
+    .news-refresh-loading__fill { position: absolute; inset: 0 auto 0 0; width: 42%; border-radius: inherit; background: var(--accent); animation: news-refresh-load 1.15s var(--ease-in-out) infinite; }
     @keyframes news-refresh-load { 0% { transform: translateX(-105%); } 50% { transform: translateX(72%); } 100% { transform: translateX(240%); } }
-    .news-reader { position: fixed; inset: 0; z-index: 140; display: grid; place-items: center; padding: var(--space-9); background: radial-gradient(80% 70% at 50% 8%, rgba(226,31,38,0.14), transparent 58%), rgba(3,5,8,0.78); backdrop-filter: blur(14px); }
+    .news-reader { position: fixed; inset: 0; z-index: 140; display: grid; place-items: center; padding: var(--space-9); background: rgba(3,5,8,0.78); backdrop-filter: blur(14px); }
     .news-reader__panel { width: min(920px, 100%); max-height: min(860px, calc(100vh - 48px)); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); border-radius: var(--radius-lg); border: 1px solid var(--border-default); background: color-mix(in srgb, var(--surface-overlay) 95%, black); box-shadow: 0 28px 90px rgba(0,0,0,0.48), 0 0 0 1px rgba(255,255,255,0.03) inset; }
     .news-reader__bar { min-width: 0; display: flex; align-items: center; gap: var(--space-5); padding: var(--space-6) var(--space-7); border-bottom: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--bg-base) 82%, transparent); }
-    .news-reader__kicker { color: var(--text-tertiary); font-size: var(--text-xs); font-weight: 700; text-transform: uppercase; letter-spacing: var(--tracking-caps); }
+    .news-reader__kicker { color: var(--text-tertiary); font-size: var(--text-xs); font-weight: 600; letter-spacing: var(--tracking-caps); }
     .news-reader__close { margin-left: auto; }
     .news-reader__scroll { overflow-y: auto; }
     .news-reader__hero { height: clamp(210px, 34vh, 360px); position: relative; overflow: hidden; background:
@@ -278,7 +278,7 @@
             <Card title="Reading" subtitle={selectedStory.source + " · " + selectedStory.time + " ago"} padding="default">
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <Badge tone="outline">{selectedStory.tag}</Badge>
-                <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 18, lineHeight: 1.2, color: "var(--text-primary)" }}>{selectedStory.title}</div>
+                <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 18, lineHeight: 1.2, color: "var(--text-primary)" }}>{selectedStory.title}</div>
                 <div style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5 }}>{selectedStory.lead}</div>
                 <Button variant="secondary" size="sm" onClick={() => openReader(selectedStory)}>Open reader</Button>
               </div>

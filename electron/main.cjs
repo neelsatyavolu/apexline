@@ -5593,7 +5593,7 @@ async function readF1TimingArchiveSessionData(resolvedMeeting, resolvedSession, 
     meeting: resolvedMeeting,
     selectedSession: resolvedSession,
     baseUrl,
-    driverListEntries: driverListText ? parseF1TimingJsonStream(driverListText) : [],
+    driverListEntries: f1DriverListEntriesFromText(driverListText),
     timingEntries: parseF1TimingJsonStream(timingText),
     timingAppEntries: appText ? parseF1TimingJsonStream(appText) : [],
     clockEntries: clockText ? parseF1TimingJsonStream(clockText) : [],
@@ -5764,7 +5764,7 @@ async function getTrackMapStaticF1TimingSessionData(options = {}) {
     meeting: identity.meeting,
     selectedSession: identity.session,
     baseUrl,
-    driverListEntries: driverListText ? parseF1TimingJsonStream(driverListText) : [],
+    driverListEntries: f1DriverListEntriesFromText(driverListText),
     sessionDataEntries: sessionDataText ? parseF1TimingJsonStream(sessionDataText) : [],
     lapCountEntries: lapCountText ? parseF1TimingJsonStream(lapCountText) : [],
     weatherEntries: weatherText ? parseF1TimingJsonStream(weatherText) : [],
@@ -9613,7 +9613,56 @@ function driverCodeFromF1TvText(value) {
   if (code) return code;
   const lower = upper.toLowerCase();
   const match = F1TV_DRIVER_ALIASES.find(([, ...aliases]) => aliases.some((alias) => lower.includes(alias)));
-  return match?.[0] || "";
+  return match?.[0] || sessionDriverCodeFromF1TvText(upper, f1SessionDriverAliasRows());
+}
+
+// Drivers outside F1TV_DRIVER_ALIASES (FP1 rookies, stand-ins) are learned from
+// each session's DriverList, so their onboards map without a code change.
+const f1SessionDriverRoster = new Map();
+const f1SessionDriverListProgress = new WeakMap();
+
+function f1DriverNameKey(value) {
+  return String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z]+/g, " ").trim();
+}
+
+function f1DriverListEntriesFromText(driverListText) {
+  const entries = driverListText ? parseF1TimingJsonStream(driverListText) : [];
+  rememberF1SessionDrivers(entries);
+  return entries;
+}
+
+function rememberF1SessionDrivers(entries) {
+  if (!Array.isArray(entries)) return;
+  const start = f1SessionDriverListProgress.get(entries) || 0;
+  f1SessionDriverListProgress.set(entries, entries.length);
+  for (const entry of entries.slice(start)) {
+    for (const [numberText, driver] of Object.entries(entry?.data || {})) {
+      if (!driver || typeof driver !== "object") continue;
+      const number = String(driver.RacingNumber || numberText);
+      const previous = f1SessionDriverRoster.get(number) || {};
+      f1SessionDriverRoster.set(number, {
+        code: String(driver.Tla || previous.code || "").toUpperCase(),
+        first: driver.FirstName ? f1DriverNameKey(driver.FirstName) : previous.first || "",
+        last: driver.LastName ? f1DriverNameKey(driver.LastName) : previous.last || "",
+      });
+    }
+  }
+}
+
+function f1SessionDriverAliasRows() {
+  rememberF1SessionDrivers(f1LiveTimingState?.entriesByTopic?.DriverList);
+  return Array.from(f1SessionDriverRoster.values())
+    .filter((driver) => /^[A-Z]{3}$/.test(driver.code))
+    .map((driver) => [driver.code, ...[[driver.first, driver.last].filter(Boolean).join(" "), driver.last].filter((name) => name.length >= 4)]);
+}
+
+function sessionDriverCodeFromF1TvText(upper, rows) {
+  const words = ` ${f1DriverNameKey(upper)} `;
+  const byName = rows.find(([, ...names]) => names.some((name) => words.includes(` ${name} `)));
+  if (byName) return byName[0];
+  // TLAs like CAM or MIN are ordinary words, so only accept a value that is exactly the TLA.
+  const byCode = rows.find(([code]) => new RegExp(`(?:^|:)${code}(?:\\s|$)`).test(upper));
+  return byCode?.[0] || "";
 }
 
 function f1TvManifestProgramDateTime(text) {

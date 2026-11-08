@@ -8095,14 +8095,39 @@ assert.match(mainProcess, /driverCodeFromF1TvText/, "F1 TV resolver should infer
   const decodedF1TvUrlText = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "decodedF1TvUrlText")})`, { Buffer });
   const guessF1TvDriverCode = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "guessF1TvDriverCode")})`);
   const aliasesSource = mainProcess.match(/const F1TV_DRIVER_ALIASES = (\[[\s\S]*?\n\]);/)[1];
+  // Drivers missing from the hardcoded list (FP1 rookies, stand-ins) come from
+  // the session's own DriverList instead.
+  const sessionContext = { Map, WeakMap, f1LiveTimingState: null };
+  vm.runInNewContext([
+    "f1SessionDriverRoster = new Map(); f1SessionDriverListProgress = new WeakMap();",
+    extractNamedFunction(mainProcess, "f1DriverNameKey"),
+    extractNamedFunction(mainProcess, "rememberF1SessionDrivers"),
+    extractNamedFunction(mainProcess, "f1SessionDriverAliasRows"),
+    extractNamedFunction(mainProcess, "sessionDriverCodeFromF1TvText"),
+    "this.rememberF1SessionDrivers = rememberF1SessionDrivers; this.f1SessionDriverAliasRows = f1SessionDriverAliasRows; this.sessionDriverCodeFromF1TvText = sessionDriverCodeFromF1TvText;",
+  ].join("\n"), sessionContext);
   const driverCodeFromF1TvText = vm.runInNewContext(`(${extractNamedFunction(mainProcess, "driverCodeFromF1TvText")})`, {
     decodedF1TvUrlText,
     guessF1TvDriverCode,
     F1TV_DRIVER_ALIASES: vm.runInNewContext(aliasesSource),
+    sessionDriverCodeFromF1TvText: sessionContext.sessionDriverCodeFromF1TvText,
+    f1SessionDriverAliasRows: sessionContext.f1SessionDriverAliasRows,
   });
   assert.equal(driverCodeFromF1TvText("title:HIR channel:1042"), "HIR", "Stand-in Hirakawa's onboard should map by TLA");
   assert.equal(driverCodeFromF1TvText("title:Ryo Hirakawa"), "HIR", "Stand-in Hirakawa's onboard should map by name");
   assert.equal(driverCodeFromF1TvText("title:Oliver Bearman"), "BEA", "Bearman's onboard should still map");
+  assert.equal(driverCodeFromF1TvText("title:Colton Herta channel:1050"), "", "Unknown drivers should not map before the session lists them");
+  sessionContext.rememberF1SessionDrivers([
+    { seconds: 0, data: { "98": { RacingNumber: "98", Tla: "HER", FirstName: "Colton", LastName: "Herta", FullName: "Colton HERTA" } } },
+    { seconds: 1, data: { "39": { RacingNumber: "39", Tla: "CAM", FirstName: "Rafael", LastName: "Câmara" } } },
+    { seconds: 2, data: { "37": { RacingNumber: "37", Tla: "MIN", FirstName: "Gabriele", LastName: "Mini" }, "98": { Line: 4 } } },
+  ]);
+  assert.equal(driverCodeFromF1TvText("title:Colton Herta channel:1050"), "HER", "A new driver's onboard should map by name from the session DriverList");
+  assert.equal(driverCodeFromF1TvText("title:Rafael Camara"), "CAM", "Accented surnames from DriverList should match unaccented F1 TV titles");
+  assert.equal(driverCodeFromF1TvText("title:CAM channel:1051"), "CAM", "A new driver's onboard should map by an exact TLA title");
+  assert.equal(driverCodeFromF1TvText("title:Pit Lane Cam channel:1060"), "", "A session TLA should not match a word inside another feed title");
+  assert.equal(driverCodeFromF1TvText("title:Data https://f1tv.example/minimum/index.m3u8"), "", "A session surname should not match inside other words");
+  assert.equal(driverCodeFromF1TvText("title:Oliver Bearman"), "BEA", "Hardcoded drivers should keep priority once session drivers are known");
 }
 assert.match(source["Weekend.jsx"], /leader\.image/, "Weekend race-control leader avatar should use the real driver image when available");
 for (const [name, rendererSource] of Object.entries(source)) {
